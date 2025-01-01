@@ -3,7 +3,7 @@ from setuptools_rust import RustExtension
 
 setup(
     name="rustpy_xlsxwriter",
-    version="0.2.0",
+    version="0.3.0",
     description="A Rust-powered Excel library for Python",
     rust_extensions=[RustExtension("rustpy_xlsxwriter.rustpy_xlsxwriter", "Cargo.toml", binding="pyo3")],
     packages=["rustpy_xlsxwriter"],
