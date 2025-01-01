@@ -2,7 +2,6 @@ import pytest
 from rustpy_xlsxwriter import (
     get_version,
     save_records,
-    save_records_multi_thread,
     save_records_multiple_sheets,
 )
 import os
@@ -16,7 +15,7 @@ def setup_module():
 
 
 def test_get_version():
-    assert get_version() == "0.1.0"
+    assert get_version() == "0.4.0"
 
 
 def generate_test_records(count):
@@ -53,7 +52,8 @@ def generate_test_records_with_sheet_name(count):
     return records
 
 
-@pytest.mark.parametrize("record_count", [10, 100, 1000])
+@pytest.mark.parametrize("record_count", [1000, 1000, 1000])
+@pytest.mark.order(1)
 def test_save_records_multiple_sheets(record_count):
     """Test saving records using multiple sheets with different record counts"""
     records = generate_test_records_with_sheet_name(record_count)
@@ -62,38 +62,35 @@ def test_save_records_multiple_sheets(record_count):
     assert os.path.exists(filename)
 
 
-@pytest.mark.parametrize(
-    "record_count",
-    [
-        10,
-        100,
-        1000,
-        10000,
-        100000,
-        1000000,
-    ],
-)
-def test_save_records_multi_thread(record_count):
-    """Test saving records using multiple threads with different record counts"""
-    records = generate_test_records(record_count)
-    filename = f"tmp/test_{record_count}_multi_thread.xlsx"
-    sheet_name = f"Test {record_count}"
-    assert save_records_multi_thread(records, filename, sheet_name, "123456") is None
-    assert os.path.exists(filename)
+# TODO: Add this back in when we have a better solution
+# @pytest.mark.parametrize(
+#     "record_count",
+#     [
+#         1000000,
+#         1000000,
+#         1000000,
+#     ],
+# )
+# @pytest.mark.order(2)
+# def test_save_records_multi_thread(record_count):
+#     """Test saving records using multiple threads with different record counts"""
+#     records = generate_test_records(record_count)
+#     filename = f"tmp/test_{record_count}_multi_thread.xlsx"
+#     sheet_name = f"Test {record_count}"
+#     assert save_records_multithread(records, filename, sheet_name, "123456") is None
+#     assert os.path.exists(filename)
 
 
 @pytest.mark.parametrize(
     "record_count",
     [
-        10,
-        100,
-        1000,
-        10000,
-        100000,
+        1000000,
+        1000000,
         1000000,
     ],
 )
-def test_save_records_single_thread(record_count):
+@pytest.mark.order(3)
+def test_save_records_single_sheet(record_count):
     """Test saving records using single thread with different record counts"""
     records = generate_test_records(record_count)
     filename = f"tmp/test_{record_count}.xlsx"
@@ -105,14 +102,12 @@ def test_save_records_single_thread(record_count):
 @pytest.mark.parametrize(
     "record_count",
     [
-        10,
-        100,
-        1000,
-        10000,
-        100000,
+        1000000,
+        1000000,
         1000000,
     ],
 )
+@pytest.mark.order(4)
 def test_xlsxwriter(record_count):
     """Test saving records using XlsxWriter library"""
     filename = f"tmp/test_{record_count}_xlsxwriter.xlsx"

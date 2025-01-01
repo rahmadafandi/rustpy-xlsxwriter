@@ -57,28 +57,6 @@ def save_records(
     """
 ```
 
-### `save_records_multi_thread()`
-
-```python
-from rustpy_xlsxwriter import save_records_multi_thread
-
-def save_records_multi_thread(
-    records: List[Dict[str, str]],
-    file_name: str,
-    sheet_name: Optional[str] = None,
-    password: Optional[str] = None,
-):
-    """
-    Save records to a single sheet in an Excel file using multiple threads.
-
-    Args:
-        records (List[Dict[str, str]]): A list of dictionaries containing data to save.
-        file_name (str): The name of the Excel file to create.
-        sheet_name (Optional[str], optional): The name of the sheet. Defaults to None.
-        password (Optional[str], optional): The password to protect the file. Defaults to None.
-    """
-```
-
 ### `save_records_multiple_sheets()`
 
 ```python
@@ -99,6 +77,28 @@ def save_records_multiple_sheets(
     """
 ```
 
+## Performance
+![Test Result](image.png)
+
+Based on the performance test results:
+
+| Operation | Records | Time (seconds) |
+|-----------|---------|----------------|
+| Single Sheet | 1,000,000 | ~4.81s |
+| Multiple Sheets | 1,000 | ~5.33s |
+| Python xlsxwriter | 1,000,000 | ~16.26s |
+
+Key findings:
+- The Rust implementation is approximately 3.4x faster than Python's xlsxwriter library for processing 1 million records (4.81s vs 16.26s)
+- Single-threaded performance shows consistent timing around 4-5 seconds for 1 million records
+- Multiple sheets operation takes ~5.3 seconds for 1,000 records per sheet
+
+The significant performance improvement over Python's xlsxwriter is due to:
+1. Rust's efficient memory management
+2. Direct compilation to native code
+3. Zero-cost abstractions in Rust
+
+
 ## Usage Examples
 
 ### Save Records to a Single Sheet
@@ -112,20 +112,6 @@ records = [
 ]
 
 save_records(records, "output.xlsx", sheet_name="Sheet1")
-```
-
-### Save Records Using Multi-Threading
-
-```python
-from rustpy_xlsxwriter import save_records_multi_thread
-
-records = [
-    {"Name": "Alice", "Age": "30", "City": "New York"},
-    {"Name": "Bob", "Age": "25", "City": "San Francisco"},
-    # Add more records for testing...
-]
-
-save_records_multi_thread(records, "output_multithreaded.xlsx", sheet_name="Sheet1")
 ```
 
 ### Save Records to Multiple Sheets
@@ -153,4 +139,4 @@ Contributions are welcome! Please submit issues or pull requests on the [GitHub 
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT ![License](LICENSE).

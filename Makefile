@@ -20,7 +20,7 @@ install-production:
 	pip install dist/excel_exporter-*.whl
 
 test:
-	pytest --durations=0 -v
+	pytest tests/ -v -ra --durations=0 -o log_cli=true
 
 clean:
 	rm -rf target
