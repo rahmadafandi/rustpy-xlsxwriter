@@ -6,9 +6,58 @@ use std::collections::HashMap;
 // use std::thread;
 // use num_cpus;
 
+/// Returns the version of the library
 #[pyfunction]
 fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Returns the name of the library
+#[pyfunction]
+fn get_name() -> String {
+    env!("CARGO_PKG_NAME").to_string()
+}
+
+/// Returns the authors of the library
+#[pyfunction]
+fn get_authors() -> String {
+    env!("CARGO_PKG_AUTHORS").to_string()
+}
+
+/// Returns the description of the library
+#[pyfunction]
+fn get_description() -> String {
+    env!("CARGO_PKG_DESCRIPTION").to_string()
+}
+
+/// Returns the repository URL of the library
+#[pyfunction]
+fn get_repository() -> String {
+    env!("CARGO_PKG_REPOSITORY").to_string()
+}
+
+/// Returns the homepage URL of the library
+#[pyfunction]
+fn get_homepage() -> String {
+    env!("CARGO_PKG_HOMEPAGE").to_string()
+}
+
+/// Returns the license of the library
+#[pyfunction]
+fn get_license() -> String {
+    env!("CARGO_PKG_LICENSE").to_string()
+}
+
+/// Validates that the sheet name meets Excel's requirements:
+/// - Must be <= 31 characters
+/// - Cannot contain [ ] : * ? / \
+/// Returns true if valid, false if invalid
+#[pyfunction]
+fn validate_sheet_name(name: &str) -> bool {
+    if name.len() > 31 {
+        return false;
+    }
+    !name.contains(&['[', ']', ':', '*', '?', '/', '\\'][..])
 }
 
 #[pyfunction]
@@ -21,6 +70,13 @@ fn save_records_multiple_sheets(
     let mut workbook = Workbook::new();
     for record_map in records_with_sheet_name {
         for (sheet_name, records) in record_map {
+            // Validate sheet name
+            if !validate_sheet_name(&sheet_name) {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Invalid sheet name '{}'. Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\", sheet_name)
+                ));
+            }
+
             let worksheet = workbook.add_worksheet();
             let _ = worksheet.set_name(sheet_name);
             if let Some(first_record) = records.first() {
@@ -72,6 +128,12 @@ fn save_records(
     let mut workbook = Workbook::new();
     let worksheet = workbook.add_worksheet();
     if let Some(sheet_name) = sheet_name {
+        // Validate sheet name if provided
+        if !validate_sheet_name(&sheet_name) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("Invalid sheet name '{}'. Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\", sheet_name)
+            ));
+        }
         let _ = worksheet.set_name(sheet_name);
     }
 
@@ -229,5 +291,12 @@ fn rustpy_xlsxwriter(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // m.add_function(wrap_pyfunction!(save_records_multithread, m)?)?;
     m.add_function(wrap_pyfunction!(save_records_multiple_sheets, m)?)?;
     m.add_function(wrap_pyfunction!(get_version, m)?)?;
+    m.add_function(wrap_pyfunction!(get_name, m)?)?;
+    m.add_function(wrap_pyfunction!(get_authors, m)?)?;
+    m.add_function(wrap_pyfunction!(get_description, m)?)?;
+    m.add_function(wrap_pyfunction!(get_repository, m)?)?;
+    m.add_function(wrap_pyfunction!(get_homepage, m)?)?;
+    m.add_function(wrap_pyfunction!(get_license, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_sheet_name, m)?)?;
     Ok(())
 }

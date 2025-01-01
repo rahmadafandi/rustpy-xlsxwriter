@@ -26,3 +26,9 @@ clean:
 	rm -rf target
 	rm -rf .pytest_cache
 	rm -rf tmp/test_*.xlsx
+
+cleanup:
+	autoflake --remove-unused-variables --remove-all-unused-imports -i --recursive . && black . && isort --profile black . && pyclean .
+
+requirements:
+	pip freeze > requirements.txt

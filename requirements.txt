@@ -1,9 +1,16 @@
-# Editable Git install with no remote (rustpy-xlsxwriter==0.1.0)
--e /home/yomaaf/qiscus/excel-exporter
+autoflake==2.3.1
+black==24.10.0
+click==8.1.8
 iniconfig==2.0.0
+isort==5.13.2
 maturin==1.8.1
+mypy-extensions==1.0.0
 packaging==24.2
+pathspec==0.12.1
+platformdirs==4.3.6
 pluggy==1.5.0
+pyclean==3.0.0
+pyflakes==3.2.0
 pytest==8.3.4
 semantic-version==2.10.0
 setuptools==75.6.0

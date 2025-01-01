@@ -140,3 +140,11 @@ Contributions are welcome! Please submit issues or pull requests on the [GitHub 
 ## License
 
 This project is licensed under the MIT ![License](LICENSE).
+
+## Acknowledgements
+
+This project is inspired by [Rust-XlsxWriter](https://github.com/jmcnamara/rust_xlsxwriter) and [PyO3](https://github.com/pyo3/pyo3) with the help of [maturin](https://github.com/PyO3/maturin).
+
+## Contributors
+
+- [Rahmad Afandi](https://github.com/rahmadafandi)

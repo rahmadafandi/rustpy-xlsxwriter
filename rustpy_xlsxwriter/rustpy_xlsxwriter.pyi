@@ -26,3 +26,24 @@ def save_records_multiple_sheets(
     password: Optional[str] = None,
 ):
     pass
+
+def get_name() -> str:
+    pass
+
+def get_authors() -> str:
+    pass
+
+def get_description() -> str:
+    pass
+
+def get_repository() -> str:
+    pass
+
+def get_homepage() -> str:
+    pass
+
+def get_license() -> str:
+    pass
+
+def validate_sheet_name(name: str) -> bool:
+    pass
