@@ -149,7 +149,7 @@ save_records_multiple_sheets(records_with_sheet_name, "output_multiple_sheets.xl
 
 ## Contributing
 
-Contributions are welcome! Please submit issues or pull requests on the [GitHub repository](https://github.com/your-repo/rustpy-xlsxwriter).
+Contributions are welcome! Please submit issues or pull requests on the [GitHub repository](https://github.com/rahmadafandi/rustpy-xlsxwriter).
 
 ## License
 
