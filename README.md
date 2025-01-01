@@ -85,7 +85,7 @@ Based on the performance test results:
 | Operation | Records | Time (seconds) |
 |-----------|---------|----------------|
 | Single Sheet | 1,000,000 | ~4.81s |
-| Multiple Sheets | 1,000 | ~5.33s |
+| Multiple Sheets | 1,000,000 | ~5.33s |
 | Python xlsxwriter | 1,000,000 | ~16.26s |
 
 Key findings:
