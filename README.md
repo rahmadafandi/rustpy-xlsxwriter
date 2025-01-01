@@ -84,19 +84,19 @@ Based on the performance test results:
 
 | Operation | Records | Time (seconds) |
 |-----------|---------|----------------|
-| Single Sheet | 1,000,000 | ~4.81s |
-| Multiple Sheets | 1,000,000 | ~5.33s |
-| Python xlsxwriter | 1,000,000 | ~16.26s |
+| Single Sheet | 1,000,000 | ~4.68s |
+| Multiple Sheets | 1,000,000 | ~5.31s |
+| Python xlsxwriter | 1,000,000 | ~16.38s |
 
 Key findings:
-- The Rust implementation is approximately 3.4x faster than Python's xlsxwriter library for processing 1 million records (4.81s vs 16.26s)
-- Single-threaded performance shows consistent timing around 4-5 seconds for 1 million records
-- Multiple sheets operation takes ~5.3 seconds for 1,000 records per sheet (1000 sheets)
+- The Rust implementation is approximately 3.5x faster than Python's xlsxwriter library for processing 1 million records (4.68s vs 16.38s)
+- Single-sheet performance shows consistent timing around 4.7 seconds for 1 million records
+- Multiple sheets operation takes ~5.31 seconds for 1,000 records per sheet (1000 sheets total)
 
 The significant performance improvement over Python's xlsxwriter is due to:
-1. Rust's efficient memory management
-2. Direct compilation to native code
-3. Zero-cost abstractions in Rust
+1. Rust's efficient memory management and ownership model
+2. Direct compilation to optimized native machine code
+3. Zero-cost abstractions in Rust that provide high-level features without runtime overhead
 
 
 ## Usage Examples
