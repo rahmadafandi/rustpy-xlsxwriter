@@ -63,7 +63,7 @@ fn validate_sheet_name(name: &str) -> bool {
 #[pyfunction]
 #[pyo3(signature = (records_with_sheet_name, file_name, password = None))]
 fn save_records_multiple_sheets(
-    records_with_sheet_name: Vec<HashMap<String, Vec<HashMap<String, String>>>>,
+    records_with_sheet_name: Vec<HashMap<String, Vec<HashMap<String, Option<PyObject>>>>>,
     file_name: String,
     password: Option<String>
 ) -> PyResult<()> {
@@ -72,9 +72,11 @@ fn save_records_multiple_sheets(
         for (sheet_name, records) in record_map {
             // Validate sheet name
             if !validate_sheet_name(&sheet_name) {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Invalid sheet name '{}'. Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\", sheet_name)
-                ));
+                return Err(
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        format!("Invalid sheet name '{}'. Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\", sheet_name)
+                    )
+                );
             }
 
             let worksheet = workbook.add_worksheet();
@@ -94,10 +96,50 @@ fn save_records_multiple_sheets(
 
                 for (row, record) in records.iter().enumerate() {
                     for (col, header) in headers.iter().enumerate() {
-                        if let Some(value) = record.get(header) {
-                            let _ = worksheet
-                                .write_string((row + 1) as u32, col as u16, value.to_string())
-                                .map_err(|e| format!("Failed to write data: {}", e));
+                        match record.get(header) {
+                            Some(Some(value)) => {
+                                Python::with_gil(|py| {
+                                    if value.is_none(py) {
+                                        let _ = worksheet
+                                            .write_string((row + 1) as u32, col as u16, "")
+                                            .map_err(|e| format!("Failed to write data: {}", e));
+                                    } else if let Ok(str_val) = value.extract::<String>(py) {
+                                        let _ = worksheet
+                                            .write_string((row + 1) as u32, col as u16, str_val)
+                                            .map_err(|e| format!("Failed to write data: {}", e));
+                                    } else if let Ok(int_val) = value.extract::<i64>(py) {
+                                        let _ = worksheet
+                                            .write_number(
+                                                (row + 1) as u32,
+                                                col as u16,
+                                                int_val as f64
+                                            )
+                                            .map_err(|e| format!("Failed to write data: {}", e));
+                                    } else if let Ok(float_val) = value.extract::<f64>(py) {
+                                        let _ = worksheet
+                                            .write_number((row + 1) as u32, col as u16, float_val)
+                                            .map_err(|e| format!("Failed to write data: {}", e));
+                                    } else if let Ok(bool_val) = value.extract::<bool>(py) {
+                                        let _ = worksheet
+                                            .write_boolean((row + 1) as u32, col as u16, bool_val)
+                                            .map_err(|e| format!("Failed to write data: {}", e));
+                                    } else {
+                                        // For any other type, convert to string
+                                        if let Ok(str_val) = value.extract::<String>(py) {
+                                            let _ = worksheet
+                                                .write_string((row + 1) as u32, col as u16, str_val)
+                                                .map_err(|e|
+                                                    format!("Failed to write data: {}", e)
+                                                );
+                                        }
+                                    }
+                                });
+                            }
+                            Some(None) | None => {
+                                let _ = worksheet
+                                    .write_string((row + 1) as u32, col as u16, "")
+                                    .map_err(|e| format!("Failed to write data: {}", e));
+                            }
                         }
                     }
                 }
@@ -120,7 +162,7 @@ fn save_records_multiple_sheets(
 #[pyfunction]
 #[pyo3(signature = (records, file_name, sheet_name = None, password = None))]
 fn save_records(
-    records: Vec<HashMap<String, String>>,
+    records: Vec<HashMap<String, Option<PyObject>>>,
     file_name: String,
     sheet_name: Option<String>,
     password: Option<String>
@@ -130,9 +172,11 @@ fn save_records(
     if let Some(sheet_name) = sheet_name {
         // Validate sheet name if provided
         if !validate_sheet_name(&sheet_name) {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                format!("Invalid sheet name '{}'. Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\", sheet_name)
-            ));
+            return Err(
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Invalid sheet name '{}'. Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\", sheet_name)
+                )
+            );
         }
         let _ = worksheet.set_name(sheet_name);
     }
@@ -152,10 +196,44 @@ fn save_records(
 
         for (row, record) in records.iter().enumerate() {
             for (col, header) in headers.iter().enumerate() {
-                if let Some(value) = record.get(header) {
-                    let _ = worksheet
-                        .write_string((row + 1) as u32, col as u16, value.to_string())
-                        .map_err(|e| format!("Failed to write data: {}", e));
+                match record.get(header) {
+                    Some(Some(value)) => {
+                        Python::with_gil(|py| {
+                            if value.is_none(py) {
+                                let _ = worksheet
+                                    .write_string((row + 1) as u32, col as u16, "")
+                                    .map_err(|e| format!("Failed to write data: {}", e));
+                            } else if let Ok(str_val) = value.extract::<String>(py) {
+                                let _ = worksheet
+                                    .write_string((row + 1) as u32, col as u16, str_val)
+                                    .map_err(|e| format!("Failed to write data: {}", e));
+                            } else if let Ok(int_val) = value.extract::<i64>(py) {
+                                let _ = worksheet
+                                    .write_number((row + 1) as u32, col as u16, int_val as f64)
+                                    .map_err(|e| format!("Failed to write data: {}", e));
+                            } else if let Ok(float_val) = value.extract::<f64>(py) {
+                                let _ = worksheet
+                                    .write_number((row + 1) as u32, col as u16, float_val)
+                                    .map_err(|e| format!("Failed to write data: {}", e));
+                            } else if let Ok(bool_val) = value.extract::<bool>(py) {
+                                let _ = worksheet
+                                    .write_boolean((row + 1) as u32, col as u16, bool_val)
+                                    .map_err(|e| format!("Failed to write data: {}", e));
+                            } else {
+                                // For any other type, convert to string
+                                if let Ok(str_val) = value.extract::<String>(py) {
+                                    let _ = worksheet
+                                        .write_string((row + 1) as u32, col as u16, str_val)
+                                        .map_err(|e| format!("Failed to write data: {}", e));
+                                }
+                            }
+                        });
+                    }
+                    Some(None) | None => {
+                        let _ = worksheet
+                            .write_string((row + 1) as u32, col as u16, "")
+                            .map_err(|e| format!("Failed to write data: {}", e));
+                    }
                 }
             }
         }

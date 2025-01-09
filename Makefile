@@ -22,6 +22,9 @@ install-production:
 test:
 	pytest tests/ -v -ra --durations=0 -o log_cli=true
 
+test-benchmark:
+	pytest tests/ -v -ra --durations=0 -o log_cli=true --codspeed
+
 clean:
 	rm -rf target
 	rm -rf .pytest_cache

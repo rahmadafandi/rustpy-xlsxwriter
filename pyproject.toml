@@ -12,14 +12,9 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
-authors = [
-    { name = "Rahmad Afandi", email = "rahmadafandiii@gmail.com" }
-]
+authors = [{ name = "Rahmad Afandi", email = "rahmadafandiii@gmail.com" }]
 
 [project.optional-dependencies]
-tests = [
-    "pytest",
-    "XlsxWriter",
-]
+tests = ["pytest", "XlsxWriter", "pytest-codspeed","faker"]
 [tool.maturin]
 features = ["pyo3/extension-module"]

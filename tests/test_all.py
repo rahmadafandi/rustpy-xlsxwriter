@@ -1,8 +1,8 @@
 import os
 from importlib.metadata import version
-
 import pytest
 import xlsxwriter
+from typing import List, Dict, Any
 
 import rustpy_xlsxwriter
 
@@ -18,20 +18,58 @@ def setup_module():
                 os.remove(os.path.join("tmp", file))
 
 
-def test_get_version():
+@pytest.mark.benchmark
+def test_get_version() -> None:
+    """Test that version matches package metadata"""
     assert rustpy_xlsxwriter.get_version() == version("rustpy-xlsxwriter")
 
 
-def generate_test_records(count):
-    """Helper function to generate test records using multiple threads"""
+@pytest.mark.benchmark
+def generate_test_records(count: int) -> List[Dict[str, Any]]:
+    """Generate test records using multiple threads.
+
+    Args:
+        count: Number of records to generate
+
+    Returns:
+        List of dictionaries containing test data
+    """
     import math
     from concurrent.futures import ThreadPoolExecutor
+    from faker import Faker
+    import random
 
-    def generate_chunk(start, end):
-        return [{"a": str(i), "b": str(i)} for i in range(start, end)]
+    fake = Faker()
 
-    # Use number of CPU cores for thread count
-    num_threads = os.cpu_count()
+    def generate_chunk(start: int, end: int) -> List[Dict[str, str]]:
+        """Generate a chunk of test records.
+
+        Args:
+            start: Start index
+            end: End index
+
+        Returns:
+            List of dictionaries with test data
+        """
+        return [
+            {
+                "name": fake.name(),
+                "address": (
+                    fake.address()
+                    if random.random() > 0.3
+                    else random.choice([None, ""])
+                ),
+                "something": (
+                    ". ".join(fake.words(5))
+                    if random.random() > 0.3
+                    else random.choice([None, ""])
+                ),
+                "numeric_data": random.randint(0, 100),
+            }
+            for _ in range(start, end)
+        ]
+
+    num_threads = os.cpu_count() or 1
     chunk_size = math.ceil(count / num_threads)
 
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
@@ -47,21 +85,34 @@ def generate_test_records(count):
     return records
 
 
-def generate_test_records_with_sheet_name(count, error_sheet_name=False):
-    """Helper function to generate test records with sheet name"""
+@pytest.mark.benchmark
+def generate_test_records_with_sheet_name(
+    count: int, error_sheet_name: bool = False
+) -> List[Dict[str, List[Dict[str, Any]]]]:
+    """Generate test records with sheet names.
+
+    Args:
+        count: Number of records per sheet
+        error_sheet_name: Whether to generate invalid sheet names
+
+    Returns:
+        List of dictionaries mapping sheet names to records
+    """
     records = []
     for i in range(count):
-        if error_sheet_name:
-            sheet_name = f"Test[]"
-        else:
-            sheet_name = f"Sheet{i}"
+        sheet_name = "Test[]" if error_sheet_name else f"Sheet{i}"
         records.append({sheet_name: generate_test_records(count)})
     return records
 
 
-@pytest.mark.parametrize("record_count", [10, 10, 10])
-def test_save_records_multiple_sheets(record_count):
-    """Test saving records using multiple sheets with different record counts"""
+@pytest.mark.benchmark
+@pytest.mark.parametrize("record_count", [100] * 3)
+def test_save_records_multiple_sheets(record_count: int) -> None:
+    """Test saving records to multiple sheets.
+
+    Args:
+        record_count: Number of records per sheet
+    """
     records = generate_test_records_with_sheet_name(record_count)
     filename = f"tmp/test_{record_count}_multiple_sheets.xlsx"
     assert (
@@ -71,8 +122,14 @@ def test_save_records_multiple_sheets(record_count):
     assert os.path.exists(filename)
 
 
-@pytest.mark.parametrize("record_count", [10, 10, 10])
-def test_save_error_name_sheet_records_single_sheet(record_count):
+@pytest.mark.benchmark
+@pytest.mark.parametrize("record_count", [100000] * 3)
+def test_save_error_name_sheet_records_single_sheet(record_count: int) -> None:
+    """Test error handling for invalid sheet names in single sheet mode.
+
+    Args:
+        record_count: Number of records to generate
+    """
     records = generate_test_records(record_count)
     filename = f"tmp/test_{record_count}_single_sheet_error.xlsx"
     sheet_name = "Test[]"
@@ -85,8 +142,14 @@ def test_save_error_name_sheet_records_single_sheet(record_count):
     assert not os.path.exists(filename)
 
 
-@pytest.mark.parametrize("record_count", [10, 10, 10])
-def test_save_error_name_sheet_records_multiple_sheets(record_count):
+@pytest.mark.benchmark
+@pytest.mark.parametrize("record_count", [100] * 3)
+def test_save_error_name_sheet_records_multiple_sheets(record_count: int) -> None:
+    """Test error handling for invalid sheet names in multiple sheet mode.
+
+    Args:
+        record_count: Number of records per sheet
+    """
     records = generate_test_records_with_sheet_name(record_count, True)
     filename = f"tmp/test_{record_count}_multiple_sheets_error.xlsx"
     with pytest.raises(ValueError) as e:
@@ -98,16 +161,14 @@ def test_save_error_name_sheet_records_multiple_sheets(record_count):
     assert not os.path.exists(filename)
 
 
-@pytest.mark.parametrize(
-    "record_count",
-    [
-        1000,
-        1000,
-        1000,
-    ],
-)
-def test_save_records_single_sheet(record_count):
-    """Test saving records using single thread with different record counts"""
+@pytest.mark.benchmark
+@pytest.mark.parametrize("record_count", [100000] * 3)
+def test_save_records_single_sheet(record_count: int) -> None:
+    """Test saving records to a single sheet.
+
+    Args:
+        record_count: Number of records to generate
+    """
     records = generate_test_records(record_count)
     filename = f"tmp/test_{record_count}.xlsx"
     sheet_name = f"Test {record_count}"
@@ -118,23 +179,21 @@ def test_save_records_single_sheet(record_count):
     assert os.path.exists(filename)
 
 
-@pytest.mark.parametrize(
-    "record_count",
-    [
-        1000,
-        1000,
-        1000,
-    ],
-)
-def test_xlsxwriter(record_count):
-    """Test saving records using XlsxWriter library"""
+@pytest.mark.benchmark
+@pytest.mark.parametrize("record_count", [100000] * 3)
+def test_xlsxwriter(record_count: int) -> None:
+    """Benchmark test using native XlsxWriter library.
+
+    Args:
+        record_count: Number of records to generate
+    """
     filename = f"tmp/test_{record_count}_xlsxwriter.xlsx"
     workbook = xlsxwriter.Workbook(filename)
     worksheet = workbook.add_worksheet()
     records = generate_test_records(record_count)
 
     # Write headers
-    headers = records[0].keys()
+    headers = list(records[0].keys())
     for col, header in enumerate(headers):
         worksheet.write(0, col, header)
 
@@ -147,45 +206,56 @@ def test_xlsxwriter(record_count):
     assert os.path.exists(filename)
 
 
-def test_get_name():
+@pytest.mark.benchmark
+def test_get_name() -> None:
+    """Test get_name returns correct package name"""
     assert rustpy_xlsxwriter.get_name() == "rustpy-xlsxwriter"
 
 
-def test_get_authors():
+@pytest.mark.benchmark
+def test_get_authors() -> None:
+    """Test get_authors returns correct author info"""
     assert rustpy_xlsxwriter.get_authors() == "Rahmad Afandi <rahmadafandiii@gmail.com>"
 
 
-def test_get_description():
+@pytest.mark.benchmark
+def test_get_description() -> None:
+    """Test get_description returns correct package description"""
     assert (
         rustpy_xlsxwriter.get_description()
         == "Rust Python bindings for rust_xlsxwriter"
     )
 
 
-def test_get_repository():
+@pytest.mark.benchmark
+def test_get_repositorvy() -> None:
+    """Test get_repository returns correct repository URL"""
     assert (
         rustpy_xlsxwriter.get_repository()
         == "https://github.com/rahmadafandi/rustpy-xlsxwriter"
     )
 
 
-def test_get_homepage():
+@pytest.mark.benchmark
+def test_get_homepage() -> None:
+    """Test get_homepage returns correct homepage URL"""
     assert (
         rustpy_xlsxwriter.get_homepage()
         == "https://github.com/rahmadafandi/rustpy-xlsxwriter"
     )
 
 
-def test_get_license():
+@pytest.mark.benchmark
+def test_get_license() -> None:
+    """Test get_license returns correct license"""
     assert rustpy_xlsxwriter.get_license() == "MIT"
 
 
-def test_validate_sheet_name():
+@pytest.mark.benchmark
+def test_validate_sheet_name() -> None:
+    """Test sheet name validation logic"""
     assert rustpy_xlsxwriter.validate_sheet_name("Test") is True
-    assert rustpy_xlsxwriter.validate_sheet_name("Test[") is False
-    assert rustpy_xlsxwriter.validate_sheet_name("Test]") is False
-    assert rustpy_xlsxwriter.validate_sheet_name("Test:") is False
-    assert rustpy_xlsxwriter.validate_sheet_name("Test*") is False
-    assert rustpy_xlsxwriter.validate_sheet_name("Test?") is False
-    assert rustpy_xlsxwriter.validate_sheet_name("Test/") is False
-    assert rustpy_xlsxwriter.validate_sheet_name("Test\\") is False
+
+    invalid_chars = ["[", "]", ":", "*", "?", "/", "\\"]
+    for char in invalid_chars:
+        assert rustpy_xlsxwriter.validate_sheet_name(f"Test{char}") is False
