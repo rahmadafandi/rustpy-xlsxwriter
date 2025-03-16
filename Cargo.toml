@@ -1,6 +1,6 @@
 [package]
 name = "rustpy-xlsxwriter"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 authors = ["Rahmad Afandi <rahmadafandiii@gmail.com>"]
 description = "Rust Python bindings for rust_xlsxwriter"
@@ -19,7 +19,7 @@ crate-type = ["cdylib"]
 indexmap = "2.8.0"
 num_cpus = "1.16.0"
 pyo3 = "0.23.3"
-rust_xlsxwriter = "0.80.0"
+rust_xlsxwriter = { version = "0.80.0", features = ["chrono", "constant_memory", "ryu", "serde", "zlib"] }
 
 [package.metadata.pyo3]
 name = "rustpy_xlsxwriter.rustpy_xlsxwriter"

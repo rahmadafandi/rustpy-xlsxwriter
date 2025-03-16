@@ -44,17 +44,24 @@ def generate_test_records(count: int) -> List[Dict[str, Any]]:
     # Generate base records with more varied data types
     base_records = []
     for _ in range(20):  # Increased variety in base records
-        record = {
-            "name": fake.name(),
-            "email": fake.email(),
-            "address": fake.address() if random.random() > 0.2 else random.choice([None, ""]),
-            "phone": fake.phone_number() if random.random() > 0.2 else random.choice([None, ""]),
-            "date": fake.date() if random.random() > 0.2 else None,
-            "numeric_int": random.randint(-1000, 1000),
-            "numeric_float": round(random.uniform(-100.0, 100.0), 2),
-            "boolean": random.choice([True, False, None]),
-            "text": fake.text(max_nb_chars=50) if random.random() > 0.2 else random.choice([None, ""]),
-        }
+        record = {}
+        record["name"] = fake.name()
+        record["email"] = fake.email()
+        record["address"] = (
+            fake.address() if random.random() > 0.2 else random.choice([None, ""])
+        )
+        record["phone"] = (
+            fake.phone_number() if random.random() > 0.2 else random.choice([None, ""])
+        )
+        record["date"] = fake.date() if random.random() > 0.2 else None
+        record["numeric_int"] = random.randint(-1000, 1000)
+        record["numeric_float"] = round(random.uniform(-100.0, 100.0), 2)
+        record["text"] = (
+            fake.text(max_nb_chars=50)
+            if random.random() > 0.2
+            else random.choice([None, ""])
+        )
+        record["boolean"] = random.choice([True, False, None])
         base_records.append(record)
 
     # More efficient record generation using list multiplication and slicing
@@ -77,15 +84,17 @@ def generate_test_records_with_sheet_name(
     Returns:
         List of dictionaries mapping sheet names to records
     """
+    # Generate records once and reuse for all sheets
+    shared_records = generate_test_records(count)
     records = []
     for i in range(count):
         sheet_name = "Test[]" if error_sheet_name else f"Sheet{i}"
-        records.append({sheet_name: generate_test_records(count)})
+        records.append({sheet_name: shared_records})
     return records
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [100] * 3)
+@pytest.mark.parametrize("record_count", [1000])
 def test_save_records_multiple_sheets(record_count: int) -> None:
     """Test saving records to multiple sheets.
 
@@ -102,7 +111,7 @@ def test_save_records_multiple_sheets(record_count: int) -> None:
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [100000] * 3)
+@pytest.mark.parametrize("record_count", [1000000])
 def test_save_error_name_sheet_records_single_sheet(record_count: int) -> None:
     """Test error handling for invalid sheet names in single sheet mode.
 
@@ -122,7 +131,7 @@ def test_save_error_name_sheet_records_single_sheet(record_count: int) -> None:
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [100] * 3)
+@pytest.mark.parametrize("record_count", [1000])
 def test_save_error_name_sheet_records_multiple_sheets(record_count: int) -> None:
     """Test error handling for invalid sheet names in multiple sheet mode.
 
@@ -141,7 +150,7 @@ def test_save_error_name_sheet_records_multiple_sheets(record_count: int) -> Non
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [100000] * 3)
+@pytest.mark.parametrize("record_count", [1000000])
 def test_save_records_single_sheet(record_count: int) -> None:
     """Test saving records to a single sheet.
 
@@ -159,7 +168,7 @@ def test_save_records_single_sheet(record_count: int) -> None:
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [100000] * 3)
+@pytest.mark.parametrize("record_count", [1000000])
 def test_xlsxwriter(record_count: int) -> None:
     """Benchmark test using native XlsxWriter library.
 

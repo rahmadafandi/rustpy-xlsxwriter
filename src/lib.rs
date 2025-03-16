@@ -117,7 +117,7 @@ fn save_records_multiple_sheets(
                 );
             }
 
-            let worksheet = workbook.add_worksheet();
+            let worksheet = workbook.add_worksheet_with_constant_memory();
             let _ = worksheet.set_name(sheet_name);
             if let Some(first_record) = records.records.first() {
                 let headers: Vec<String> = first_record.hash.keys().cloned().collect();
@@ -205,7 +205,7 @@ fn save_records(
     password: Option<String>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
-    let worksheet = workbook.add_worksheet();
+    let worksheet = workbook.add_worksheet_with_constant_memory();
     if let Some(sheet_name) = sheet_name {
         // Validate sheet name if provided
         if !validate_sheet_name(&sheet_name) {
@@ -299,7 +299,7 @@ fn save_records(
 //     password: Option<String>
 // ) -> PyResult<()> {
 //     let mut workbook = Workbook::new();
-//     let worksheet = workbook.add_worksheet();
+//     let worksheet = workbook.add_worksheet_with_constant_memory();
 //     if let Some(sheet_name) = sheet_name {
 //         let _ = worksheet.set_name(sheet_name);
 //     }
