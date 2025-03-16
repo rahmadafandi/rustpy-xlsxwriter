@@ -16,6 +16,7 @@ name = "rustpy_xlsxwriter"
 crate-type = ["cdylib"]
 
 [dependencies]
+indexmap = "2.8.0"
 num_cpus = "1.16.0"
 pyo3 = "0.23.3"
 rust_xlsxwriter = "0.80.0"

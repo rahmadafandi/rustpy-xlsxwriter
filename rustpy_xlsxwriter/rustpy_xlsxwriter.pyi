@@ -124,3 +124,17 @@ def validate_sheet_name(name: str) -> bool:
         bool: True if the sheet name is valid for Excel, False otherwise
     """
     pass
+
+
+__all__ = [
+    "get_version",
+    "save_records",
+    "save_records_multiple_sheets",
+    "get_name",
+    "get_authors",
+    "get_description",
+    "get_repository",
+    "get_homepage",
+    "get_license",
+    "validate_sheet_name",
+]

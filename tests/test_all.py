@@ -26,7 +26,7 @@ def test_get_version() -> None:
 
 @pytest.mark.benchmark
 def generate_test_records(count: int) -> List[Dict[str, Any]]:
-    """Generate test records using multiple threads.
+    """Generate test records by repeating a small set of random data.
 
     Args:
         count: Number of records to generate
@@ -34,53 +34,32 @@ def generate_test_records(count: int) -> List[Dict[str, Any]]:
     Returns:
         List of dictionaries containing test data
     """
-    import math
-    from concurrent.futures import ThreadPoolExecutor
     from faker import Faker
     import random
 
     fake = Faker()
+    fake.seed_instance(42)  # For reproducible test data
+    random.seed(42)
 
-    def generate_chunk(start: int, end: int) -> List[Dict[str, str]]:
-        """Generate a chunk of test records.
+    # Generate base records with more varied data types
+    base_records = []
+    for _ in range(20):  # Increased variety in base records
+        record = {
+            "name": fake.name(),
+            "email": fake.email(),
+            "address": fake.address() if random.random() > 0.2 else random.choice([None, ""]),
+            "phone": fake.phone_number() if random.random() > 0.2 else random.choice([None, ""]),
+            "date": fake.date() if random.random() > 0.2 else None,
+            "numeric_int": random.randint(-1000, 1000),
+            "numeric_float": round(random.uniform(-100.0, 100.0), 2),
+            "boolean": random.choice([True, False, None]),
+            "text": fake.text(max_nb_chars=50) if random.random() > 0.2 else random.choice([None, ""]),
+        }
+        base_records.append(record)
 
-        Args:
-            start: Start index
-            end: End index
-
-        Returns:
-            List of dictionaries with test data
-        """
-        return [
-            {
-                "name": fake.name(),
-                "address": (
-                    fake.address()
-                    if random.random() > 0.3
-                    else random.choice([None, ""])
-                ),
-                "something": (
-                    ". ".join(fake.words(5))
-                    if random.random() > 0.3
-                    else random.choice([None, ""])
-                ),
-                "numeric_data": random.randint(0, 100),
-            }
-            for _ in range(start, end)
-        ]
-
-    num_threads = os.cpu_count() or 1
-    chunk_size = math.ceil(count / num_threads)
-
-    with ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = []
-        for i in range(0, count, chunk_size):
-            end = min(i + chunk_size, count)
-            futures.append(executor.submit(generate_chunk, i, end))
-
-        records = []
-        for future in futures:
-            records.extend(future.result())
+    # More efficient record generation using list multiplication and slicing
+    multiplier = count // len(base_records) + 1
+    records = (base_records * multiplier)[:count]
 
     return records
 

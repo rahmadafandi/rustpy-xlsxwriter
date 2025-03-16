@@ -1,4 +1,6 @@
+use indexmap::IndexMap;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use rust_xlsxwriter::Workbook;
 use std::collections::HashMap;
 // TODO: Add this back in when we have a better solution
@@ -60,12 +62,48 @@ fn validate_sheet_name(name: &str) -> bool {
     !name.contains(&['[', ']', ':', '*', '?', '/', '\\'][..])
 }
 
+#[derive(Debug)]
+struct PyIndexMap {
+    hash: IndexMap<String, Option<PyObject>>
+}
+
+impl<'source> FromPyObject<'source> for PyIndexMap {
+    fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
+        let dict = ob.downcast::<PyDict>()?;
+        let mut map = IndexMap::new();
+
+        for (key, value) in dict.iter() {
+            let key = key.extract::<String>()?;
+            let value = if value.is_none() {
+                None
+            } else {
+                Some(value.into_py(dict.py()))
+            };
+            map.insert(key, value);
+        }
+
+        Ok(PyIndexMap { hash: map })
+    }
+}
+
+#[derive(Debug)]
+struct PyRecords {
+    records: Vec<PyIndexMap>,
+}
+
+impl<'source> FromPyObject<'source> for PyRecords {
+    fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
+        let list = ob.extract::<Vec<PyIndexMap>>()?;
+        Ok(PyRecords { records: list })
+    }
+}
+
 #[pyfunction]
 #[pyo3(signature = (records_with_sheet_name, file_name, password = None))]
 fn save_records_multiple_sheets(
-    records_with_sheet_name: Vec<HashMap<String, Vec<HashMap<String, Option<PyObject>>>>>,
+    records_with_sheet_name: Vec<HashMap<String, PyRecords>>,
     file_name: String,
-    password: Option<String>
+    password: Option<String>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for record_map in records_with_sheet_name {
@@ -81,22 +119,23 @@ fn save_records_multiple_sheets(
 
             let worksheet = workbook.add_worksheet();
             let _ = worksheet.set_name(sheet_name);
-            if let Some(first_record) = records.first() {
-                let headers: Vec<String> = first_record.keys().cloned().collect();
+            if let Some(first_record) = records.records.first() {
+                let headers: Vec<String> = first_record.hash.keys().cloned().collect();
                 println!("headers: {:?}", headers);
                 for (col, header) in headers.iter().enumerate() {
                     let _ = worksheet
                         .write_string(0, col as u16, header.to_string())
                         .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                                format!("Failed to write header: {}", e)
-                            )
+                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                                "Failed to write header: {}",
+                                e
+                            ))
                         });
                 }
 
-                for (row, record) in records.iter().enumerate() {
+                for (row, record) in records.records.iter().enumerate() {
                     for (col, header) in headers.iter().enumerate() {
-                        match record.get(header) {
+                        match record.hash.get(header) {
                             Some(Some(value)) => {
                                 Python::with_gil(|py| {
                                     if value.is_none(py) {
@@ -112,7 +151,7 @@ fn save_records_multiple_sheets(
                                             .write_number(
                                                 (row + 1) as u32,
                                                 col as u16,
-                                                int_val as f64
+                                                int_val as f64,
                                             )
                                             .map_err(|e| format!("Failed to write data: {}", e));
                                     } else if let Ok(float_val) = value.extract::<f64>(py) {
@@ -128,9 +167,9 @@ fn save_records_multiple_sheets(
                                         if let Ok(str_val) = value.extract::<String>(py) {
                                             let _ = worksheet
                                                 .write_string((row + 1) as u32, col as u16, str_val)
-                                                .map_err(|e|
+                                                .map_err(|e| {
                                                     format!("Failed to write data: {}", e)
-                                                );
+                                                });
                                         }
                                     }
                                 });
@@ -150,11 +189,9 @@ fn save_records_multiple_sheets(
             }
         }
     }
-    workbook
-        .save(&file_name)
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))
-        })?;
+    workbook.save(&file_name).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))
+    })?;
     Ok(())
 }
 
@@ -162,10 +199,10 @@ fn save_records_multiple_sheets(
 #[pyfunction]
 #[pyo3(signature = (records, file_name, sheet_name = None, password = None))]
 fn save_records(
-    records: Vec<HashMap<String, Option<PyObject>>>,
+    records: PyRecords,
     file_name: String,
     sheet_name: Option<String>,
-    password: Option<String>
+    password: Option<String>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     let worksheet = workbook.add_worksheet();
@@ -182,21 +219,22 @@ fn save_records(
     }
 
     // Write headers
-    if let Some(first_record) = records.first() {
-        let headers: Vec<String> = first_record.keys().cloned().collect();
+    if let Some(first_record) = records.records.first() {
+        let headers: Vec<String> = first_record.hash.keys().cloned().collect();
         for (col, header) in headers.iter().enumerate() {
             let _ = worksheet
                 .write_string(0, col as u16, header.to_string())
                 .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                        format!("Failed to write header: {}", e)
-                    )
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to write header: {}",
+                        e
+                    ))
                 });
         }
 
-        for (row, record) in records.iter().enumerate() {
+        for (row, record) in records.records.iter().enumerate() {
             for (col, header) in headers.iter().enumerate() {
-                match record.get(header) {
+                match record.hash.get(header) {
                     Some(Some(value)) => {
                         Python::with_gil(|py| {
                             if value.is_none(py) {
@@ -244,11 +282,9 @@ fn save_records(
     }
 
     // Save the workbook
-    let _ = workbook
-        .save(&file_name)
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))
-        });
+    let _ = workbook.save(&file_name).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))
+    });
 
     Ok(())
 }
