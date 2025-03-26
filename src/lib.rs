@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
-use rust_xlsxwriter::Workbook;
+use pyo3::types::{PyAny, PyDateAccess, PyDateTime, PyDict, PyTimeAccess};
+use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
 use std::collections::HashMap;
 // TODO: Add this back in when we have a better solution
 // use std::sync::mpsc;
@@ -64,7 +64,7 @@ fn validate_sheet_name(name: &str) -> bool {
 
 #[derive(Debug)]
 struct PyIndexMap {
-    hash: IndexMap<String, Option<PyObject>>
+    hash: IndexMap<String, Option<PyObject>>,
 }
 
 impl<'source> FromPyObject<'source> for PyIndexMap {
@@ -142,10 +142,40 @@ fn save_records_multiple_sheets(
                                         let _ = worksheet
                                             .write_string((row + 1) as u32, col as u16, "")
                                             .map_err(|e| format!("Failed to write data: {}", e));
-                                    } else if let Ok(str_val) = value.extract::<String>(py) {
+                                    } else if let Ok(datetime) =
+                                        value.downcast_bound::<PyDateTime>(py)
+                                    {
+                                        let year = datetime.get_year() as u16;
+                                        let month = datetime.get_month() as u8;
+                                        let day = datetime.get_day() as u8;
+                                        let hour = datetime.get_hour() as u16;
+                                        let minute = datetime.get_minute() as u8;
+                                        let second = datetime.get_second() as u8;
+                                        let format3 =
+                                            Format::new().set_num_format("yyyy-mm-ddThh:mm:ss");
+                                        let _ = worksheet.set_column_format(col as u16, &format3);
+
+                                        let excel_datetime =
+                                            ExcelDateTime::from_ymd(year, month, day)
+                                                .map_err(|e| {
+                                                    format!("Failed to create datetime: {}", e)
+                                                })
+                                                .and_then(|dt| {
+                                                    dt.and_hms(hour, minute, second).map_err(|e| {
+                                                        format!("Failed to create timestamp: {}", e)
+                                                    })
+                                                })
+                                                .unwrap();
+
                                         let _ = worksheet
-                                            .write_string((row + 1) as u32, col as u16, str_val)
-                                            .map_err(|e| format!("Failed to write data: {}", e));
+                                            .write_datetime(
+                                                (row + 1) as u32,
+                                                col as u16,
+                                                &excel_datetime,
+                                            )
+                                            .map_err(|e| {
+                                                format!("Failed to write datetime: {}", e)
+                                            });
                                     } else if let Ok(int_val) = value.extract::<i64>(py) {
                                         let _ = worksheet
                                             .write_number(
@@ -241,10 +271,27 @@ fn save_records(
                                 let _ = worksheet
                                     .write_string((row + 1) as u32, col as u16, "")
                                     .map_err(|e| format!("Failed to write data: {}", e));
-                            } else if let Ok(str_val) = value.extract::<String>(py) {
+                            } else if let Ok(datetime) = value.downcast_bound::<PyDateTime>(py) {
+                                let year = datetime.get_year() as u16;
+                                let month = datetime.get_month() as u8;
+                                let day = datetime.get_day() as u8;
+                                let hour = datetime.get_hour() as u16;
+                                let minute = datetime.get_minute() as u8;
+                                let second = datetime.get_second() as u8;
+                                let format3 = Format::new().set_num_format("yyyy-mm-ddThh:mm:ss");
+                                let _ = worksheet.set_column_format(col as u16, &format3);
+                                let excel_datetime = ExcelDateTime::from_ymd(year, month, day)
+                                    .map_err(|e| format!("Failed to create datetime: {}", e))
+                                    .and_then(|dt| {
+                                        dt.and_hms(hour, minute, second).map_err(|e| {
+                                            format!("Failed to create timestamp: {}", e)
+                                        })
+                                    })
+                                    .unwrap();
+
                                 let _ = worksheet
-                                    .write_string((row + 1) as u32, col as u16, str_val)
-                                    .map_err(|e| format!("Failed to write data: {}", e));
+                                    .write_datetime((row + 1) as u32, col as u16, &excel_datetime)
+                                    .map_err(|e| format!("Failed to write datetime: {}", e));
                             } else if let Ok(int_val) = value.extract::<i64>(py) {
                                 let _ = worksheet
                                     .write_number((row + 1) as u32, col as u16, int_val as f64)
