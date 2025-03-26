@@ -1,6 +1,6 @@
 [package]
 name = "rustpy-xlsxwriter"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2021"
 authors = ["Rahmad Afandi <rahmadafandiii@gmail.com>"]
 description = "Rust Python bindings for rust_xlsxwriter"
