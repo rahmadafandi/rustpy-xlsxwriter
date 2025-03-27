@@ -8,7 +8,7 @@ def get_version() -> str:
     """
     pass
 
-def save_records(
+def write_worksheet(
     records: List[Dict[str, Any]],
     file_name: str,
     sheet_name: Optional[str] = None,
@@ -40,7 +40,7 @@ def save_records(
     pass
 
 # TODO: Add this back in when we have a better solution
-# def save_records_multithread(
+# def write_worksheet_multithread(
 #     records: List[Dict[str, Any]],
 #     file_name: str,
 #     sheet_name: Optional[str] = None,
@@ -48,7 +48,7 @@ def save_records(
 # ) -> None:
 #     pass
 
-def save_records_multiple_sheets(
+def write_worksheets(
     records_with_sheet_name: List[Dict[str, List[Dict[str, Any]]]],
     file_name: str,
     password: Optional[str] = None,
@@ -57,7 +57,7 @@ def save_records_multiple_sheets(
 
     Args:
         records_with_sheet_name: List of dictionaries where each dict maps a sheet name to its records.
-                                The records for each sheet follow the same format as save_records().
+                                The records for each sheet follow the same format as write_worksheet().
                                 Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\.
         file_name: Full path including filename where the Excel file will be saved.
                   Must have .xlsx extension.
@@ -145,8 +145,8 @@ def validate_sheet_name(name: str) -> bool:
 
 __all__ = [
     "get_version",
-    "save_records",
-    "save_records_multiple_sheets",
+    "write_worksheet",
+    "write_worksheets",
     "get_name",
     "get_authors",
     "get_description",
