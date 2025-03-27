@@ -1,12 +1,14 @@
 import os
+import random
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import version
+from typing import Any, Dict, List
+
 import pytest
 import xlsxwriter
-from typing import List, Dict, Any
-from concurrent.futures import ThreadPoolExecutor
-import rustpy_xlsxwriter
 from faker import Faker
-import random
+
+import rustpy_xlsxwriter
 
 
 def setup_module():
@@ -49,6 +51,7 @@ def _generate_base_record(fake: Faker) -> Dict[str, Any]:
         "datetime": fake.date_time() if random.random() > 0.2 else None,
         "timestamp": fake.date_time() if random.random() > 0.2 else None,
         "time": fake.time() if random.random() > 0.2 else None,
+        "dict": {"name": fake.name(), "email": fake.email()},
     }
 
 
@@ -103,18 +106,13 @@ def generate_test_records_with_sheet_name(
 
 # Rest of the test functions remain unchanged
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [100])
-def test_save_records_multiple_sheets(record_count: int) -> None:
+@pytest.mark.parametrize("record_count", [1000])
+def test_write_worksheets(record_count: int) -> None:
     """Test saving records to multiple sheets."""
     try:
         records = generate_test_records_with_sheet_name(record_count)
         filename = f"tmp/test_{record_count}_multiple_sheets.xlsx"
-        assert (
-            rustpy_xlsxwriter.save_records_multiple_sheets(
-                records, filename, "password"
-            )
-            is None
-        )
+        assert rustpy_xlsxwriter.write_worksheets(records, filename, "password") is None
         assert os.path.exists(filename)
     except Exception as e:
         print(e)
@@ -122,14 +120,14 @@ def test_save_records_multiple_sheets(record_count: int) -> None:
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [10000])
+@pytest.mark.parametrize("record_count", [1000000])
 def test_save_error_name_sheet_records_single_sheet(record_count: int) -> None:
     """Test error handling for invalid sheet names in single sheet mode."""
     records = generate_test_records(record_count)
     filename = f"tmp/test_{record_count}_single_sheet_error.xlsx"
     sheet_name = "Test[]"
     with pytest.raises(ValueError) as e:
-        rustpy_xlsxwriter.save_records(records, filename, sheet_name, "password")
+        rustpy_xlsxwriter.write_worksheet(records, filename, sheet_name, "password")
     assert (
         str(e.value)
         == "Invalid sheet name 'Test[]'. Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\"
@@ -138,13 +136,13 @@ def test_save_error_name_sheet_records_single_sheet(record_count: int) -> None:
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [100])
+@pytest.mark.parametrize("record_count", [1000])
 def test_save_error_name_sheet_records_multiple_sheets(record_count: int) -> None:
     """Test error handling for invalid sheet names in multiple sheet mode."""
     records = generate_test_records_with_sheet_name(record_count, True)
     filename = f"tmp/test_{record_count}_multiple_sheets_error.xlsx"
     with pytest.raises(ValueError) as e:
-        rustpy_xlsxwriter.save_records_multiple_sheets(records, filename, "password")
+        rustpy_xlsxwriter.write_worksheets(records, filename, "password")
     assert (
         str(e.value)
         == "Invalid sheet name 'Test[]'. Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\"
@@ -153,21 +151,21 @@ def test_save_error_name_sheet_records_multiple_sheets(record_count: int) -> Non
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [10000])
-def test_save_records_single_sheet(record_count: int) -> None:
+@pytest.mark.parametrize("record_count", [1000000])
+def test_write_worksheet_single_sheet(record_count: int) -> None:
     """Test saving records to a single sheet."""
     records = generate_test_records(record_count)
     filename = f"tmp/test_{record_count}.xlsx"
     sheet_name = f"Test {record_count}"
     assert (
-        rustpy_xlsxwriter.save_records(records, filename, sheet_name, "password")
+        rustpy_xlsxwriter.write_worksheet(records, filename, sheet_name, "password")
         is None
     )
     assert os.path.exists(filename)
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [10000])
+@pytest.mark.parametrize("record_count", [1000000])
 def test_xlsxwriter(record_count: int) -> None:
     """Benchmark test using native XlsxWriter library."""
     filename = f"tmp/test_{record_count}_xlsxwriter.xlsx"
@@ -187,7 +185,10 @@ def test_xlsxwriter(record_count: int) -> None:
         chunk = records[chunk_start:chunk_end]
         for i, record in enumerate(chunk, start=chunk_start + 1):
             for col, header in enumerate(headers):
-                worksheet.write(i, col, record[header])
+                if isinstance(record[header], (dict)):
+                    worksheet.write_string(i, col, str(record[header]))
+                else:
+                    worksheet.write(i, col, record[header])
 
     workbook.close()
     assert os.path.exists(filename)
