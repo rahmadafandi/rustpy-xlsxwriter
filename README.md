@@ -121,33 +121,32 @@ def validate_sheet_name(name: str) -> bool:
 ## Performance
 ![Test Result](image.png)
 
-The library has undergone rigorous performance testing with large-scale datasets to evaluate its speed and efficiency. Benchmarks show that this Rust-based implementation consistently outperforms the pure Python xlsxwriter library by a significant margin, delivering up to 6.6x faster processing speeds while maintaining memory efficiency. The performance metrics below demonstrate these substantial improvements.
+RustPy-XlsxWriter has been extensively tested with large-scale datasets to measure its performance capabilities. Our benchmarks demonstrate that this Rust-powered implementation delivers exceptional speed improvements compared to traditional Python solutions. The library achieves up to 6x faster processing speeds while maintaining optimal memory usage, making it ideal for handling large datasets efficiently.
 
 Based on performance testing with 1 million records:
 
-| Operation | Records | Time (seconds) |
-|-----------|---------|----------------|
-| Single Sheet | 1,000,000 | ~60.38s |
-| Multiple Sheets | 1,000,000 | ~64.13s |
-| Python xlsxwriter | 1,000,000 | ~398.43s |
+| Operation | Records | Time (seconds) | Comparison |
+|-----------|---------|----------------|------------|
+| Single Sheet | 1,000,000 | ~67.80s | 5.4x faster |
+| Multiple Sheets | 1,000,000 | ~61.19s | 6x faster |
+| Python xlsxwriter | 1,000,000 | ~364.46s | baseline |
 
 Key findings:
-- The Rust implementation processes data approximately 6.6x faster than Python's xlsxwriter library
-- Single sheet operations complete in around 60 seconds for 1 million records
-- Multiple sheet operations take slightly longer at ~64 seconds for the same volume
-- Performance scales linearly with data size - smaller datasets process proportionally faster
+- Demonstrates superior performance with 6x faster processing compared to Python's xlsxwriter
+- Efficiently handles single sheet operations for 1 million records
+- Maintains consistent performance for multiple sheet operations
+- Shows excellent scalability - performance improves proportionally with smaller datasets
 
-The significant performance advantages are achieved through:
+The exceptional performance is achieved through several key optimizations:
 
-1. Rust's zero-cost abstractions and efficient memory management
-2. Direct compilation to optimized native machine code
-3. Constant memory usage optimization via rust_xlsxwriter features
-4. Enhanced floating point handling with the ryu feature
-5. Optimized large file handling using zlib compression
-6. Rust's ownership model preventing memory leaks and race conditions
+1. Leveraging Rust's zero-cost abstractions and memory management system
+2. Native machine code compilation for maximum efficiency
+3. Advanced memory optimization using rust_xlsxwriter capabilities
+4. High-precision floating point operations with ryu
+5. Efficient large file handling through zlib compression
+6. Memory safety guarantees via Rust's ownership system
 
-These optimizations ensure excellent performance across different dataset sizes while maintaining memory efficiency.
-
+These technical advantages ensure consistent high performance and reliability across varying workload sizes while maintaining optimal resource utilization.
 ## Usage Examples
 
 ### Write Records to a Single Sheet

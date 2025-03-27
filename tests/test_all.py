@@ -106,7 +106,7 @@ def generate_test_records_with_sheet_name(
 
 # Rest of the test functions remain unchanged
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [100])
+@pytest.mark.parametrize("record_count", [1000])
 def test_write_worksheets(record_count: int) -> None:
     """Test saving records to multiple sheets."""
     try:
@@ -120,7 +120,7 @@ def test_write_worksheets(record_count: int) -> None:
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [10000])
+@pytest.mark.parametrize("record_count", [1000000])
 def test_save_error_name_sheet_records_single_sheet(record_count: int) -> None:
     """Test error handling for invalid sheet names in single sheet mode."""
     records = generate_test_records(record_count)
@@ -136,7 +136,7 @@ def test_save_error_name_sheet_records_single_sheet(record_count: int) -> None:
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [100])
+@pytest.mark.parametrize("record_count", [1000])
 def test_save_error_name_sheet_records_multiple_sheets(record_count: int) -> None:
     """Test error handling for invalid sheet names in multiple sheet mode."""
     records = generate_test_records_with_sheet_name(record_count, True)
@@ -151,7 +151,7 @@ def test_save_error_name_sheet_records_multiple_sheets(record_count: int) -> Non
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [10000])
+@pytest.mark.parametrize("record_count", [1000000])
 def test_write_worksheet_single_sheet(record_count: int) -> None:
     """Test saving records to a single sheet."""
     records = generate_test_records(record_count)
@@ -165,7 +165,7 @@ def test_write_worksheet_single_sheet(record_count: int) -> None:
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [10000])
+@pytest.mark.parametrize("record_count", [1000000])
 def test_xlsxwriter(record_count: int) -> None:
     """Benchmark test using native XlsxWriter library."""
     filename = f"tmp/test_{record_count}_xlsxwriter.xlsx"
