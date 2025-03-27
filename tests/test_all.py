@@ -1,12 +1,14 @@
 import os
+import random
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import version
+from typing import Any, Dict, List
+
 import pytest
 import xlsxwriter
-from typing import List, Dict, Any
-from concurrent.futures import ThreadPoolExecutor
-import rustpy_xlsxwriter
 from faker import Faker
-import random
+
+import rustpy_xlsxwriter
 
 
 def setup_module():

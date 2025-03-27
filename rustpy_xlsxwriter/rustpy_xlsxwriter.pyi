@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Any, Union
+from typing import Any, Dict, List, Optional, Union
 
 def get_version() -> str:
     """Get the version of the rustpy_xlsxwriter package.
