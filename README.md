@@ -23,6 +23,52 @@ pip install rustpy-xlsxwriter
 - Save data into multiple sheets.
 - Optionally protect Excel files with passwords.
 - Sheet name validation utilities.
+- Freeze panes support for better worksheet navigation.
+
+## Freeze Panes
+
+RustPy-XlsxWriter supports freezing rows and columns in worksheets to keep important data visible while scrolling. This feature is available for both single and multiple worksheet scenarios.
+
+### Single Worksheet
+
+For a single worksheet, you can freeze rows and columns using the `freeze_row` and `freeze_col` parameters:
+
+```python
+from rustpy_xlsxwriter import write_worksheet
+
+# Freeze the first row (headers)
+write_worksheet(records, "output.xlsx", freeze_row=1)
+
+# Freeze both first row and first column
+write_worksheet(records, "output.xlsx", freeze_row=1, freeze_col=1)
+```
+
+### Multiple Worksheets
+
+For multiple worksheets, you can configure freeze panes globally and/or per sheet using the `freeze_pane` parameter:
+
+```python
+from rustpy_xlsxwriter import write_worksheets
+
+# Configuration for freeze panes
+freeze_config = {
+    "general": {"row": 1, "col": 0},  # Apply to all sheets
+    "Sheet1": {"row": 1, "col": 2},  # Override for Sheet1
+    "Sheet2": {"row": 2, "col": 1}   # Override for Sheet2
+}
+
+write_worksheets(
+    records_with_sheet_name,
+    "output.xlsx",
+    freeze_panes=freeze_config
+)
+```
+
+The `freeze_panes` configuration allows you to:
+
+- Set a general configuration that applies to all sheets
+- Override the configuration for specific sheets
+- Freeze rows and columns independently
 
 ## API Reference
 
@@ -52,6 +98,8 @@ def write_worksheet(
     file_name: str,
     sheet_name: Optional[str] = None,
     password: Optional[str] = None,
+    freeze_row: Optional[int] = None,
+    freeze_col: Optional[int] = None,
 ):
     """
     Save records to a single sheet in an Excel file.
@@ -70,6 +118,8 @@ def write_worksheet(
         sheet_name: Optional name for the worksheet. If not provided, defaults to 'Sheet1'.
                    Must be <= 31 chars and cannot contain [ ] : * ? / \.
         password: Optional password to protect the workbook from modifications.
+        freeze_row: Optional row index to freeze.
+        freeze_col: Optional column index to freeze.
     """
 ```
 
@@ -82,6 +132,7 @@ def write_worksheets(
     records_with_sheet_name: List[Dict[str, List[Dict[str, Any]]]],
     file_name: str,
     password: Optional[str] = None,
+    freeze_panes: Optional[Dict[str, Any]] = None,
 ):
     """
     Save records to multiple sheets in an Excel file.
@@ -93,6 +144,11 @@ def write_worksheets(
         file_name: Full path including filename where the Excel file will be saved.
                   Must have .xlsx extension.
         password: Optional password to protect the workbook from modifications.
+        freeze_panes: Optional configuration for freeze panes.
+                      If provided, it should be a dictionary with the following keys:
+                      - 'general': A dictionary with 'row' and 'col' keys for general freeze panes.
+                      - 'Sheet Name': A dictionary where keys are sheet names and values are dictionaries
+                                          with 'row' and 'col' keys for specific sheet freeze panes.
     """
 ```
 
@@ -104,7 +160,7 @@ from rustpy_xlsxwriter import validate_sheet_name
 def validate_sheet_name(name: str) -> bool:
     """
     Validate if a sheet name is valid for Excel.
-    
+
     Args:
         name: Sheet name to validate. Excel has several restrictions on valid sheet names:
               - Maximum 31 characters
@@ -112,26 +168,28 @@ def validate_sheet_name(name: str) -> bool:
               - Cannot be empty
               - Cannot start or end with an apostrophe
               - Cannot be 'History' (reserved name)
-        
+
     Returns:
         bool: True if the sheet name is valid for Excel, False otherwise
     """
 ```
 
 ## Performance
+
 ![Test Result](image.png)
 
 RustPy-XlsxWriter has been extensively tested with large-scale datasets to measure its performance capabilities. Our benchmarks demonstrate that this Rust-powered implementation delivers exceptional speed improvements compared to traditional Python solutions. The library achieves up to 6x faster processing speeds while maintaining optimal memory usage, making it ideal for handling large datasets efficiently.
 
 Based on performance testing with 1 million records:
 
-| Operation | Records | Time (seconds) | Comparison |
-|-----------|---------|----------------|------------|
-| Single Sheet | 1,000,000 | ~67.80s | 5.4x faster |
-| Multiple Sheets | 1,000,000 | ~61.19s | 6x faster |
-| Python xlsxwriter | 1,000,000 | ~364.46s | baseline |
+| Operation         | Records   | Time (seconds) | Comparison  |
+| ----------------- | --------- | -------------- | ----------- |
+| Single Sheet      | 1,000,000 | ~67.80s        | 5.4x faster |
+| Multiple Sheets   | 1,000,000 | ~61.19s        | 6x faster   |
+| Python xlsxwriter | 1,000,000 | ~364.46s       | baseline    |
 
 Key findings:
+
 - Demonstrates superior performance with 6x faster processing compared to Python's xlsxwriter
 - Efficiently handles single sheet operations for 1 million records
 - Maintains consistent performance for multiple sheet operations
@@ -147,6 +205,7 @@ The exceptional performance is achieved through several key optimizations:
 6. Memory safety guarantees via Rust's ownership system
 
 These technical advantages ensure consistent high performance and reliability across varying workload sizes while maintaining optimal resource utilization.
+
 ## Usage Examples
 
 ### Write Records to a Single Sheet
@@ -172,7 +231,11 @@ records = [
     },
 ]
 
+# Basic usage
 write_worksheet(records, "output.xlsx", sheet_name="Sheet1")
+
+# With freeze panes - freeze first row and first column
+write_worksheet(records, "output_frozen.xlsx", sheet_name="Sheet1", freeze_row=1, freeze_col=1)
 ```
 
 ### Write Records to Multiple Sheets
@@ -211,7 +274,20 @@ records_with_sheet_name = [
     ]},
 ]
 
+# Basic usage
 write_worksheets(records_with_sheet_name, "output_multiple_sheets.xlsx")
+
+# With freeze panes configuration
+freeze_config = {
+    "general": {"row": 1, "col": 0},  # Apply to all sheets
+    "Employees": {"row": 1, "col": 2},  # Override for Employees sheet
+    "Inventory": {"row": 2, "col": 1}   # Override for Inventory sheet
+}
+write_worksheets(
+    records_with_sheet_name,
+    "output_frozen.xlsx",
+    freeze_pane=freeze_config
+)
 ```
 
 ## Contributing

@@ -247,3 +247,156 @@ def test_validate_sheet_name() -> None:
     invalid_chars = ["[", "]", ":", "*", "?", "/", "\\"]
     for char in invalid_chars:
         assert rustpy_xlsxwriter.validate_sheet_name(f"Test{char}") is False
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize("record_count", [10, 100, 1000])
+def test_single_worksheet_freeze_panes(record_count: int) -> None:
+    """Test freeze panes in single worksheet mode."""
+    records = generate_test_records(record_count)
+
+    # Test freezing only rows
+    filename = f"tmp/test_{record_count}_freeze_rows.xlsx"
+    assert rustpy_xlsxwriter.write_worksheet(records, filename, freeze_row=2) is None
+    assert os.path.exists(filename)
+
+    # Test freezing only columns
+    filename = f"tmp/test_{record_count}_freeze_cols.xlsx"
+    assert rustpy_xlsxwriter.write_worksheet(records, filename, freeze_col=1) is None
+    assert os.path.exists(filename)
+
+    # Test freezing both rows and columns
+    filename = f"tmp/test_{record_count}_freeze_both.xlsx"
+    assert (
+        rustpy_xlsxwriter.write_worksheet(records, filename, freeze_row=2, freeze_col=1)
+        is None
+    )
+    assert os.path.exists(filename)
+
+    # Test with custom sheet name
+    filename = f"tmp/test_{record_count}_freeze_custom_sheet.xlsx"
+    assert (
+        rustpy_xlsxwriter.write_worksheet(
+            records, filename, sheet_name="CustomSheet", freeze_row=2, freeze_col=1
+        )
+        is None
+    )
+    assert os.path.exists(filename)
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize("record_count", [10, 100])
+def test_multiple_worksheets_freeze_panes(record_count: int) -> None:
+    """Test freeze panes in multiple worksheet mode with FreezePaneConfig."""
+    records = generate_test_records_with_sheet_name(record_count)
+
+    # Test general freeze pane settings
+    filename = f"tmp/test_multiple_freeze_general_{record_count}.xlsx"
+    config = {"general": {"row": 2, "col": 1}}
+    assert (
+        rustpy_xlsxwriter.write_worksheets(records, filename, freeze_panes=config)
+        is None
+    )
+    assert os.path.exists(filename)
+
+    # Test sheet-specific freeze pane settings
+    filename = f"tmp/test_multiple_freeze_specific_{record_count}.xlsx"
+    config = {
+        "Sheet1": {"row": 2, "col": 1},
+        "Sheet2": {"row": 3, "col": 2},
+        "Sheet3": {"row": 1, "col": 3},
+    }
+    assert (
+        rustpy_xlsxwriter.write_worksheets(records, filename, freeze_panes=config)
+        is None
+    )
+    assert os.path.exists(filename)
+
+    # Test mixed general and sheet-specific settings
+    filename = f"tmp/test_multiple_freeze_mixed_{record_count}.xlsx"
+    config = {
+        "general": {"row": 2, "col": 1},
+        "Sheet2": {"row": 3, "col": 2},
+    }
+    assert (
+        rustpy_xlsxwriter.write_worksheets(records, filename, freeze_panes=config)
+        is None
+    )
+    assert os.path.exists(filename)
+
+    # Test with only row freeze in general settings
+    filename = f"tmp/test_multiple_freeze_row_{record_count}.xlsx"
+    config = {"general": {"row": 2}}
+    assert (
+        rustpy_xlsxwriter.write_worksheets(records, filename, freeze_panes=config)
+        is None
+    )
+    assert os.path.exists(filename)
+
+    # Test with only column freeze in general settings
+    filename = f"tmp/test_multiple_freeze_col_{record_count}.xlsx"
+    config = {"general": {"col": 2}}
+    assert (
+        rustpy_xlsxwriter.write_worksheets(records, filename, freeze_panes=config)
+        is None
+    )
+    assert os.path.exists(filename)
+
+
+@pytest.mark.benchmark
+def test_freeze_panes_edge_cases() -> None:
+    """Test edge cases for freeze panes."""
+    records = [
+        {"col1": "value1", "col2": "value2"},
+        {"col1": "value3", "col2": "value4"},
+    ]
+
+    # Test with zero values
+    filename = "tmp/test_freeze_edge_zero.xlsx"
+    assert (
+        rustpy_xlsxwriter.write_worksheet(records, filename, freeze_row=0, freeze_col=0)
+        is None
+    )
+    assert os.path.exists(filename)
+
+    # Test with None values
+    filename = "tmp/test_freeze_edge_none.xlsx"
+    assert (
+        rustpy_xlsxwriter.write_worksheet(
+            records, filename, freeze_row=None, freeze_col=None
+        )
+        is None
+    )
+    assert os.path.exists(filename)
+
+    # Test empty FreezePaneConfig
+    filename = "tmp/test_freeze_edge_empty.xlsx"
+    config = {}
+    assert (
+        rustpy_xlsxwriter.write_worksheets(
+            [{"Sheet1": records}], filename, freeze_panes=config
+        )
+        is None
+    )
+    assert os.path.exists(filename)
+
+    # Test with large freeze values
+    filename = "tmp/test_freeze_edge_large.xlsx"
+    assert (
+        rustpy_xlsxwriter.write_worksheet(
+            records, filename, freeze_row=1000, freeze_col=100
+        )
+        is None
+    )
+    assert os.path.exists(filename)
+
+    # Test with partial general config
+    filename = "tmp/test_freeze_edge_partial.xlsx"
+    config = {"general": {}}
+    assert (
+        rustpy_xlsxwriter.write_worksheets(
+            [{"Sheet1": records}], filename, freeze_panes=config
+        )
+        is None
+    )
+    assert os.path.exists(filename)

@@ -3,7 +3,7 @@ from setuptools_rust import RustExtension
 
 setup(
     name="rustpy_xlsxwriter",
-    version="0.0.6",
+    version="0.0.7",
     description="Rust Python bindings for rust_xlsxwriter",
     rust_extensions=[
         RustExtension(
