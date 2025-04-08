@@ -3,13 +3,15 @@ use pyo3::types::{PyDateAccess, PyDateTime, PyTimeAccess};
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
 use std::collections::HashMap;
 
-use crate::data_types::WorksheetData;
+use crate::data_types::{FreezePaneConfig, WorksheetData};
 use crate::utils::validate_sheet_name;
 
 fn write_worksheet_content(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     records: &WorksheetData,
     password: Option<&String>,
+    freeze_row: Option<u32>,
+    freeze_col: Option<u16>,
 ) -> PyResult<()> {
     if let Some(first_record) = records.records.first() {
         let headers: Vec<String> = first_record.hash.keys().cloned().collect();
@@ -90,6 +92,30 @@ fn write_worksheet_content(
         }
     }
 
+    // Set freeze panes if specified
+    if let (Some(row), Some(col)) = (freeze_row, freeze_col) {
+        worksheet.set_freeze_panes(row, col).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to set freeze panes: {}",
+                e
+            ))
+        })?;
+    } else if let Some(row) = freeze_row {
+        worksheet.set_freeze_panes(row, 0).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to set freeze panes: {}",
+                e
+            ))
+        })?;
+    } else if let Some(col) = freeze_col {
+        worksheet.set_freeze_panes(0, col).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to set freeze panes: {}",
+                e
+            ))
+        })?;
+    }
+
     worksheet.autofit();
     if let Some(password) = password {
         worksheet.protect_with_password(password);
@@ -99,11 +125,12 @@ fn write_worksheet_content(
 }
 
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None))]
 pub fn write_worksheets(
     records_with_sheet_name: Vec<HashMap<String, WorksheetData>>,
     file_name: String,
     password: Option<String>,
+    freeze_panes: Option<FreezePaneConfig>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for record_map in records_with_sheet_name {
@@ -116,8 +143,38 @@ pub fn write_worksheets(
             }
 
             let mut worksheet = workbook.add_worksheet_with_constant_memory();
-            let _ = worksheet.set_name(sheet_name);
-            write_worksheet_content(&mut worksheet, &records, password.as_ref())?;
+            let _ = worksheet.set_name(&sheet_name);
+
+            let (mut freeze_row, mut freeze_col) = (None, None);
+            if let Some(freeze_panes_config) = freeze_panes.clone() {
+                // First check for general settings
+                if let Some(general_config) = freeze_panes_config.clone().config.get("general") {
+                    if let Some(row) = general_config.clone().get("row") {
+                        freeze_row = Some(row.clone() as u32);
+                    }
+                    if let Some(col) = general_config.clone().get("col") {
+                        freeze_col = Some(col.clone() as u16);
+                    }
+                }
+
+                // Then check for sheet-specific settings which override general settings
+                if let Some(sheet_config) = freeze_panes_config.clone().config.get(&sheet_name) {
+                    if let Some(row) = sheet_config.clone().get("row") {
+                        freeze_row = Some(row.clone() as u32);
+                    }
+                    if let Some(col) = sheet_config.clone().get("col") {
+                        freeze_col = Some(col.clone() as u16);
+                    }
+                }
+            }
+
+            write_worksheet_content(
+                &mut worksheet,
+                &records,
+                password.as_ref(),
+                freeze_row,
+                freeze_col,
+            )?;
         }
     }
 
@@ -128,12 +185,14 @@ pub fn write_worksheets(
 }
 
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None))]
 pub fn write_worksheet(
     records: WorksheetData,
     file_name: String,
     sheet_name: Option<String>,
     password: Option<String>,
+    freeze_row: Option<u32>,
+    freeze_col: Option<u16>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     let mut worksheet = workbook.add_worksheet_with_constant_memory();
@@ -148,7 +207,13 @@ pub fn write_worksheet(
         let _ = worksheet.set_name(sheet_name);
     }
 
-    write_worksheet_content(&mut worksheet, &records, password.as_ref())?;
+    write_worksheet_content(
+        &mut worksheet,
+        &records,
+        password.as_ref(),
+        freeze_row,
+        freeze_col,
+    )?;
 
     workbook.save(&file_name).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))

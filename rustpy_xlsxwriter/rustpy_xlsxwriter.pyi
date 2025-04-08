@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 def get_version() -> str:
     """Get the version of the rustpy_xlsxwriter package.
@@ -13,6 +13,8 @@ def write_worksheet(
     file_name: str,
     sheet_name: Optional[str] = None,
     password: Optional[str] = None,
+    freeze_row: Optional[int] = None,
+    freeze_col: Optional[int] = None,
 ) -> None:
     """Save records to an Excel file.
 
@@ -28,8 +30,10 @@ def write_worksheet(
         file_name: Full path including filename where the Excel file will be saved.
                   Must have .xlsx extension.
         sheet_name: Optional name for the worksheet. If not provided, defaults to 'Sheet1'.
-                   Must be <= 31 chars and cannot contain [ ] : * ? / \\.
+                   Must be <= 31 chars and cannot contain [ ] : * ? / \.
         password: Optional password to protect the workbook from modifications.
+        freeze_row: Optional row number to freeze panes above.
+        freeze_col: Optional column number to freeze panes to the left.
 
     Raises:
         ValueError: If file_name doesn't end with .xlsx
@@ -52,16 +56,19 @@ def write_worksheets(
     records_with_sheet_name: List[Dict[str, List[Dict[str, Any]]]],
     file_name: str,
     password: Optional[str] = None,
+    freeze_panes: Optional[Dict] = None,
 ) -> None:
     """Save records to multiple sheets in an Excel file.
 
     Args:
         records_with_sheet_name: List of dictionaries where each dict maps a sheet name to its records.
                                 The records for each sheet follow the same format as write_worksheet().
-                                Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\.
+                                Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \.
         file_name: Full path including filename where the Excel file will be saved.
                   Must have .xlsx extension.
         password: Optional password to protect the workbook from modifications.
+        freeze_panes: Optional configuration for freezing rows/columns in worksheets.
+                    Can specify general settings for all sheets and/or sheet-specific settings.
 
     Raises:
         ValueError: If file_name doesn't end with .xlsx

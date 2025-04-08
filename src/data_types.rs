@@ -40,3 +40,30 @@ impl<'source> FromPyObject<'source> for WorksheetData {
         Ok(WorksheetData { records: list })
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct FreezePaneConfig {
+    pub config: IndexMap<String, IndexMap<String, usize>>,
+}
+
+impl<'source> FromPyObject<'source> for FreezePaneConfig {
+    fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
+        let dict = ob.downcast::<PyDict>()?;
+        let mut map = IndexMap::new();
+
+        for (key, value) in dict.iter() {
+            let key = key.extract::<String>()?;
+            if let Some(inner_dict) = value.downcast::<PyDict>().ok() {
+                let mut inner_map = IndexMap::new();
+                for (inner_key, inner_value) in inner_dict.iter() {
+                    let inner_key = inner_key.extract::<String>()?;
+                    let inner_value = inner_value.extract::<usize>()?;
+                    inner_map.insert(inner_key, inner_value);
+                }
+                map.insert(key.clone(), inner_map);
+            }
+        }
+
+        Ok(FreezePaneConfig { config: map })
+    }
+}
