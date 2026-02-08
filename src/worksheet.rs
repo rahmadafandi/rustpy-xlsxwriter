@@ -1,5 +1,5 @@
+use pyo3::{IntoPyObjectExt, Py, PyAny, Python};
 use pyo3::prelude::*;
-use pyo3::Python;
 use pyo3::types::{PyDateAccess, PyDateTime, PyTimeAccess};
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
 use std::collections::HashMap;
@@ -7,87 +7,126 @@ use std::collections::HashMap;
 use crate::data_types::{FreezePaneConfig, WorksheetData};
 use crate::utils::validate_sheet_name;
 
+fn save_workbook(py: Python, workbook: &mut Workbook, file_or_buffer: Py<PyAny>) -> PyResult<()> {
+    if let Ok(file_name) = file_or_buffer.extract::<String>(py) {
+        workbook.save(&file_name).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))
+        })?;
+    } else {
+        let buffer = workbook.save_to_buffer().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to save workbook to buffer: {}",
+                e
+            ))
+        })?;
+        
+        // Check if object has a 'write' method
+        if let Ok(write_method) = file_or_buffer.getattr(py, "write") {
+             // Convert Vec<u8> to &[u8] for PyBytes
+             let py_bytes = pyo3::types::PyBytes::new(py, &buffer);
+             write_method.call1(py, (py_bytes,))?;
+        } else {
+             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Argument 'file_name' must be a string path or a file-like object with a 'write' method",
+            ));
+        }
+    }
+    Ok(())
+}
+
+
 fn write_worksheet_content(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     records: &WorksheetData,
     password: Option<&String>,
     freeze_row: Option<u32>,
     freeze_col: Option<u16>,
+    float_format: Option<&String>,
+    index_columns: Option<&Vec<String>>,
     py: Python,
 ) -> PyResult<()> {
-    if let Some(first_record) = records.records.first() {
-        let headers: Vec<String> = first_record.hash.keys().cloned().collect();
-        // Write headers
-        for (col, header) in headers.iter().enumerate() {
-            worksheet
-                .write_string(0, col as u16, header.to_string())
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to write header: {}",
-                        e
-                    ))
-                })?;
-        }
-
-        // Write data
-        for (row, record) in records.records.iter().enumerate() {
-            for (col, header) in headers.iter().enumerate() {
-                match record.hash.get(header) {
-                    Some(Some(value)) => {
-                        if value.is_none(py) {
-                            let _ = worksheet
-                                .write_string((row + 1) as u32, col as u16, "")
-                                .map_err(|e| format!("Failed to write data: {}", e));
-                        } else if let Ok(datetime) = value.bind(py).cast::<PyDateTime>() {
-                            let year = datetime.get_year() as u16;
-                            let month = datetime.get_month() as u8;
-                            let day = datetime.get_day() as u8;
-                            let hour = datetime.get_hour() as u16;
-                            let minute = datetime.get_minute() as u8;
-                            let second = datetime.get_second() as u8;
-                            let format3 = Format::new().set_num_format("yyyy-mm-ddThh:mm:ss");
-                            let _ = worksheet.set_column_format(col as u16, &format3);
-
-                            let excel_datetime = ExcelDateTime::from_ymd(year, month, day)
-                                .map_err(|e| format!("Failed to create datetime: {}", e))
-                                .and_then(|dt| {
-                                    dt.and_hms(hour, minute, second).map_err(|e| {
-                                        format!("Failed to create timestamp: {}", e)
-                                    })
-                                })
-                                .unwrap();
-
-                            let _ = worksheet
-                                .write_datetime((row + 1) as u32, col as u16, &excel_datetime)
-                                .map_err(|e| format!("Failed to write datetime: {}", e));
-                        } else if let Ok(int_val) = value.extract::<i64>(py) {
-                            let _ = worksheet
-                                .write_number((row + 1) as u32, col as u16, int_val as f64)
-                                .map_err(|e| format!("Failed to write data: {}", e));
-                        } else if let Ok(float_val) = value.extract::<f64>(py) {
-                            let _ = worksheet
-                                .write_number((row + 1) as u32, col as u16, float_val)
-                                .map_err(|e| format!("Failed to write data: {}", e));
-                        } else if let Ok(bool_val) = value.extract::<bool>(py) {
-                            let _ = worksheet
-                                .write_boolean((row + 1) as u32, col as u16, bool_val)
-                                .map_err(|e| format!("Failed to write data: {}", e));
-                        } else if let Ok(str_val) = value.extract::<String>(py) {
-                            let _ = worksheet
-                                .write_string((row + 1) as u32, col as u16, str_val)
-                                .map_err(|e| format!("Failed to write data: {}", e));
-                        } else {
-                            let _ = worksheet
-                                .write_string((row + 1) as u32, col as u16, value.to_string())
-                                .map_err(|e| format!("Failed to write data: {}", e));
+    match records {
+        WorksheetData::Records(records_vec) => {
+             if let Some(first_record) = records_vec.first() {
+                let headers: Vec<String> = first_record.hash.keys().cloned().collect();
+                // Write headers
+                for (col, header) in headers.iter().enumerate() {
+                    worksheet
+                        .write_string(0, col as u16, header.to_string())
+                        .map_err(|e| {
+                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                                "Failed to write header: {}",
+                                e
+                            ))
+                        })?;
+                    
+                     // Apply bold format if it's an index column
+                    if let Some(index_cols) = index_columns {
+                        if index_cols.contains(header) {
+                            let bold = Format::new().set_bold();
+                             let _ = worksheet.set_column_format(col as u16, &bold);
                         }
                     }
-                    Some(None) | None => {
-                        let _ = worksheet
-                            .write_string((row + 1) as u32, col as u16, "")
-                            .map_err(|e| format!("Failed to write data: {}", e));
+                }
+
+                // Write data
+                for (row, record) in records_vec.iter().enumerate() {
+                    for (col, header) in headers.iter().enumerate() {
+                        match record.hash.get(header) {
+                            Some(Some(value)) => {
+                                write_py_any(py, worksheet, (row + 1) as u32, col as u16, value, float_format)?;
+                            }
+                            Some(None) | None => {
+                                let _ = worksheet
+                                    .write_string((row + 1) as u32, col as u16, "")
+                                    .map_err(|e| format!("Failed to write data: {}", e));
+                            }
+                        }
                     }
                 }
+            }
+        }
+        WorksheetData::DataFrame(df) => {
+            // Get columns
+            let columns = df.getattr(py, "columns")?;
+            let headers: Vec<String> = columns.extract(py)?;
+            
+            // Write headers
+            for (col, header) in headers.iter().enumerate() {
+                 worksheet
+                    .write_string(0, col as u16, header.to_string())
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to write header: {}",
+                            e
+                        ))
+                    })?;
+
+                    // Apply bold format if it's an index column
+                    if let Some(index_cols) = index_columns {
+                        if index_cols.contains(header) {
+                            let bold = Format::new().set_bold();
+                             let _ = worksheet.set_column_format(col as u16, &bold);
+                        }
+                    }
+            }
+
+            // Get values (numpy array or similar iterable)
+            let values = df.getattr(py, "values")?;
+            // Iterate over rows using bind(py) to get Bound<PyAny> which implements try_iter
+            if let Ok(rows) = values.bind(py).try_iter() {
+                 for (row_idx, row_res) in rows.enumerate() {
+                      let row = row_res?;
+                      // If row is array-like, iterate its items
+                      if let Ok(items) = row.try_iter() {
+                           for (col_idx, item_res) in items.enumerate() {
+                                let item = item_res?;
+                                // Unwrap item extraction
+                                let py_item: Py<PyAny> = item.into_py_any(py)?;
+                                write_py_any(py, worksheet, (row_idx + 1) as u32, col_idx as u16, &py_item, float_format)?;
+                           }
+                      }
+                 }
             }
         }
     }
@@ -124,14 +163,74 @@ fn write_worksheet_content(
     Ok(())
 }
 
+fn write_py_any(py: Python, worksheet: &mut rust_xlsxwriter::Worksheet, row: u32, col: u16, value: &Py<PyAny>, float_format: Option<&String>) -> PyResult<()> {
+    if value.is_none(py) {
+        let _ = worksheet
+            .write_string(row, col, "")
+            .map_err(|e| format!("Failed to write data: {}", e));
+    } else if let Ok(datetime) = value.bind(py).cast::<PyDateTime>() {
+        let year = datetime.get_year() as u16;
+        let month = datetime.get_month() as u8;
+        let day = datetime.get_day() as u8;
+        let hour = datetime.get_hour() as u16;
+        let minute = datetime.get_minute() as u8;
+        let second = datetime.get_second() as u8;
+        let format3 = Format::new().set_num_format("yyyy-mm-ddThh:mm:ss");
+        let _ = worksheet.set_column_format(col, &format3);
+
+        let excel_datetime = ExcelDateTime::from_ymd(year, month, day)
+            .map_err(|e| format!("Failed to create datetime: {}", e))
+            .and_then(|dt| {
+                dt.and_hms(hour, minute, second).map_err(|e| {
+                    format!("Failed to create timestamp: {}", e)
+                })
+            })
+            .unwrap();
+
+        let _ = worksheet
+            .write_datetime(row, col, &excel_datetime)
+            .map_err(|e| format!("Failed to write datetime: {}", e));
+    } else if let Ok(int_val) = value.extract::<i64>(py) {
+        let _ = worksheet
+            .write_number(row, col, int_val as f64)
+            .map_err(|e| format!("Failed to write data: {}", e));
+    } else if let Ok(float_val) = value.extract::<f64>(py) {
+        if let Some(fmt_str) = float_format {
+            let format = Format::new().set_num_format(fmt_str);
+            let _ = worksheet
+                .write_number_with_format(row, col, float_val, &format)
+                .map_err(|e| format!("Failed to write data: {}", e));
+        } else {
+            let _ = worksheet
+                .write_number(row, col, float_val)
+                .map_err(|e| format!("Failed to write data: {}", e));
+        }
+    } else if let Ok(bool_val) = value.extract::<bool>(py) {
+        let _ = worksheet
+            .write_boolean(row, col, bool_val)
+            .map_err(|e| format!("Failed to write data: {}", e));
+    } else if let Ok(str_val) = value.extract::<String>(py) {
+        let _ = worksheet
+            .write_string(row, col, str_val)
+            .map_err(|e| format!("Failed to write data: {}", e));
+    } else {
+        let _ = worksheet
+            .write_string(row, col, value.to_string())
+            .map_err(|e| format!("Failed to write data: {}", e));
+    }
+    Ok(())
+}
+
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, index_columns = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<HashMap<String, WorksheetData>>,
-    file_name: String,
+    file_name: Py<PyAny>,
     password: Option<String>,
     freeze_panes: Option<FreezePaneConfig>,
+    float_format: Option<String>,
+    index_columns: Option<Vec<String>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for record_map in records_with_sheet_name {
@@ -175,27 +274,29 @@ pub fn write_worksheets(
                 password.as_ref(),
                 freeze_row,
                 freeze_col,
+                float_format.as_ref(),
+                index_columns.as_ref(),
                 py,
             )?;
         }
     }
 
-    workbook.save(&file_name).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))
-    })?;
+    save_workbook(py, &mut workbook, file_name)?;
     Ok(())
 }
 
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, index_columns = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
-    file_name: String,
+    file_name: Py<PyAny>,
     sheet_name: Option<String>,
     password: Option<String>,
     freeze_row: Option<u32>,
     freeze_col: Option<u16>,
+    float_format: Option<String>,
+    index_columns: Option<Vec<String>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     let mut worksheet = workbook.add_worksheet_with_constant_memory();
@@ -216,11 +317,11 @@ pub fn write_worksheet(
         password.as_ref(),
         freeze_row,
         freeze_col,
+        float_format.as_ref(),
+        index_columns.as_ref(),
         py,
     )?;
 
-    workbook.save(&file_name).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))
-    })?;
+    save_workbook(py, &mut workbook, file_name)?;
     Ok(())
 }

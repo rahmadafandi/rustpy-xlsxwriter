@@ -290,6 +290,47 @@ write_worksheets(
 )
 ```
 
+### Write Pandas DataFrame
+
+```python
+import pandas as pd
+from rustpy_xlsxwriter import write_worksheet
+
+df = pd.DataFrame({
+    "Name": ["Alice", "Bob"],
+    "Age": [30, 25],
+    "Score": [88.5, 92.3]
+})
+
+# Write DataFrame to Excel
+write_worksheet(df, "dataframe_output.xlsx", sheet_name="Data")
+
+# With styling: format floats and bold index columns
+write_worksheet(
+    df, 
+    "dataframe_styled.xlsx", 
+    sheet_name="Data", 
+    float_format="0.00", 
+    index_columns=["Name"]
+)
+```
+
+### Write to In-Memory Buffer (`io.BytesIO`)
+
+```python
+import io
+from rustpy_xlsxwriter import write_worksheet
+
+buffer = io.BytesIO()
+records = [{"Name": "Alice", "Age": 30}]
+
+# Write to buffer instead of file path
+write_worksheet(records, buffer)
+
+# Get the byte content
+xlsx_data = buffer.getvalue()
+```
+
 ## Contributing
 
 Contributions are welcome! Please submit issues or pull requests on the [GitHub repository](https://github.com/rahmadafandi/rustpy-xlsxwriter).

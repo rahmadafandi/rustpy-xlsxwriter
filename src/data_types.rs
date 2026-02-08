@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use pyo3::conversion::{FromPyObject, IntoPyObject};
+use pyo3::conversion::{FromPyObject, IntoPyObject, IntoPyObjectExt};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 use pyo3::Py;
@@ -34,18 +34,31 @@ impl<'a, 'py> FromPyObject<'a, 'py> for WorksheetRow {
 }
 
 #[derive(Debug)]
-pub struct WorksheetData {
-    pub records: Vec<WorksheetRow>,
+pub enum WorksheetData {
+    Records(Vec<WorksheetRow>),
+    DataFrame(Py<PyAny>), // Holds the DataFrame object
 }
 
 impl<'a, 'py> FromPyObject<'a, 'py> for WorksheetData {
     type Error = PyErr;
 
     fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        let list = ob.extract::<Vec<WorksheetRow>>()?;
-        Ok(WorksheetData { records: list })
+        // Check if it's a list of dicts first (existing logic)
+        if let Ok(list) = ob.extract::<Vec<WorksheetRow>>() {
+            return Ok(WorksheetData::Records(list));
+        }
+        
+        // Check if it looks like a DataFrame (has "columns" and "values" attributes)
+        if ob.getattr("columns").is_ok() && ob.getattr("values").is_ok() {
+             return Ok(WorksheetData::DataFrame(ob.into_py_any(ob.py())?));
+        }
+
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Argument 'records' must be a list of dictionaries or a pandas DataFrame",
+        ))
     }
 }
+
 
 #[derive(Debug, Clone)]
 pub struct FreezePaneConfig {
