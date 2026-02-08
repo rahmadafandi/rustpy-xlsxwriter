@@ -18,7 +18,7 @@ crate-type = ["cdylib"]
 [dependencies]
 indexmap = "2.8.0"
 num_cpus = "1.16.0"
-pyo3 = { version = "0.28.0", features = ["extension-module", "auto-initialize"] }
+pyo3 = { version = "0.28.0", features = ["extension-module"] }
 rust_xlsxwriter = { version = "0.93.0", features = ["chrono", "constant_memory", "ryu", "serde", "zlib"] }
 
 [package.metadata.pyo3]
