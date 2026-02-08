@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use pyo3::Python;
 use pyo3::types::{PyDateAccess, PyDateTime, PyTimeAccess};
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ fn write_worksheet_content(
     password: Option<&String>,
     freeze_row: Option<u32>,
     freeze_col: Option<u16>,
+    py: Python,
 ) -> PyResult<()> {
     if let Some(first_record) = records.records.first() {
         let headers: Vec<String> = first_record.hash.keys().cloned().collect();
@@ -32,55 +34,53 @@ fn write_worksheet_content(
             for (col, header) in headers.iter().enumerate() {
                 match record.hash.get(header) {
                     Some(Some(value)) => {
-                        Python::with_gil(|py| {
-                            if value.is_none(py) {
-                                let _ = worksheet
-                                    .write_string((row + 1) as u32, col as u16, "")
-                                    .map_err(|e| format!("Failed to write data: {}", e));
-                            } else if let Ok(datetime) = value.downcast_bound::<PyDateTime>(py) {
-                                let year = datetime.get_year() as u16;
-                                let month = datetime.get_month() as u8;
-                                let day = datetime.get_day() as u8;
-                                let hour = datetime.get_hour() as u16;
-                                let minute = datetime.get_minute() as u8;
-                                let second = datetime.get_second() as u8;
-                                let format3 = Format::new().set_num_format("yyyy-mm-ddThh:mm:ss");
-                                let _ = worksheet.set_column_format(col as u16, &format3);
+                        if value.is_none(py) {
+                            let _ = worksheet
+                                .write_string((row + 1) as u32, col as u16, "")
+                                .map_err(|e| format!("Failed to write data: {}", e));
+                        } else if let Ok(datetime) = value.bind(py).cast::<PyDateTime>() {
+                            let year = datetime.get_year() as u16;
+                            let month = datetime.get_month() as u8;
+                            let day = datetime.get_day() as u8;
+                            let hour = datetime.get_hour() as u16;
+                            let minute = datetime.get_minute() as u8;
+                            let second = datetime.get_second() as u8;
+                            let format3 = Format::new().set_num_format("yyyy-mm-ddThh:mm:ss");
+                            let _ = worksheet.set_column_format(col as u16, &format3);
 
-                                let excel_datetime = ExcelDateTime::from_ymd(year, month, day)
-                                    .map_err(|e| format!("Failed to create datetime: {}", e))
-                                    .and_then(|dt| {
-                                        dt.and_hms(hour, minute, second).map_err(|e| {
-                                            format!("Failed to create timestamp: {}", e)
-                                        })
+                            let excel_datetime = ExcelDateTime::from_ymd(year, month, day)
+                                .map_err(|e| format!("Failed to create datetime: {}", e))
+                                .and_then(|dt| {
+                                    dt.and_hms(hour, minute, second).map_err(|e| {
+                                        format!("Failed to create timestamp: {}", e)
                                     })
-                                    .unwrap();
+                                })
+                                .unwrap();
 
-                                let _ = worksheet
-                                    .write_datetime((row + 1) as u32, col as u16, &excel_datetime)
-                                    .map_err(|e| format!("Failed to write datetime: {}", e));
-                            } else if let Ok(int_val) = value.extract::<i64>(py) {
-                                let _ = worksheet
-                                    .write_number((row + 1) as u32, col as u16, int_val as f64)
-                                    .map_err(|e| format!("Failed to write data: {}", e));
-                            } else if let Ok(float_val) = value.extract::<f64>(py) {
-                                let _ = worksheet
-                                    .write_number((row + 1) as u32, col as u16, float_val)
-                                    .map_err(|e| format!("Failed to write data: {}", e));
-                            } else if let Ok(bool_val) = value.extract::<bool>(py) {
-                                let _ = worksheet
-                                    .write_boolean((row + 1) as u32, col as u16, bool_val)
-                                    .map_err(|e| format!("Failed to write data: {}", e));
-                            } else if let Ok(str_val) = value.extract::<String>(py) {
-                                let _ = worksheet
-                                    .write_string((row + 1) as u32, col as u16, str_val)
-                                    .map_err(|e| format!("Failed to write data: {}", e));
-                            } else {
-                                let _ = worksheet
-                                    .write_string((row + 1) as u32, col as u16, value.to_string())
-                                    .map_err(|e| format!("Failed to write data: {}", e));
-                            }
-                        });
+                            let _ = worksheet
+                                .write_datetime((row + 1) as u32, col as u16, &excel_datetime)
+                                .map_err(|e| format!("Failed to write datetime: {}", e));
+                        } else if let Ok(int_val) = value.extract::<i64>(py) {
+                            let _ = worksheet
+                                .write_number((row + 1) as u32, col as u16, int_val as f64)
+                                .map_err(|e| format!("Failed to write data: {}", e));
+                        } else if let Ok(float_val) = value.extract::<f64>(py) {
+                            let _ = worksheet
+                                .write_number((row + 1) as u32, col as u16, float_val)
+                                .map_err(|e| format!("Failed to write data: {}", e));
+                        } else if let Ok(bool_val) = value.extract::<bool>(py) {
+                            let _ = worksheet
+                                .write_boolean((row + 1) as u32, col as u16, bool_val)
+                                .map_err(|e| format!("Failed to write data: {}", e));
+                        } else if let Ok(str_val) = value.extract::<String>(py) {
+                            let _ = worksheet
+                                .write_string((row + 1) as u32, col as u16, str_val)
+                                .map_err(|e| format!("Failed to write data: {}", e));
+                        } else {
+                            let _ = worksheet
+                                .write_string((row + 1) as u32, col as u16, value.to_string())
+                                .map_err(|e| format!("Failed to write data: {}", e));
+                        }
                     }
                     Some(None) | None => {
                         let _ = worksheet
@@ -127,6 +127,7 @@ fn write_worksheet_content(
 #[pyfunction]
 #[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None))]
 pub fn write_worksheets(
+    py: Python,
     records_with_sheet_name: Vec<HashMap<String, WorksheetData>>,
     file_name: String,
     password: Option<String>,
@@ -174,6 +175,7 @@ pub fn write_worksheets(
                 password.as_ref(),
                 freeze_row,
                 freeze_col,
+                py,
             )?;
         }
     }
@@ -187,6 +189,7 @@ pub fn write_worksheets(
 #[pyfunction]
 #[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None))]
 pub fn write_worksheet(
+    py: Python,
     records: WorksheetData,
     file_name: String,
     sheet_name: Option<String>,
@@ -213,6 +216,7 @@ pub fn write_worksheet(
         password.as_ref(),
         freeze_row,
         freeze_col,
+        py,
     )?;
 
     workbook.save(&file_name).map_err(|e| {

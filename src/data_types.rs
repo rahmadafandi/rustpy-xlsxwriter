@@ -2,15 +2,19 @@ use indexmap::IndexMap;
 use pyo3::conversion::{FromPyObject, IntoPyObject};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
+use pyo3::Py;
+use pyo3::Borrowed;
 
 #[derive(Debug)]
 pub struct WorksheetRow {
-    pub hash: IndexMap<String, Option<PyObject>>,
+    pub hash: IndexMap<String, Option<Py<PyAny>>>,
 }
 
-impl<'source> FromPyObject<'source> for WorksheetRow {
-    fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
-        let dict = ob.downcast::<PyDict>()?;
+impl<'a, 'py> FromPyObject<'a, 'py> for WorksheetRow {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let dict = ob.cast::<PyDict>()?;
         let mut map = IndexMap::new();
 
         for (key, value) in dict.iter() {
@@ -19,7 +23,7 @@ impl<'source> FromPyObject<'source> for WorksheetRow {
                 None
             } else {
                 let obj = value.into_pyobject(dict.py()).clone().unwrap();
-                let val = obj.extract::<PyObject>().unwrap();
+                let val = obj.extract::<Py<PyAny>>().unwrap();
                 Some(val)
             };
             map.insert(key, value);
@@ -34,8 +38,10 @@ pub struct WorksheetData {
     pub records: Vec<WorksheetRow>,
 }
 
-impl<'source> FromPyObject<'source> for WorksheetData {
-    fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
+impl<'a, 'py> FromPyObject<'a, 'py> for WorksheetData {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         let list = ob.extract::<Vec<WorksheetRow>>()?;
         Ok(WorksheetData { records: list })
     }
@@ -46,14 +52,16 @@ pub struct FreezePaneConfig {
     pub config: IndexMap<String, IndexMap<String, usize>>,
 }
 
-impl<'source> FromPyObject<'source> for FreezePaneConfig {
-    fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
-        let dict = ob.downcast::<PyDict>()?;
+impl<'a, 'py> FromPyObject<'a, 'py> for FreezePaneConfig {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let dict = ob.cast::<PyDict>()?;
         let mut map = IndexMap::new();
 
         for (key, value) in dict.iter() {
             let key = key.extract::<String>()?;
-            if let Some(inner_dict) = value.downcast::<PyDict>().ok() {
+            if let Some(inner_dict) = value.cast::<PyDict>().ok() {
                 let mut inner_map = IndexMap::new();
                 for (inner_key, inner_value) in inner_dict.iter() {
                     let inner_key = inner_key.extract::<String>()?;
