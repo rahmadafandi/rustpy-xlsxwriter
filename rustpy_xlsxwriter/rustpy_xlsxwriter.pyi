@@ -1,16 +1,143 @@
-from typing import Any, Dict, List, Optional
+"""Type stubs for rustpy_xlsxwriter – high-performance Excel writer powered by Rust."""
 
-def get_version() -> str:
-    """Get the version of the rustpy_xlsxwriter package.
+from __future__ import annotations
 
-    Returns:
-        str: The version string (e.g. '0.0.5')
+from typing import (
+    Any,
+    BinaryIO,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Union,
+)
+
+# ---------------------------------------------------------------------------
+# Type aliases
+# ---------------------------------------------------------------------------
+
+Record = Dict[str, Any]
+"""A single row of data represented as ``{column_name: value}``."""
+
+Records = Union[List[Record], Iterable[Record]]
+"""A list (or any iterable, including generators) of :data:`Record` dicts."""
+
+DataFrame = Any
+"""A *pandas* ``DataFrame`` – kept as ``Any`` to avoid a hard dependency."""
+
+FileTarget = Union[str, BinaryIO]
+"""A file path (``str``) or a writable binary buffer (e.g. ``io.BytesIO``)."""
+
+FreezePanesConfig = Dict[str, Dict[str, int]]
+"""Freeze-pane configuration.
+
+Example::
+
+    {
+        "general":  {"row": 1, "col": 0},   # applies to every sheet
+        "Sheet1":   {"row": 1, "col": 2},   # override for Sheet1
+    }
+"""
+
+SheetData = Union[Records, DataFrame]
+"""Data accepted per sheet – either :data:`Records` or a :data:`DataFrame`."""
+
+SheetMap = Dict[str, SheetData]
+"""Maps a sheet name to its data, e.g. ``{"Sheet1": records}``."""
+
+# ---------------------------------------------------------------------------
+# Builder class
+# ---------------------------------------------------------------------------
+
+class FastExcel:
+    """Fluent builder for creating Excel files.
+
+    Examples::
+
+        FastExcel("out.xlsx").sheet("Sheet1", records).save()
+
+        (
+            FastExcel("report.xlsx", password="s3cret")
+            .format(float_format="0.00", index_columns=["ID"])
+            .freeze(row=1)
+            .sheet("Users", user_records)
+            .sheet("Orders", order_records)
+            .save()
+        )
     """
-    pass
+
+    def __init__(
+        self,
+        target: FileTarget,
+        *,
+        password: Optional[str] = None,
+    ) -> None:
+        """Create a new writer.
+
+        Args:
+            target: File path or writable binary buffer (e.g. ``io.BytesIO``).
+            password: Optional password to protect the workbook.
+        """
+        ...
+
+    def format(
+        self,
+        *,
+        float_format: Optional[str] = None,
+        index_columns: Optional[List[str]] = None,
+    ) -> FastExcel:
+        """Set number formatting and index column styling.
+
+        Args:
+            float_format: Excel number format for floats (e.g. ``"0.00"``).
+            index_columns: Column names to render **bold**.
+        """
+        ...
+
+    def freeze(
+        self,
+        *,
+        row: Optional[int] = None,
+        col: Optional[int] = None,
+        sheet: Optional[str] = None,
+    ) -> FastExcel:
+        """Configure freeze panes.
+
+        Args:
+            row: Freeze panes above this row number.
+            col: Freeze panes to the left of this column number.
+            sheet: Apply to a specific sheet. If ``None``, applies to all.
+        """
+        ...
+
+    def sheet(self, name: str, data: SheetData) -> FastExcel:
+        """Add a worksheet with data.
+
+        Args:
+            name: Sheet name (≤ 31 chars, no ``[ ] : * ? / \\``).
+            data: List of dicts, generator of dicts, or pandas DataFrame.
+
+        Raises:
+            ValueError: If the sheet name is invalid.
+        """
+        ...
+
+    def save(self) -> None:
+        """Write all sheets to the target file or buffer.
+
+        Raises:
+            ValueError: If no sheets have been added.
+            OSError: File system error while writing.
+        """
+        ...
+
+# ---------------------------------------------------------------------------
+# Core write functions
+# ---------------------------------------------------------------------------
 
 def write_worksheet(
-    records: Any,
-    file_name: Any,
+    records: SheetData,
+    file_name: FileTarget,
     sheet_name: Optional[str] = None,
     password: Optional[str] = None,
     freeze_row: Optional[int] = None,
@@ -18,155 +145,131 @@ def write_worksheet(
     float_format: Optional[str] = None,
     index_columns: Optional[List[str]] = None,
 ) -> None:
-    """Save records to an Excel file.
+    """Write data to a **single** worksheet in an Excel file.
 
     Args:
-        records: List of dictionaries where each dict represents a row of data, OR a pandas DataFrame.
-                Dictionary keys become column headers and values become cell contents.
-                Supported value types:
-                - str: Text values
-                - int/float: Numeric values
-                - bool: Boolean values
-                - None: Empty cells
-                - datetime.date/datetime.datetime: Date values
-        file_name: Full path including filename where the Excel file will be saved (must have .xlsx extension),
-                  OR a file-like object (e.g. io.BytesIO).
-        sheet_name: Optional name for the worksheet. If not provided, defaults to 'Sheet1'.
-                   Must be <= 31 chars and cannot contain [ ] : * ? / \.
-        password: Optional password to protect the workbook from modifications.
-        freeze_row: Optional row number to freeze panes above.
-        freeze_col: Optional column number to freeze panes to the left.
-        float_format: Optional string format for floating point numbers (e.g. '0.00').
-        index_columns: Optional list of column names to apply bold formatting to (identifying them as index columns).
+        records: Data to write – a list of dicts, a generator of dicts,
+            or a *pandas* ``DataFrame``.
+        file_name: Destination file path (``*.xlsx``) **or** a writable
+            binary buffer such as ``io.BytesIO``.
+        sheet_name: Worksheet name (default ``"Sheet1"``).
+            Must be ≤ 31 chars; cannot contain ``[ ] : * ? / \\``.
+        password: Optional password to protect the workbook.
+        freeze_row: Freeze panes above this row number.
+        freeze_col: Freeze panes to the left of this column number.
+        float_format: Excel number format for floats (e.g. ``"0.00"``).
+        index_columns: Column names that should be rendered **bold**.
 
     Raises:
-        ValueError: If file_name doesn't end with .xlsx
-        ValueError: If sheet_name is invalid according to Excel's requirements
-        ValueError: If records contain unsupported data types
-        OSError: If there are filesystem errors when writing the file
-    """
-    pass
+        ValueError: Invalid sheet name or unsupported data type.
+        OSError: File system error while writing.
 
-# TODO: Add this back in when we have a better solution
-# def write_worksheet_multithread(
-#     records: List[Dict[str, Any]],
-#     file_name: str,
-#     sheet_name: Optional[str] = None,
-#     password: Optional[str] = None,
-# ) -> None:
-#     pass
+    Examples:
+        >>> write_worksheet([{"Name": "Alice", "Age": 30}], "out.xlsx")
+    """
+    ...
 
 def write_worksheets(
-    records_with_sheet_name: List[Dict[str, Any]],
-    file_name: Any,
+    records_with_sheet_name: List[SheetMap],
+    file_name: FileTarget,
     password: Optional[str] = None,
-    freeze_panes: Optional[Dict[str, Any]] = None,
+    freeze_panes: Optional[FreezePanesConfig] = None,
     float_format: Optional[str] = None,
     index_columns: Optional[List[str]] = None,
 ) -> None:
-    """Save records to multiple sheets in an Excel file.
+    """Write data to **multiple** worksheets in an Excel file.
 
     Args:
-        records_with_sheet_name: List of dictionaries where each dict maps a sheet name to its records.
-                                The records for each sheet follow the same format as write_worksheet() (List[Dict] or DataFrame).
-                                Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \.
-        file_name: Full path including filename where the Excel file will be saved (must have .xlsx extension),
-                  OR a file-like object (e.g. io.BytesIO).
-        password: Optional password to protect the workbook from modifications.
-        freeze_panes: Optional configuration for freezing rows/columns in worksheets.
-                    Can specify general settings for all sheets and/or sheet-specific settings.
-        float_format: Optional string format for floating point numbers (e.g. '0.00').
-        index_columns: Optional list of column names to apply bold formatting to (identifying them as index columns).
+        records_with_sheet_name: A list where each element is a dict
+            mapping **one** sheet name to its data.
+        file_name: Destination file path or writable binary buffer.
+        password: Optional password to protect the workbook.
+        freeze_panes: Per-sheet and/or general freeze-pane config.
+        float_format: Excel number format for floats (e.g. ``"0.00"``).
+        index_columns: Column names that should be rendered **bold**.
 
     Raises:
-        ValueError: If file_name doesn't end with .xlsx
-        ValueError: If any sheet name is invalid according to Excel's requirements
-        ValueError: If records contain unsupported data types
-        OSError: If there are filesystem errors when writing the file
-    """
-    pass
-
-def get_name() -> str:
-    """Get the name of the rustpy_xlsxwriter package.
-
-    Returns:
-        str: The package name ('rustpy-xlsxwriter')
-    """
-    pass
-
-def get_authors() -> str:
-    """Get the authors of the rustpy_xlsxwriter package.
-
-    Returns:
-        str: The authors string ('Rahmad Afandi <rahmadafandiii@gmail.com>')
-    """
-    pass
-
-def get_description() -> str:
-    """Get the description of the rustpy_xlsxwriter package.
-
-    Returns:
-        str: The package description ('Rust Python bindings for rust_xlsxwriter')
-    """
-    pass
-
-def get_repository() -> str:
-    """Get the repository URL of the rustpy_xlsxwriter package.
-
-    Returns:
-        str: The repository URL ('https://github.com/rahmadafandi/rustpy-xlsxwriter')
-    """
-    pass
-
-def get_homepage() -> str:
-    """Get the homepage URL of the rustpy_xlsxwriter package.
-
-    Returns:
-        str: The homepage URL ('https://github.com/rahmadafandi/rustpy-xlsxwriter')
-    """
-    pass
-
-def get_license() -> str:
-    """Get the license of the rustpy_xlsxwriter package.
-
-    Returns:
-        str: The package license ('MIT')
-    """
-    pass
-
-def validate_sheet_name(name: str) -> bool:
-    """Validate if a sheet name is valid for Excel.
-    
-    Args:
-        name: Sheet name to validate. Excel has several restrictions on valid sheet names:
-              - Maximum 31 characters
-              - Cannot contain characters: [ ] : * ? / \\
-              - Cannot be empty
-              - Cannot start or end with an apostrophe
-              - Cannot be 'History' (reserved name)
-        
-    Returns:
-        bool: True if the sheet name is valid for Excel, False otherwise
+        ValueError: Invalid sheet name or unsupported data type.
+        OSError: File system error while writing.
 
     Examples:
-        >>> validate_sheet_name("Sheet1")  # Valid
+        >>> write_worksheets(
+        ...     [{"Users": [{"Name": "Alice"}]}, {"Items": [{"SKU": "A1"}]}],
+        ...     "multi.xlsx",
+        ... )
+    """
+    ...
+
+# ---------------------------------------------------------------------------
+# Sheet-name validation
+# ---------------------------------------------------------------------------
+
+def validate_sheet_name(name: str) -> bool:
+    """Check whether *name* is a valid Excel sheet name.
+
+    Rules: ≤ 31 chars, no ``[ ] : * ? / \\``, not empty, not ``"History"``.
+
+    Examples:
+        >>> validate_sheet_name("Sheet1")
         True
-        >>> validate_sheet_name("Sheet[1]")  # Invalid - contains brackets
-        False
-        >>> validate_sheet_name("A"*32)  # Invalid - too long
+        >>> validate_sheet_name("Sheet[1]")
         False
     """
-    pass
+    ...
+
+# ---------------------------------------------------------------------------
+# Package metadata
+# ---------------------------------------------------------------------------
+
+def get_version() -> str:
+    """Return the package version string (e.g. ``'0.0.10'``)."""
+    ...
+
+def get_name() -> str:
+    """Return the package name (``'rustpy-xlsxwriter'``)."""
+    ...
+
+def get_authors() -> str:
+    """Return the package authors."""
+    ...
+
+def get_description() -> str:
+    """Return the package description."""
+    ...
+
+def get_repository() -> str:
+    """Return the repository URL."""
+    ...
+
+def get_homepage() -> str:
+    """Return the homepage URL."""
+    ...
+
+def get_license() -> str:
+    """Return the license identifier (``'MIT'``)."""
+    ...
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 __all__ = [
-    "get_version",
+    "FastExcel",
     "write_worksheet",
     "write_worksheets",
+    "validate_sheet_name",
+    "get_version",
     "get_name",
     "get_authors",
     "get_description",
     "get_repository",
     "get_homepage",
     "get_license",
-    "validate_sheet_name",
+    "Record",
+    "Records",
+    "DataFrame",
+    "FileTarget",
+    "FreezePanesConfig",
+    "SheetData",
+    "SheetMap",
 ]
