@@ -1,51 +1,32 @@
 use indexmap::IndexMap;
-use pyo3::conversion::{FromPyObject, IntoPyObject};
+use pyo3::conversion::{FromPyObject, IntoPyObjectExt};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 use pyo3::Py;
 use pyo3::Borrowed;
 
 #[derive(Debug)]
-pub struct WorksheetRow {
-    pub hash: IndexMap<String, Option<Py<PyAny>>>,
-}
-
-impl<'a, 'py> FromPyObject<'a, 'py> for WorksheetRow {
-    type Error = PyErr;
-
-    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        let dict = ob.cast::<PyDict>()?;
-        let mut map = IndexMap::new();
-
-        for (key, value) in dict.iter() {
-            let key = key.extract::<String>()?;
-            let value = if value.is_none() {
-                None
-            } else {
-                let obj = value.into_pyobject(dict.py()).clone().unwrap();
-                let val = obj.extract::<Py<PyAny>>().unwrap();
-                Some(val)
-            };
-            map.insert(key, value);
-        }
-
-        Ok(WorksheetRow { hash: map })
-    }
-}
-
-#[derive(Debug)]
-pub struct WorksheetData {
-    pub records: Vec<WorksheetRow>,
+pub enum WorksheetData {
+    Records(Py<PyAny>),   // Holds the list of dicts or iterable
+    DataFrame(Py<PyAny>), // Holds the DataFrame object
 }
 
 impl<'a, 'py> FromPyObject<'a, 'py> for WorksheetData {
     type Error = PyErr;
 
     fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        let list = ob.extract::<Vec<WorksheetRow>>()?;
-        Ok(WorksheetData { records: list })
+        // Check if it looks like a DataFrame (has "columns" attributes)
+        if ob.getattr("columns").is_ok() {
+             return Ok(WorksheetData::DataFrame(ob.into_py_any(ob.py())?));
+        }
+
+        // Assume it's an iterable of records if not a dataframe
+        // We can check if it has __iter__ but almost everything does. 
+        // Let's just wrap it. The iteration logic will fail later if it's not iterable.
+        return Ok(WorksheetData::Records(ob.into_py_any(ob.py())?));
     }
 }
+
 
 #[derive(Debug, Clone)]
 pub struct FreezePaneConfig {

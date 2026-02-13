@@ -9,17 +9,19 @@ def get_version() -> str:
     pass
 
 def write_worksheet(
-    records: List[Dict[str, Any]],
-    file_name: str,
+    records: Any,
+    file_name: Any,
     sheet_name: Optional[str] = None,
     password: Optional[str] = None,
     freeze_row: Optional[int] = None,
     freeze_col: Optional[int] = None,
+    float_format: Optional[str] = None,
+    index_columns: Optional[List[str]] = None,
 ) -> None:
     """Save records to an Excel file.
 
     Args:
-        records: List of dictionaries where each dict represents a row of data.
+        records: List of dictionaries where each dict represents a row of data, OR a pandas DataFrame.
                 Dictionary keys become column headers and values become cell contents.
                 Supported value types:
                 - str: Text values
@@ -27,13 +29,15 @@ def write_worksheet(
                 - bool: Boolean values
                 - None: Empty cells
                 - datetime.date/datetime.datetime: Date values
-        file_name: Full path including filename where the Excel file will be saved.
-                  Must have .xlsx extension.
+        file_name: Full path including filename where the Excel file will be saved (must have .xlsx extension),
+                  OR a file-like object (e.g. io.BytesIO).
         sheet_name: Optional name for the worksheet. If not provided, defaults to 'Sheet1'.
                    Must be <= 31 chars and cannot contain [ ] : * ? / \.
         password: Optional password to protect the workbook from modifications.
         freeze_row: Optional row number to freeze panes above.
         freeze_col: Optional column number to freeze panes to the left.
+        float_format: Optional string format for floating point numbers (e.g. '0.00').
+        index_columns: Optional list of column names to apply bold formatting to (identifying them as index columns).
 
     Raises:
         ValueError: If file_name doesn't end with .xlsx
@@ -53,22 +57,26 @@ def write_worksheet(
 #     pass
 
 def write_worksheets(
-    records_with_sheet_name: List[Dict[str, List[Dict[str, Any]]]],
-    file_name: str,
+    records_with_sheet_name: List[Dict[str, Any]],
+    file_name: Any,
     password: Optional[str] = None,
-    freeze_panes: Optional[Dict] = None,
+    freeze_panes: Optional[Dict[str, Any]] = None,
+    float_format: Optional[str] = None,
+    index_columns: Optional[List[str]] = None,
 ) -> None:
     """Save records to multiple sheets in an Excel file.
 
     Args:
         records_with_sheet_name: List of dictionaries where each dict maps a sheet name to its records.
-                                The records for each sheet follow the same format as write_worksheet().
+                                The records for each sheet follow the same format as write_worksheet() (List[Dict] or DataFrame).
                                 Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \.
-        file_name: Full path including filename where the Excel file will be saved.
-                  Must have .xlsx extension.
+        file_name: Full path including filename where the Excel file will be saved (must have .xlsx extension),
+                  OR a file-like object (e.g. io.BytesIO).
         password: Optional password to protect the workbook from modifications.
         freeze_panes: Optional configuration for freezing rows/columns in worksheets.
                     Can specify general settings for all sheets and/or sheet-specific settings.
+        float_format: Optional string format for floating point numbers (e.g. '0.00').
+        index_columns: Optional list of column names to apply bold formatting to (identifying them as index columns).
 
     Raises:
         ValueError: If file_name doesn't end with .xlsx

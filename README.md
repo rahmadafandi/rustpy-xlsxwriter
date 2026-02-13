@@ -178,19 +178,19 @@ def validate_sheet_name(name: str) -> bool:
 
 ![Test Result](image.png)
 
-RustPy-XlsxWriter has been extensively tested with large-scale datasets to measure its performance capabilities. Our benchmarks demonstrate that this Rust-powered implementation delivers exceptional speed improvements compared to traditional Python solutions. The library achieves up to 6x faster processing speeds while maintaining optimal memory usage, making it ideal for handling large datasets efficiently.
+RustPy-XlsxWriter has been extensively tested with large-scale datasets to measure its performance capabilities. Our benchmarks demonstrate that this Rust-powered implementation delivers exceptional speed improvements compared to traditional Python solutions. The library achieves up to **7.8x faster** processing speeds while maintaining optimal memory usage, making it ideal for handling large datasets efficiently.
 
 Based on performance testing with 1 million records:
 
-| Operation         | Records   | Time (seconds) | Comparison  |
-| ----------------- | --------- | -------------- | ----------- |
-| Single Sheet      | 1,000,000 | ~67.80s        | 5.4x faster |
-| Multiple Sheets   | 1,000,000 | ~61.19s        | 6x faster   |
-| Python xlsxwriter | 1,000,000 | ~364.46s       | baseline    |
+| Operation         | Records   | Time (seconds) | Comparison    |
+| ----------------- | --------- | -------------- | ------------- |
+| Single Sheet      | 1,000,000 | ~12.48s        | **7x faster** |
+| Multiple Sheets   | 1,000,000 | ~11.21s        | **7.8x faster** |
+| Python xlsxwriter | 1,000,000 | ~87.43s        | baseline      |
 
 Key findings:
 
-- Demonstrates superior performance with 6x faster processing compared to Python's xlsxwriter
+- Demonstrates superior performance with **7x–7.8x faster** processing compared to Python's xlsxwriter
 - Efficiently handles single sheet operations for 1 million records
 - Maintains consistent performance for multiple sheet operations
 - Shows excellent scalability - performance improves proportionally with smaller datasets
@@ -199,10 +199,12 @@ The exceptional performance is achieved through several key optimizations:
 
 1. Leveraging Rust's zero-cost abstractions and memory management system
 2. Native machine code compilation for maximum efficiency
-3. Advanced memory optimization using rust_xlsxwriter capabilities
-4. High-precision floating point operations with ryu
-5. Efficient large file handling through zlib compression
-6. Memory safety guarantees via Rust's ownership system
+3. Advanced memory optimization using constant memory mode for large files
+4. Zero-copy data handling with lazy processing of Python iterables (including generators)
+5. Optimized type checking with efficient downcast operations
+6. High-precision floating point operations with ryu
+7. Efficient large file handling through zlib compression
+8. Memory safety guarantees via Rust's ownership system
 
 These technical advantages ensure consistent high performance and reliability across varying workload sizes while maintaining optimal resource utilization.
 
@@ -288,6 +290,47 @@ write_worksheets(
     "output_frozen.xlsx",
     freeze_pane=freeze_config
 )
+```
+
+### Write Pandas DataFrame
+
+```python
+import pandas as pd
+from rustpy_xlsxwriter import write_worksheet
+
+df = pd.DataFrame({
+    "Name": ["Alice", "Bob"],
+    "Age": [30, 25],
+    "Score": [88.5, 92.3]
+})
+
+# Write DataFrame to Excel
+write_worksheet(df, "dataframe_output.xlsx", sheet_name="Data")
+
+# With styling: format floats and bold index columns
+write_worksheet(
+    df, 
+    "dataframe_styled.xlsx", 
+    sheet_name="Data", 
+    float_format="0.00", 
+    index_columns=["Name"]
+)
+```
+
+### Write to In-Memory Buffer (`io.BytesIO`)
+
+```python
+import io
+from rustpy_xlsxwriter import write_worksheet
+
+buffer = io.BytesIO()
+records = [{"Name": "Alice", "Age": 30}]
+
+# Write to buffer instead of file path
+write_worksheet(records, buffer)
+
+# Get the byte content
+xlsx_data = buffer.getvalue()
 ```
 
 ## Contributing
