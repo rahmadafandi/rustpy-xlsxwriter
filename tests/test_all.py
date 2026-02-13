@@ -8,45 +8,49 @@ import pytest
 import xlsxwriter
 from faker import Faker
 
-import rustpy_xlsxwriter
+from rustpy_xlsxwriter import (
+    FastExcel,
+    get_authors,
+    get_description,
+    get_homepage,
+    get_license,
+    get_name,
+    get_repository,
+    get_version,
+    validate_sheet_name,
+)
+
+# ---------------------------------------------------------------------------
+# Fixtures & helpers
+# ---------------------------------------------------------------------------
+
+TMP = "tmp"
 
 
-def setup_module():
-    """Create tmp directory if it doesn't exist"""
-    if not os.path.exists("tmp"):
-        os.makedirs("tmp", exist_ok=True)
-    else:
-        # clean up tmp directory except for .gitignore
-        for file in os.listdir("tmp"):
-            if file not in [".gitignore"]:
-                os.remove(os.path.join("tmp", file))
+@pytest.fixture(autouse=True, scope="module")
+def tmp_dir():
+    """Ensure tmp directory is clean before tests."""
+    os.makedirs(TMP, exist_ok=True)
+    for f in os.listdir(TMP):
+        if f != ".gitignore":
+            os.remove(os.path.join(TMP, f))
+    yield
+    # cleanup after all tests
+    for f in os.listdir(TMP):
+        if f != ".gitignore":
+            os.remove(os.path.join(TMP, f))
 
 
-@pytest.mark.benchmark
-def test_get_version() -> None:
-    """Test that version matches package metadata"""
-    assert rustpy_xlsxwriter.get_version() == version("rustpy-xlsxwriter")
-
-
-def _generate_base_record(fake: Faker) -> Dict[str, Any]:
-    """Generate a single base record"""
+def _make_record(fake: Faker) -> Dict[str, Any]:
     return {
         "name": fake.name(),
         "email": fake.email(),
-        "address": (
-            fake.address() if random.random() > 0.2 else random.choice([None, ""])
-        ),
-        "phone": (
-            fake.phone_number() if random.random() > 0.2 else random.choice([None, ""])
-        ),
+        "address": fake.address() if random.random() > 0.2 else None,
+        "phone": fake.phone_number() if random.random() > 0.2 else None,
         "date": fake.date() if random.random() > 0.2 else None,
         "numeric_int": random.randint(-1000, 1000),
         "numeric_float": round(random.uniform(-100.0, 100.0), 2),
-        "text": (
-            fake.text(max_nb_chars=50)
-            if random.random() > 0.2
-            else random.choice([None, ""])
-        ),
+        "text": fake.text(max_nb_chars=50) if random.random() > 0.2 else None,
         "boolean": random.choice([True, False, None]),
         "datetime": fake.date_time() if random.random() > 0.2 else None,
         "timestamp": fake.date_time() if random.random() > 0.2 else None,
@@ -55,348 +59,262 @@ def _generate_base_record(fake: Faker) -> Dict[str, Any]:
     }
 
 
-@pytest.mark.benchmark
-def generate_test_records(count: int) -> List[Dict[str, Any]]:
-    """Generate test records using parallel processing for large datasets"""
+def generate_records(count: int) -> List[Dict[str, Any]]:
     fake = Faker()
     fake.seed_instance(42)
     random.seed(42)
 
-    # For small counts, use direct generation
     if count <= 1000:
-        base_records = [_generate_base_record(fake) for _ in range(min(20, count))]
-        multiplier = count // len(base_records) + 1
-        return (base_records * multiplier)[:count]
+        base = [_make_record(fake) for _ in range(min(20, count))]
+        return (base * (count // len(base) + 1))[:count]
 
-    # For large counts, use parallel processing
-    chunk_size = 10000
+    chunk_size = 10_000
     num_chunks = (count + chunk_size - 1) // chunk_size
 
-    def generate_chunk(chunk_idx: int) -> List[Dict[str, Any]]:
-        chunk_fake = Faker()
-        chunk_fake.seed_instance(42 + chunk_idx)
-        size = min(chunk_size, count - chunk_idx * chunk_size)
-        base_records = [_generate_base_record(chunk_fake) for _ in range(20)]
-        multiplier = size // len(base_records) + 1
-        return (base_records * multiplier)[:size]
+    def _chunk(idx: int) -> List[Dict[str, Any]]:
+        f = Faker()
+        f.seed_instance(42 + idx)
+        size = min(chunk_size, count - idx * chunk_size)
+        base = [_make_record(f) for _ in range(20)]
+        return (base * (size // len(base) + 1))[:size]
 
-    with ThreadPoolExecutor() as executor:
-        chunks = list(executor.map(generate_chunk, range(num_chunks)))
+    with ThreadPoolExecutor() as pool:
+        chunks = list(pool.map(_chunk, range(num_chunks)))
+    return [r for c in chunks for r in c]
 
-    return [record for chunk in chunks for record in chunk]
+
+# ---------------------------------------------------------------------------
+# Metadata tests
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.benchmark
-def generate_test_records_with_sheet_name(
-    count: int, error_sheet_name: bool = False
-) -> List[Dict[str, List[Dict[str, Any]]]]:
-    """Generate test records with sheet names"""
-    shared_records = generate_test_records(count)
-    records = []
-
-    # Pre-generate all sheet names
-    sheet_names = ["Test[]" if error_sheet_name else f"Sheet{i}" for i in range(count)]
-
-    # Create records list with references to shared_records
-    for sheet_name in sheet_names:
-        records.append({sheet_name: shared_records})
-
-    return records
+def test_get_version():
+    assert get_version() == version("rustpy-xlsxwriter")
 
 
-# Rest of the test functions remain unchanged
+@pytest.mark.benchmark
+def test_get_name():
+    assert get_name() == "rustpy-xlsxwriter"
+
+
+@pytest.mark.benchmark
+def test_get_authors():
+    assert get_authors() == "Rahmad Afandi <rahmadafandiii@gmail.com>"
+
+
+@pytest.mark.benchmark
+def test_get_description():
+    assert get_description() == "Rust Python bindings for rust_xlsxwriter"
+
+
+@pytest.mark.benchmark
+def test_get_repository():
+    assert get_repository() == "https://github.com/rahmadafandi/rustpy-xlsxwriter"
+
+
+@pytest.mark.benchmark
+def test_get_homepage():
+    assert get_homepage() == "https://github.com/rahmadafandi/rustpy-xlsxwriter"
+
+
+@pytest.mark.benchmark
+def test_get_license():
+    assert get_license() == "MIT"
+
+
+@pytest.mark.benchmark
+def test_validate_sheet_name():
+    assert validate_sheet_name("Test") is True
+    for char in ["[", "]", ":", "*", "?", "/", "\\"]:
+        assert validate_sheet_name(f"Test{char}") is False
+
+
+# ---------------------------------------------------------------------------
+# FastExcel — single sheet
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize("record_count", [1000000])
+def test_write_single_sheet(record_count: int):
+    """Benchmark: single sheet via FastExcel."""
+    records = generate_records(record_count)
+    path = f"{TMP}/test_{record_count}.xlsx"
+    FastExcel(path, password="password").sheet(f"Test {record_count}", records).save()
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize("record_count", [10])
+def test_error_invalid_sheet_name_single(record_count: int):
+    """Single sheet: ValueError on invalid sheet name."""
+    records = generate_records(record_count)
+    with pytest.raises(ValueError, match=r"Invalid sheet name"):
+        FastExcel(f"{TMP}/should_not_exist.xlsx", password="password").sheet(
+            "Test[]", records
+        ).save()
+
+
+# ---------------------------------------------------------------------------
+# FastExcel — multiple sheets
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.benchmark
 @pytest.mark.parametrize("record_count", [1000])
-def test_write_worksheets(record_count: int) -> None:
-    """Test saving records to multiple sheets."""
-    try:
-        records = generate_test_records_with_sheet_name(record_count)
-        filename = f"tmp/test_{record_count}_multiple_sheets.xlsx"
-        assert rustpy_xlsxwriter.write_worksheets(records, filename, "password") is None
-        assert os.path.exists(filename)
-    except Exception as e:
-        print(e)
-        raise e
+def test_write_multiple_sheets(record_count: int):
+    """Benchmark: multiple sheets via FastExcel."""
+    records = generate_records(record_count)
+    path = f"{TMP}/test_{record_count}_multi.xlsx"
+    writer = FastExcel(path, password="password")
+    for i in range(record_count):
+        writer.sheet(f"Sheet{i}", records)
+    writer.save()
+    assert os.path.exists(path)
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [1000000])
-def test_save_error_name_sheet_records_single_sheet(record_count: int) -> None:
-    """Test error handling for invalid sheet names in single sheet mode."""
-    records = generate_test_records(record_count)
-    filename = f"tmp/test_{record_count}_single_sheet_error.xlsx"
-    sheet_name = "Test[]"
-    with pytest.raises(ValueError) as e:
-        rustpy_xlsxwriter.write_worksheet(records, filename, sheet_name, "password")
-    assert (
-        str(e.value)
-        == "Invalid sheet name 'Test[]'. Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\"
-    )
-    assert not os.path.exists(filename)
+@pytest.mark.parametrize("record_count", [10])
+def test_error_invalid_sheet_name_multi(record_count: int):
+    """Multiple sheets: ValueError on invalid sheet name."""
+    with pytest.raises(ValueError, match=r"Invalid sheet name"):
+        FastExcel(f"{TMP}/should_not_exist.xlsx", password="password").sheet(
+            "Test[]", generate_records(record_count)
+        ).save()
 
 
-@pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [1000])
-def test_save_error_name_sheet_records_multiple_sheets(record_count: int) -> None:
-    """Test error handling for invalid sheet names in multiple sheet mode."""
-    records = generate_test_records_with_sheet_name(record_count, True)
-    filename = f"tmp/test_{record_count}_multiple_sheets_error.xlsx"
-    with pytest.raises(ValueError) as e:
-        rustpy_xlsxwriter.write_worksheets(records, filename, "password")
-    assert (
-        str(e.value)
-        == "Invalid sheet name 'Test[]'. Sheet names must be <= 31 chars and cannot contain [ ] : * ? / \\"
-    )
-    assert not os.path.exists(filename)
-
-
-@pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [1000000])
-def test_write_worksheet_single_sheet(record_count: int) -> None:
-    """Test saving records to a single sheet."""
-    records = generate_test_records(record_count)
-    filename = f"tmp/test_{record_count}.xlsx"
-    sheet_name = f"Test {record_count}"
-    assert (
-        rustpy_xlsxwriter.write_worksheet(records, filename, sheet_name, "password")
-        is None
-    )
-    assert os.path.exists(filename)
-
-
-@pytest.mark.benchmark
-@pytest.mark.parametrize("record_count", [1000000])
-def test_xlsxwriter(record_count: int) -> None:
-    """Benchmark test using native XlsxWriter library."""
-    filename = f"tmp/test_{record_count}_xlsxwriter.xlsx"
-    workbook = xlsxwriter.Workbook(filename, {"constant_memory": True})
-    worksheet = workbook.add_worksheet()
-    records = generate_test_records(record_count)
-
-    # Write headers
-    headers = list(records[0].keys())
-    for col, header in enumerate(headers):
-        worksheet.write(0, col, header)
-
-    # Write data in chunks for better memory management
-    chunk_size = 10000
-    for chunk_start in range(0, len(records), chunk_size):
-        chunk_end = min(chunk_start + chunk_size, len(records))
-        chunk = records[chunk_start:chunk_end]
-        for i, record in enumerate(chunk, start=chunk_start + 1):
-            for col, header in enumerate(headers):
-                if isinstance(record[header], (dict)):
-                    worksheet.write_string(i, col, str(record[header]))
-                else:
-                    worksheet.write(i, col, record[header])
-
-    workbook.close()
-    assert os.path.exists(filename)
-
-
-@pytest.mark.benchmark
-def test_get_name() -> None:
-    """Test get_name returns correct package name"""
-    assert rustpy_xlsxwriter.get_name() == "rustpy-xlsxwriter"
-
-
-@pytest.mark.benchmark
-def test_get_authors() -> None:
-    """Test get_authors returns correct author info"""
-    assert rustpy_xlsxwriter.get_authors() == "Rahmad Afandi <rahmadafandiii@gmail.com>"
-
-
-@pytest.mark.benchmark
-def test_get_description() -> None:
-    """Test get_description returns correct package description"""
-    assert (
-        rustpy_xlsxwriter.get_description()
-        == "Rust Python bindings for rust_xlsxwriter"
-    )
-
-
-@pytest.mark.benchmark
-def test_get_repository() -> None:
-    """Test get_repository returns correct repository URL"""
-    assert (
-        rustpy_xlsxwriter.get_repository()
-        == "https://github.com/rahmadafandi/rustpy-xlsxwriter"
-    )
-
-
-@pytest.mark.benchmark
-def test_get_homepage() -> None:
-    """Test get_homepage returns correct homepage URL"""
-    assert (
-        rustpy_xlsxwriter.get_homepage()
-        == "https://github.com/rahmadafandi/rustpy-xlsxwriter"
-    )
-
-
-@pytest.mark.benchmark
-def test_get_license() -> None:
-    """Test get_license returns correct license"""
-    assert rustpy_xlsxwriter.get_license() == "MIT"
-
-
-@pytest.mark.benchmark
-def test_validate_sheet_name() -> None:
-    """Test sheet name validation logic"""
-    assert rustpy_xlsxwriter.validate_sheet_name("Test") is True
-
-    invalid_chars = ["[", "]", ":", "*", "?", "/", "\\"]
-    for char in invalid_chars:
-        assert rustpy_xlsxwriter.validate_sheet_name(f"Test{char}") is False
+# ---------------------------------------------------------------------------
+# Freeze panes — single sheet
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.benchmark
 @pytest.mark.parametrize("record_count", [10, 100, 1000])
-def test_single_worksheet_freeze_panes(record_count: int) -> None:
-    """Test freeze panes in single worksheet mode."""
-    records = generate_test_records(record_count)
+def test_single_worksheet_freeze_panes(record_count: int):
+    records = generate_records(record_count)
 
-    # Test freezing only rows
-    filename = f"tmp/test_{record_count}_freeze_rows.xlsx"
-    assert rustpy_xlsxwriter.write_worksheet(records, filename, freeze_row=2) is None
-    assert os.path.exists(filename)
+    # rows only
+    path = f"{TMP}/freeze_rows_{record_count}.xlsx"
+    FastExcel(path).freeze(row=2).sheet("Sheet1", records).save()
+    assert os.path.exists(path)
 
-    # Test freezing only columns
-    filename = f"tmp/test_{record_count}_freeze_cols.xlsx"
-    assert rustpy_xlsxwriter.write_worksheet(records, filename, freeze_col=1) is None
-    assert os.path.exists(filename)
+    # cols only
+    path = f"{TMP}/freeze_cols_{record_count}.xlsx"
+    FastExcel(path).freeze(col=1).sheet("Sheet1", records).save()
+    assert os.path.exists(path)
 
-    # Test freezing both rows and columns
-    filename = f"tmp/test_{record_count}_freeze_both.xlsx"
-    assert (
-        rustpy_xlsxwriter.write_worksheet(records, filename, freeze_row=2, freeze_col=1)
-        is None
-    )
-    assert os.path.exists(filename)
+    # both
+    path = f"{TMP}/freeze_both_{record_count}.xlsx"
+    FastExcel(path).freeze(row=2, col=1).sheet("Sheet1", records).save()
+    assert os.path.exists(path)
 
-    # Test with custom sheet name
-    filename = f"tmp/test_{record_count}_freeze_custom_sheet.xlsx"
-    assert (
-        rustpy_xlsxwriter.write_worksheet(
-            records, filename, sheet_name="CustomSheet", freeze_row=2, freeze_col=1
-        )
-        is None
-    )
-    assert os.path.exists(filename)
+    # custom sheet name
+    path = f"{TMP}/freeze_custom_{record_count}.xlsx"
+    FastExcel(path).freeze(row=2, col=1).sheet("CustomSheet", records).save()
+    assert os.path.exists(path)
+
+
+# ---------------------------------------------------------------------------
+# Freeze panes — multiple sheets
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.benchmark
 @pytest.mark.parametrize("record_count", [10, 100])
-def test_multiple_worksheets_freeze_panes(record_count: int) -> None:
-    """Test freeze panes in multiple worksheet mode with FreezePaneConfig."""
-    records = generate_test_records_with_sheet_name(record_count)
+def test_multiple_worksheets_freeze_panes(record_count: int):
+    records = generate_records(record_count)
 
-    # Test general freeze pane settings
-    filename = f"tmp/test_multiple_freeze_general_{record_count}.xlsx"
-    config = {"general": {"row": 2, "col": 1}}
-    assert (
-        rustpy_xlsxwriter.write_worksheets(records, filename, freeze_panes=config)
-        is None
-    )
-    assert os.path.exists(filename)
+    def _multi_writer(path, **freeze_kw):
+        w = FastExcel(path)
+        for k, v in freeze_kw.items():
+            if k == "general":
+                w.freeze(**v)
+            else:
+                w.freeze(sheet=k, **v)
+        for i in range(record_count):
+            w.sheet(f"Sheet{i}", records)
+        w.save()
+        assert os.path.exists(path)
 
-    # Test sheet-specific freeze pane settings
-    filename = f"tmp/test_multiple_freeze_specific_{record_count}.xlsx"
-    config = {
-        "Sheet1": {"row": 2, "col": 1},
-        "Sheet2": {"row": 3, "col": 2},
-        "Sheet3": {"row": 1, "col": 3},
-    }
-    assert (
-        rustpy_xlsxwriter.write_worksheets(records, filename, freeze_panes=config)
-        is None
+    # general
+    _multi_writer(
+        f"{TMP}/multi_freeze_gen_{record_count}.xlsx", general={"row": 2, "col": 1}
     )
-    assert os.path.exists(filename)
 
-    # Test mixed general and sheet-specific settings
-    filename = f"tmp/test_multiple_freeze_mixed_{record_count}.xlsx"
-    config = {
-        "general": {"row": 2, "col": 1},
-        "Sheet2": {"row": 3, "col": 2},
-    }
-    assert (
-        rustpy_xlsxwriter.write_worksheets(records, filename, freeze_panes=config)
-        is None
+    # sheet-specific
+    _multi_writer(
+        f"{TMP}/multi_freeze_spec_{record_count}.xlsx",
+        Sheet1={"row": 2, "col": 1},
+        Sheet2={"row": 3, "col": 2},
+        Sheet3={"row": 1, "col": 3},
     )
-    assert os.path.exists(filename)
 
-    # Test with only row freeze in general settings
-    filename = f"tmp/test_multiple_freeze_row_{record_count}.xlsx"
-    config = {"general": {"row": 2}}
-    assert (
-        rustpy_xlsxwriter.write_worksheets(records, filename, freeze_panes=config)
-        is None
+    # mixed
+    _multi_writer(
+        f"{TMP}/multi_freeze_mix_{record_count}.xlsx",
+        general={"row": 2, "col": 1},
+        Sheet2={"row": 3, "col": 2},
     )
-    assert os.path.exists(filename)
 
-    # Test with only column freeze in general settings
-    filename = f"tmp/test_multiple_freeze_col_{record_count}.xlsx"
-    config = {"general": {"col": 2}}
-    assert (
-        rustpy_xlsxwriter.write_worksheets(records, filename, freeze_panes=config)
-        is None
-    )
-    assert os.path.exists(filename)
+    # row only
+    _multi_writer(f"{TMP}/multi_freeze_row_{record_count}.xlsx", general={"row": 2})
+
+    # col only
+    _multi_writer(f"{TMP}/multi_freeze_col_{record_count}.xlsx", general={"col": 2})
+
+
+# ---------------------------------------------------------------------------
+# Freeze panes — edge cases
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.benchmark
-def test_freeze_panes_edge_cases() -> None:
-    """Test edge cases for freeze panes."""
-    records = [
-        {"col1": "value1", "col2": "value2"},
-        {"col1": "value3", "col2": "value4"},
-    ]
+def test_freeze_panes_edge_cases():
+    records = [{"col1": "v1", "col2": "v2"}, {"col1": "v3", "col2": "v4"}]
 
-    # Test with zero values
-    filename = "tmp/test_freeze_edge_zero.xlsx"
-    assert (
-        rustpy_xlsxwriter.write_worksheet(records, filename, freeze_row=0, freeze_col=0)
-        is None
-    )
-    assert os.path.exists(filename)
+    # zero values
+    FastExcel(f"{TMP}/edge_zero.xlsx").freeze(row=0, col=0).sheet(
+        "Sheet1", records
+    ).save()
+    assert os.path.exists(f"{TMP}/edge_zero.xlsx")
 
-    # Test with None values
-    filename = "tmp/test_freeze_edge_none.xlsx"
-    assert (
-        rustpy_xlsxwriter.write_worksheet(
-            records, filename, freeze_row=None, freeze_col=None
-        )
-        is None
-    )
-    assert os.path.exists(filename)
+    # no freeze (None is default)
+    FastExcel(f"{TMP}/edge_none.xlsx").sheet("Sheet1", records).save()
+    assert os.path.exists(f"{TMP}/edge_none.xlsx")
 
-    # Test empty FreezePaneConfig
-    filename = "tmp/test_freeze_edge_empty.xlsx"
-    config = {}
-    assert (
-        rustpy_xlsxwriter.write_worksheets(
-            [{"Sheet1": records}], filename, freeze_panes=config
-        )
-        is None
-    )
-    assert os.path.exists(filename)
+    # large values
+    FastExcel(f"{TMP}/edge_large.xlsx").freeze(row=1000, col=100).sheet(
+        "Sheet1", records
+    ).save()
+    assert os.path.exists(f"{TMP}/edge_large.xlsx")
 
-    # Test with large freeze values
-    filename = "tmp/test_freeze_edge_large.xlsx"
-    assert (
-        rustpy_xlsxwriter.write_worksheet(
-            records, filename, freeze_row=1000, freeze_col=100
-        )
-        is None
-    )
-    assert os.path.exists(filename)
 
-    # Test with partial general config
-    filename = "tmp/test_freeze_edge_partial.xlsx"
-    config = {"general": {}}
-    assert (
-        rustpy_xlsxwriter.write_worksheets(
-            [{"Sheet1": records}], filename, freeze_panes=config
-        )
-        is None
-    )
-    assert os.path.exists(filename)
+# ---------------------------------------------------------------------------
+# Baseline benchmark: xlsxwriter
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize("record_count", [1000000])
+def test_xlsxwriter(record_count: int):
+    """Baseline benchmark using native XlsxWriter library."""
+    path = f"{TMP}/test_{record_count}_xlsxwriter.xlsx"
+    wb = xlsxwriter.Workbook(path, {"constant_memory": True})
+    ws = wb.add_worksheet()
+    records = generate_records(record_count)
+
+    headers = list(records[0].keys())
+    for col, h in enumerate(headers):
+        ws.write(0, col, h)
+
+    for i, rec in enumerate(records, start=1):
+        for col, h in enumerate(headers):
+            val = rec[h]
+            if isinstance(val, dict):
+                ws.write_string(i, col, str(val))
+            else:
+                ws.write(i, col, val)
+
+    wb.close()
+    assert os.path.exists(path)
