@@ -5,6 +5,10 @@ build-backend = "maturin"
 
 [project]
 name = "rustpy-xlsxwriter"
+description = "High-performance Excel file generation powered by Rust"
+readme = "README.md"
+license = { text = "MIT" }
+keywords = ["excel", "xlsx", "rust", "xlsxwriter", "performance"]
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Rust",
@@ -18,11 +22,19 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
 ]
 dynamic = ["version"]
 authors = [{ name = "Rahmad Afandi", email = "rahmadafandiii@gmail.com" }]
 
+[project.urls]
+Homepage = "https://github.com/rahmadafandi/rustpy-xlsxwriter"
+Repository = "https://github.com/rahmadafandi/rustpy-xlsxwriter"
+Issues = "https://github.com/rahmadafandi/rustpy-xlsxwriter/issues"
+
 [project.optional-dependencies]
-tests = ["pytest", "XlsxWriter", "pytest-codspeed","faker"]
+tests = ["pytest", "XlsxWriter", "pytest-codspeed", "faker"]
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
