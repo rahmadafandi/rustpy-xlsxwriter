@@ -1,4 +1,4 @@
-use pyo3::{IntoPyObjectExt, Py, PyAny, Python};
+use pyo3::{Py, PyAny, Python};
 use pyo3::prelude::*;
 use pyo3::types::{PyDateAccess, PyDateTime, PyTimeAccess};
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
@@ -46,40 +46,59 @@ fn write_worksheet_content(
     py: Python,
 ) -> PyResult<()> {
     match records {
-        WorksheetData::Records(records_vec) => {
-             if let Some(first_record) = records_vec.first() {
-                let headers: Vec<String> = first_record.hash.keys().cloned().collect();
-                // Write headers
-                for (col, header) in headers.iter().enumerate() {
-                    worksheet
-                        .write_string(0, col as u16, header.to_string())
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                                "Failed to write header: {}",
-                                e
-                            ))
-                        })?;
-                    
-                     // Apply bold format if it's an index column
-                    if let Some(index_cols) = index_columns {
-                        if index_cols.contains(header) {
-                            let bold = Format::new().set_bold();
-                             let _ = worksheet.set_column_format(col as u16, &bold);
-                        }
-                    }
-                }
+        WorksheetData::Records(records_list) => {
+            // Get iterator over the list
+            if let Ok(rows) = records_list.bind(py).try_iter() {
+                let mut headers: Vec<String> = Vec::new();
+                let mut headers_written = false;
 
-                // Write data
-                for (row, record) in records_vec.iter().enumerate() {
-                    for (col, header) in headers.iter().enumerate() {
-                        match record.hash.get(header) {
-                            Some(Some(value)) => {
-                                write_py_any(py, worksheet, (row + 1) as u32, col as u16, value, float_format)?;
+                for (row_idx, row_res) in rows.enumerate() {
+                    let row_obj = row_res?;
+                    let row_dict = row_obj.cast::<pyo3::types::PyDict>()
+                        .map_err(|_| PyErr::new::<pyo3::exceptions::PyTypeError, _>("Items in records must be dictionaries"))?;
+
+                    if !headers_written {
+                        // Extract headers from the first row keys
+                        // We use keys() to get a list of keys
+                        let keys = row_dict.keys();
+                         for key in keys.iter() {
+                            let key_str = key.extract::<String>()?;
+                            headers.push(key_str);
+                        }
+                        
+                        // Write headers
+                        for (col, header) in headers.iter().enumerate() {
+                            worksheet
+                                .write_string(0, col as u16, header.to_string())
+                                .map_err(|e| {
+                                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                                        "Failed to write header: {}",
+                                        e
+                                    ))
+                                })?;
+                            
+                             // Apply bold format if it's an index column
+                            if let Some(index_cols) = index_columns {
+                                if index_cols.contains(header) {
+                                    let bold = Format::new().set_bold();
+                                     let _ = worksheet.set_column_format(col as u16, &bold);
+                                }
                             }
-                            Some(None) | None => {
-                                let _ = worksheet
-                                    .write_string((row + 1) as u32, col as u16, "")
-                                    .map_err(|e| format!("Failed to write data: {}", e));
+                        }
+                        headers_written = true;
+                    }
+
+                     // Write data
+                    for (col, header) in headers.iter().enumerate() {
+                        // Use get_item which doesn't clone if we just check for None
+                        match row_dict.get_item(header)? {
+                            Some(value) => {
+                                write_py_any_bound(worksheet, (row_idx + 1) as u32, col as u16, &value, float_format)?;
+                            }
+                            None => {
+                                // Key missing, write empty string or nothing?
+                                // Original behavior was effectively empty string for None
+                                let _ = worksheet.write_string((row_idx + 1) as u32, col as u16, "");
                             }
                         }
                     }
@@ -121,9 +140,7 @@ fn write_worksheet_content(
                       if let Ok(items) = row.try_iter() {
                            for (col_idx, item_res) in items.enumerate() {
                                 let item = item_res?;
-                                // Unwrap item extraction
-                                let py_item: Py<PyAny> = item.into_py_any(py)?;
-                                write_py_any(py, worksheet, (row_idx + 1) as u32, col_idx as u16, &py_item, float_format)?;
+                                write_py_any_bound(worksheet, (row_idx + 1) as u32, col_idx as u16, &item, float_format)?;
                            }
                       }
                  }
@@ -163,18 +180,56 @@ fn write_worksheet_content(
     Ok(())
 }
 
-fn write_py_any(py: Python, worksheet: &mut rust_xlsxwriter::Worksheet, row: u32, col: u16, value: &Py<PyAny>, float_format: Option<&String>) -> PyResult<()> {
-    if value.is_none(py) {
-        let _ = worksheet
-            .write_string(row, col, "")
-            .map_err(|e| format!("Failed to write data: {}", e));
-    } else if let Ok(datetime) = value.bind(py).cast::<PyDateTime>() {
-        let year = datetime.get_year() as u16;
+fn write_py_any_bound(worksheet: &mut rust_xlsxwriter::Worksheet, row: u32, col: u16, value: &Bound<PyAny>, float_format: Option<&String>) -> PyResult<()> {
+    // Check None first
+    if value.is_none() {
+        let _ = worksheet.write_string(row, col, "");
+        return Ok(());
+    }
+
+    // Check String next (most common)
+    if let Ok(s) = value.cast::<pyo3::types::PyString>() {
+        let _ = worksheet.write_string(row, col, s.to_str()?);
+        return Ok(());
+    }
+
+    // Check Float
+    if let Ok(f) = value.cast::<pyo3::types::PyFloat>() {
+        let val = f.value();
+         if let Some(fmt_str) = float_format {
+            let format = Format::new().set_num_format(fmt_str);
+            let _ = worksheet.write_number_with_format(row, col, val, &format);
+        } else {
+            let _ = worksheet.write_number(row, col, val);
+        }
+        return Ok(());
+    }
+
+    // Check Int
+    if let Ok(i) = value.cast::<pyo3::types::PyInt>() {
+        // rust_xlsxwriter write_number takes f64, so safe to cast unless huge int
+        let val: f64 = i.extract()?;
+        let _ = worksheet.write_number(row, col, val);
+        return Ok(());
+    }
+
+    // Check Bool
+    if let Ok(b) = value.cast::<pyo3::types::PyBool>() {
+        let _ = worksheet.write_boolean(row, col, b.is_true());
+        return Ok(());
+    }
+
+    // Check DateTime (less common, usually)
+    if let Ok(datetime) = value.cast::<PyDateTime>() {
+         let year = datetime.get_year() as u16;
         let month = datetime.get_month() as u8;
         let day = datetime.get_day() as u8;
         let hour = datetime.get_hour() as u16;
         let minute = datetime.get_minute() as u8;
         let second = datetime.get_second() as u8;
+
+        // Note: Creating Format every time might be slow? But rust_xlsxwriter handles it efficiently usually.
+        // Optimization: Could cache format if possible, but difficult here without context.
         let format3 = Format::new().set_num_format("yyyy-mm-ddThh:mm:ss");
         let _ = worksheet.set_column_format(col, &format3);
 
@@ -187,39 +242,15 @@ fn write_py_any(py: Python, worksheet: &mut rust_xlsxwriter::Worksheet, row: u32
             })
             .unwrap();
 
-        let _ = worksheet
-            .write_datetime(row, col, &excel_datetime)
-            .map_err(|e| format!("Failed to write datetime: {}", e));
-    } else if let Ok(int_val) = value.extract::<i64>(py) {
-        let _ = worksheet
-            .write_number(row, col, int_val as f64)
-            .map_err(|e| format!("Failed to write data: {}", e));
-    } else if let Ok(float_val) = value.extract::<f64>(py) {
-        if let Some(fmt_str) = float_format {
-            let format = Format::new().set_num_format(fmt_str);
-            let _ = worksheet
-                .write_number_with_format(row, col, float_val, &format)
-                .map_err(|e| format!("Failed to write data: {}", e));
-        } else {
-            let _ = worksheet
-                .write_number(row, col, float_val)
-                .map_err(|e| format!("Failed to write data: {}", e));
-        }
-    } else if let Ok(bool_val) = value.extract::<bool>(py) {
-        let _ = worksheet
-            .write_boolean(row, col, bool_val)
-            .map_err(|e| format!("Failed to write data: {}", e));
-    } else if let Ok(str_val) = value.extract::<String>(py) {
-        let _ = worksheet
-            .write_string(row, col, str_val)
-            .map_err(|e| format!("Failed to write data: {}", e));
-    } else {
-        let _ = worksheet
-            .write_string(row, col, value.to_string())
-            .map_err(|e| format!("Failed to write data: {}", e));
+         let _ = worksheet.write_datetime(row, col, &excel_datetime);
+         return Ok(());
     }
+
+    // Fallback to string representation
+    let _ = worksheet.write_string(row, col, value.to_string());
     Ok(())
 }
+
 
 #[pyfunction]
 #[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, index_columns = None))]
@@ -242,7 +273,7 @@ pub fn write_worksheets(
                 )));
             }
 
-            let mut worksheet = workbook.add_worksheet_with_constant_memory();
+        let mut worksheet = workbook.add_worksheet_with_constant_memory();
             let _ = worksheet.set_name(&sheet_name);
 
             let (mut freeze_row, mut freeze_col) = (None, None);
