@@ -20,5 +20,10 @@ indexmap = "2.8.0"
 pyo3 = { version = "0.28.0", features = ["extension-module", "indexmap"] }
 rust_xlsxwriter = { version = "0.93.0", features = ["constant_memory", "ryu", "zlib"] }
 
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
 [package.metadata.pyo3]
 name = "rustpy_xlsxwriter.rustpy_xlsxwriter"

@@ -119,7 +119,9 @@ class FastExcel:
         self._autofit = autofit
         self._sheets: List[Dict[str, Any]] = []
         self._float_format: Optional[str] = None
+        self._datetime_format: Optional[str] = None
         self._index_columns: Optional[List[str]] = None
+        self._bold_headers: bool = False
         self._freeze_panes: Dict[str, Dict[str, int]] = {}
 
     def __enter__(self) -> "FastExcel":
@@ -135,18 +137,27 @@ class FastExcel:
         self,
         *,
         float_format: Optional[str] = None,
+        datetime_format: Optional[str] = None,
         index_columns: Optional[List[str]] = None,
+        bold_headers: Optional[bool] = None,
     ) -> "FastExcel":
-        """Set number formatting and index column styling.
+        """Set number formatting and column styling.
 
         Args:
             float_format: Excel number format for floats (e.g. ``"0.00"``).
+            datetime_format: Excel number format for datetimes
+                (default ``"yyyy-mm-ddThh:mm:ss"``).
             index_columns: Column names to render **bold**.
+            bold_headers: Whether to render header row in **bold**.
         """
         if float_format is not None:
             self._float_format = float_format
+        if datetime_format is not None:
+            self._datetime_format = datetime_format
         if index_columns is not None:
             self._index_columns = index_columns
+        if bold_headers is not None:
+            self._bold_headers = bold_headers
         return self
 
     def freeze(
@@ -227,8 +238,10 @@ class FastExcel:
                 freeze_row=freeze_row,
                 freeze_col=freeze_col,
                 float_format=self._float_format,
+                datetime_format=self._datetime_format,
                 index_columns=self._index_columns,
                 autofit=self._autofit,
+                bold_headers=self._bold_headers,
             )
         else:
             # Multi-sheet path
@@ -238,8 +251,10 @@ class FastExcel:
                 password=self._password,
                 freeze_panes=self._freeze_panes or None,
                 float_format=self._float_format,
+                datetime_format=self._datetime_format,
                 index_columns=self._index_columns,
                 autofit=self._autofit,
+                bold_headers=self._bold_headers,
             )
 
 

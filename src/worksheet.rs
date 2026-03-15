@@ -45,13 +45,16 @@ fn write_worksheet_content(
     freeze_row: Option<u32>,
     freeze_col: Option<u16>,
     float_format: Option<&String>,
+    datetime_format: Option<&String>,
     index_columns: Option<&Vec<String>>,
     autofit: bool,
+    bold_headers: bool,
     py: Python,
 ) -> PyResult<()> {
     // Pre-create Format objects once instead of per-cell
     let float_fmt = float_format.map(|s| Format::new().set_num_format(s));
-    let datetime_fmt = Format::new().set_num_format("yyyy-mm-ddThh:mm:ss");
+    let dt_fmt_str = datetime_format.map(|s| s.as_str()).unwrap_or("yyyy-mm-ddThh:mm:ss");
+    let datetime_fmt = Format::new().set_num_format(dt_fmt_str);
     let bold_fmt = Format::new().set_bold();
     let mut datetime_cols_set: HashSet<u16> = HashSet::new();
 
@@ -74,9 +77,15 @@ fn write_worksheet_content(
                         }
 
                         for (col, header) in headers.iter().enumerate() {
-                            worksheet
-                                .write_string(0, col as u16, header)
-                                .map_err(xlsx_err)?;
+                            if bold_headers {
+                                worksheet
+                                    .write_string_with_format(0, col as u16, header, &bold_fmt)
+                                    .map_err(xlsx_err)?;
+                            } else {
+                                worksheet
+                                    .write_string(0, col as u16, header)
+                                    .map_err(xlsx_err)?;
+                            }
 
                             if let Some(index_cols) = index_columns {
                                 if index_cols.contains(header) {
@@ -89,25 +98,18 @@ fn write_worksheet_content(
                         headers_written = true;
                     }
 
-                    for (col, header) in headers.iter().enumerate() {
-                        match row_dict.get_item(header)? {
-                            Some(value) => {
-                                write_py_any_bound(
-                                    worksheet,
-                                    (row_idx + 1) as u32,
-                                    col as u16,
-                                    &value,
-                                    float_fmt.as_ref(),
-                                    Some(&datetime_fmt),
-                                    &mut datetime_cols_set,
-                                )?;
-                            }
-                            None => {
-                                worksheet
-                                    .write_string((row_idx + 1) as u32, col as u16, "")
-                                    .map_err(xlsx_err)?;
-                            }
-                        }
+                    // Iterate values() directly — avoids per-cell hash lookup
+                    let row_u32 = (row_idx + 1) as u32;
+                    for (col, value) in row_dict.values().iter().enumerate() {
+                        write_py_any_bound(
+                            worksheet,
+                            row_u32,
+                            col as u16,
+                            &value,
+                            float_fmt.as_ref(),
+                            Some(&datetime_fmt),
+                            &mut datetime_cols_set,
+                        )?;
                     }
                 }
             }
@@ -115,11 +117,19 @@ fn write_worksheet_content(
         WorksheetData::DataFrame(df) => {
             let columns = df.getattr(py, "columns")?;
             let headers: Vec<String> = columns.extract(py)?;
+            let dtypes = df.getattr(py, "dtypes")?;
 
+            // Write headers
             for (col, header) in headers.iter().enumerate() {
-                worksheet
-                    .write_string(0, col as u16, header)
-                    .map_err(xlsx_err)?;
+                if bold_headers {
+                    worksheet
+                        .write_string_with_format(0, col as u16, header, &bold_fmt)
+                        .map_err(xlsx_err)?;
+                } else {
+                    worksheet
+                        .write_string(0, col as u16, header)
+                        .map_err(xlsx_err)?;
+                }
 
                 if let Some(index_cols) = index_columns {
                     if index_cols.contains(header) {
@@ -130,17 +140,91 @@ fn write_worksheet_content(
                 }
             }
 
-            let values = df.getattr(py, "values")?;
-            if let Ok(rows) = values.bind(py).try_iter() {
-                for (row_idx, row_res) in rows.enumerate() {
-                    let row = row_res?;
-                    if let Ok(items) = row.try_iter() {
-                        for (col_idx, item_res) in items.enumerate() {
-                            let item = item_res?;
+            // Pre-compute dtype kinds and bulk-convert columns via tolist()
+            let mut col_kinds: Vec<String> = Vec::with_capacity(headers.len());
+            let mut col_lists: Vec<Py<PyAny>> = Vec::with_capacity(headers.len());
+
+            for header in &headers {
+                let dtype = dtypes.call_method1(py, "__getitem__", (header.as_str(),))?;
+                let kind: String = dtype.getattr(py, "kind")?.extract(py)?;
+                col_kinds.push(kind);
+
+                let col_series = df.call_method1(py, "__getitem__", (header.as_str(),))?;
+                let col_list = col_series.call_method0(py, "tolist")?;
+                col_lists.push(col_list);
+            }
+
+            let nrows: usize = df.call_method0(py, "__len__")?.extract(py)?;
+
+            // Set datetime column formats upfront
+            for (col_idx, kind) in col_kinds.iter().enumerate() {
+                if kind == "M" && datetime_cols_set.insert(col_idx as u16) {
+                    worksheet.set_column_format(col_idx as u16, &datetime_fmt).map_err(xlsx_err)?;
+                }
+            }
+
+            // Write data row-by-row (constant_memory compatible) with dtype-aware dispatch
+            for row in 0..nrows {
+                let row_u32 = (row + 1) as u32;
+                for (col_idx, (col_list, kind)) in col_lists.iter().zip(col_kinds.iter()).enumerate() {
+                    let col_u16 = col_idx as u16;
+                    let item = col_list.bind(py).get_item(row)?;
+
+                    if item.is_none() {
+                        worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
+                        continue;
+                    }
+
+                    match kind.as_str() {
+                        "i" | "u" => {
+                            let val: f64 = item.extract()?;
+                            worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
+                        }
+                        "f" => {
+                            let val: f64 = item.extract()?;
+                            if val.is_nan() || val.is_infinite() {
+                                worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
+                            } else if let Some(fmt) = float_fmt.as_ref() {
+                                worksheet.write_number_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
+                            } else {
+                                worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
+                            }
+                        }
+                        "b" => {
+                            let val: bool = item.extract()?;
+                            worksheet.write_boolean(row_u32, col_u16, val).map_err(xlsx_err)?;
+                        }
+                        "M" => {
+                            if let Ok(dt) = item.cast::<PyDateTime>() {
+                                let excel_dt = ExcelDateTime::from_ymd(
+                                    dt.get_year() as u16,
+                                    dt.get_month() as u8,
+                                    dt.get_day() as u8,
+                                )
+                                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                    format!("Failed to create datetime: {}", e),
+                                ))?
+                                .and_hms(
+                                    dt.get_hour() as u16,
+                                    dt.get_minute() as u8,
+                                    dt.get_second() as u8,
+                                )
+                                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                    format!("Failed to create timestamp: {}", e),
+                                ))?;
+                                worksheet.write_datetime(row_u32, col_u16, &excel_dt).map_err(xlsx_err)?;
+                            } else {
+                                worksheet.write_string(row_u32, col_u16, item.to_string()).map_err(xlsx_err)?;
+                            }
+                        }
+                        "U" | "S" => {
+                            worksheet.write_string(row_u32, col_u16, item.to_string()).map_err(xlsx_err)?;
+                        }
+                        _ => {
                             write_py_any_bound(
                                 worksheet,
-                                (row_idx + 1) as u32,
-                                col_idx as u16,
+                                row_u32,
+                                col_u16,
                                 &item,
                                 float_fmt.as_ref(),
                                 Some(&datetime_fmt),
@@ -267,7 +351,7 @@ fn write_py_any_bound(
 
 
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, index_columns = None, autofit = true))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<indexmap::IndexMap<String, WorksheetData>>,
@@ -275,8 +359,10 @@ pub fn write_worksheets(
     password: Option<String>,
     freeze_panes: Option<FreezePaneConfig>,
     float_format: Option<String>,
+    datetime_format: Option<String>,
     index_columns: Option<Vec<String>>,
     autofit: bool,
+    bold_headers: bool,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for record_map in records_with_sheet_name {
@@ -319,8 +405,10 @@ pub fn write_worksheets(
                 freeze_row,
                 freeze_col,
                 float_format.as_ref(),
+                datetime_format.as_ref(),
                 index_columns.as_ref(),
                 autofit,
+                bold_headers,
                 py,
             )?;
         }
@@ -331,7 +419,7 @@ pub fn write_worksheets(
 }
 
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, index_columns = None, autofit = true))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -341,8 +429,10 @@ pub fn write_worksheet(
     freeze_row: Option<u32>,
     freeze_col: Option<u16>,
     float_format: Option<String>,
+    datetime_format: Option<String>,
     index_columns: Option<Vec<String>>,
     autofit: bool,
+    bold_headers: bool,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     let mut worksheet = workbook.add_worksheet_with_constant_memory();
@@ -364,8 +454,10 @@ pub fn write_worksheet(
         freeze_row,
         freeze_col,
         float_format.as_ref(),
+        datetime_format.as_ref(),
         index_columns.as_ref(),
         autofit,
+        bold_headers,
         py,
     )?;
 

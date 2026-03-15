@@ -17,18 +17,20 @@ install-development:
 	pip install .
 
 install-production:
-	pip install dist/excel_exporter-*.whl
+	pip install dist/rustpy_xlsxwriter-*.whl
 
 test:
-	pytest tests/ -v -ra --durations=0 -o log_cli=true
+	pytest tests/ -v -ra --durations=0 -m "not benchmark"
+
+test-all:
+	pytest tests/ -v -ra --durations=0
 
 test-benchmark:
-	pytest tests/ -v -ra --durations=0 -o log_cli=true --codspeed
+	pytest tests/test_benchmark.py -v -ra --durations=0 --codspeed
 
 clean:
 	rm -rf target
 	rm -rf .pytest_cache
-	rm -rf tmp/test_*.xlsx
 
 cleanup:
 	autoflake --remove-unused-variables --remove-all-unused-imports -i --recursive . && black . && isort --profile black . && pyclean .

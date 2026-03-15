@@ -40,7 +40,7 @@ with FastExcel("output.xlsx") as f:
 
 ## Features
 
-- **7x-7.8x faster** than Python's xlsxwriter
+- **~9x faster** than Python's xlsxwriter
 - Fluent builder API via `FastExcel` class
 - Context manager support (`with` statement) for auto-save
 - Support for `str`, `int`, `float`, `bool`, `None`, `datetime` values
@@ -48,8 +48,9 @@ with FastExcel("output.xlsx") as f:
 - Multiple sheets in a single file
 - Password protection
 - Freeze panes (rows & columns)
-- Float formatting & bold index columns
-- Pandas DataFrame support
+- Float formatting, custom datetime formatting & bold index columns
+- Bold headers option
+- Pandas DataFrame support with dtype-aware column optimization
 - `io.BytesIO` in-memory buffer support
 - Generator/iterator streaming for memory-efficient large datasets
 - Optional `autofit` control for column widths
@@ -145,6 +146,24 @@ FastExcel("dataframe.xlsx").sheet("Data", df).save()
 )
 ```
 
+### Custom Datetime Format
+
+```python
+from rustpy_xlsxwriter import FastExcel
+
+# Default: "yyyy-mm-ddThh:mm:ss"
+# Custom format:
+FastExcel("report.xlsx").format(datetime_format="dd/mm/yyyy").sheet("Sheet1", records).save()
+```
+
+### Bold Headers
+
+```python
+from rustpy_xlsxwriter import FastExcel
+
+FastExcel("report.xlsx").format(bold_headers=True).sheet("Sheet1", records).save()
+```
+
 ### In-Memory Buffer
 
 ```python
@@ -204,7 +223,7 @@ write_worksheets(
 | Method | Description |
 |---|---|
 | `FastExcel(target, *, password=None, autofit=True)` | Create writer for file path or `BytesIO` buffer. Set `autofit=False` to skip column width auto-adjustment. |
-| `.format(*, float_format=None, index_columns=None)` | Set number format & bold index columns |
+| `.format(*, float_format=None, datetime_format=None, index_columns=None, bold_headers=None)` | Set number/datetime format, bold index columns, and bold headers |
 | `.freeze(*, row=None, col=None, sheet=None)` | Configure freeze panes (general or per-sheet) |
 | `.sheet(name, data)` | Add a worksheet (list of dicts, generator, or DataFrame) |
 | `.save()` | Write all sheets and save |
@@ -235,27 +254,35 @@ write_worksheets(
 
 ![Test Result](image.png)
 
-RustPy-XlsxWriter delivers exceptional speed improvements compared to traditional Python solutions, achieving up to **7.8x faster** processing speeds while maintaining optimal memory usage.
+RustPy-XlsxWriter delivers exceptional speed improvements compared to traditional Python solutions, achieving up to **~9x faster** processing speeds while maintaining optimal memory usage.
 
-Based on performance testing with 1 million records:
+### Records (list of dicts)
 
-| Operation         | Records   | Time (seconds) | Comparison      |
-| ----------------- | --------- | -------------- | --------------- |
-| Single Sheet      | 1,000,000 | ~13.91s        | **7x faster**   |
-| Multiple Sheets   | 1,000,000 | ~12.54s        | **7.8x faster** |
-| Python xlsxwriter | 1,000,000 | ~97.40s        | baseline        |
+| Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
+| --------- | ------------------ | ----------------- | ---------------- |
+| 500,000   | ~4.99s             | ~45.85s           | **9.2x faster**  |
+| 1,000,000 | ~9.87s             | ~91.59s           | **9.3x faster**  |
 
-Key optimizations:
+### DataFrame (dtype-optimized)
+
+| Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
+| --------- | ------------------ | ----------------- | ---------------- |
+| 500,000   | ~2.22s             | ~13.80s           | **6.2x faster**  |
+| 1,000,000 | ~4.33s             | ~27.55s           | **6.4x faster**  |
+
+### Key optimizations
 
 1. Rust's zero-cost abstractions and memory management
-2. Native machine code compilation
+2. LTO (Link-Time Optimization) and single codegen unit for maximum inlining
 3. Constant memory mode for large files
 4. Lazy processing of Python iterables (including generators)
 5. Pre-allocated Format objects (created once, reused across all cells)
-6. Correct numpy scalar type handling (no string fallback)
-7. High-precision floating point with ryu
-8. Efficient zlib compression
-9. Optional autofit for large datasets
+6. Dict `values()` iteration instead of per-key hash lookups
+7. DataFrame dtype-aware column dispatch (skips per-cell type cascade)
+8. Bulk `tolist()` conversion for numpy-to-Python (C-level loop)
+9. Correct numpy scalar type handling (no string fallback)
+10. High-precision floating point with ryu
+11. Efficient zlib compression
 
 ## Testing
 
@@ -285,7 +312,7 @@ Test structure:
 | `test_password.py` | Password protection |
 | `test_bytesio.py` | In-memory buffer I/O |
 | `test_dataframe.py` | DataFrame, numpy scalar types |
-| `test_styling.py` | Float format, bold index columns |
+| `test_styling.py` | Float format, datetime format, bold headers, bold index columns |
 | `test_benchmark.py` | 1M row benchmarks (rustpy vs xlsxwriter) |
 
 ## Contributing

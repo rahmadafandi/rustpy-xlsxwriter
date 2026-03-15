@@ -9,10 +9,17 @@ import random
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List
 
+import numpy as np
+import pandas as pd
 import pytest
 from faker import Faker
 
 from rustpy_xlsxwriter import FastExcel
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _generate_large_records(count: int) -> List[Dict[str, Any]]:
@@ -53,22 +60,23 @@ def _generate_large_records(count: int) -> List[Dict[str, Any]]:
     return [r for c in chunks for r in c]
 
 
-@pytest.mark.benchmark
-def test_rustpy_xlsxwriter_1m_rows(tmp_path):
-    """Benchmark: 1M rows single sheet via rustpy-xlsxwriter."""
-    records = _generate_large_records(1_000_000)
-    path = str(tmp_path / "bench_1m.xlsx")
-    FastExcel(path, password="password").sheet("Benchmark", records).save()
-    assert os.path.exists(path)
+def _generate_large_dataframe(count: int) -> pd.DataFrame:
+    """Generate large DataFrame with mixed typed columns."""
+    np.random.seed(42)
+    return pd.DataFrame(
+        {
+            "int_col": np.random.randint(0, 1000, count),
+            "float_col": np.random.uniform(0, 100, count),
+            "str_col": [f"row_{i}" for i in range(count)],
+            "bool_col": np.random.choice([True, False], count),
+        }
+    )
 
 
-@pytest.mark.benchmark
-def test_xlsxwriter_baseline_1m_rows(tmp_path):
-    """Baseline benchmark: 1M rows via native Python XlsxWriter."""
+def _xlsxwriter_write_records(records: List[Dict[str, Any]], path: str) -> None:
+    """Baseline: write records using native Python XlsxWriter."""
     import xlsxwriter
 
-    records = _generate_large_records(1_000_000)
-    path = str(tmp_path / "bench_1m_baseline.xlsx")
     wb = xlsxwriter.Workbook(path, {"constant_memory": True})
     ws = wb.add_worksheet()
 
@@ -85,4 +93,108 @@ def test_xlsxwriter_baseline_1m_rows(tmp_path):
                 ws.write(i, col, val)
 
     wb.close()
+
+
+def _xlsxwriter_write_dataframe(df: pd.DataFrame, path: str) -> None:
+    """Baseline: write DataFrame using native Python XlsxWriter."""
+    import xlsxwriter
+
+    wb = xlsxwriter.Workbook(path, {"constant_memory": True})
+    ws = wb.add_worksheet()
+
+    headers = list(df.columns)
+    for col, h in enumerate(headers):
+        ws.write(0, col, h)
+
+    for i, row in enumerate(df.itertuples(index=False, name=None), start=1):
+        for col, val in enumerate(row):
+            if isinstance(val, bool):
+                ws.write_boolean(i, col, val)
+            elif isinstance(val, (int, float, np.integer, np.floating)):
+                ws.write_number(i, col, float(val))
+            else:
+                ws.write_string(i, col, str(val))
+
+    wb.close()
+
+
+# ---------------------------------------------------------------------------
+# Records benchmarks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.benchmark
+def test_records_500k_rustpy(tmp_path):
+    """Benchmark: 500K rows records via rustpy-xlsxwriter."""
+    records = _generate_large_records(500_000)
+    path = str(tmp_path / "records_500k.xlsx")
+    FastExcel(path, password="password").sheet("Benchmark", records).save()
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+def test_records_500k_xlsxwriter(tmp_path):
+    """Baseline: 500K rows records via Python XlsxWriter."""
+    records = _generate_large_records(500_000)
+    path = str(tmp_path / "records_500k_baseline.xlsx")
+    _xlsxwriter_write_records(records, path)
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+def test_records_1m_rustpy(tmp_path):
+    """Benchmark: 1M rows records via rustpy-xlsxwriter."""
+    records = _generate_large_records(1_000_000)
+    path = str(tmp_path / "records_1m.xlsx")
+    FastExcel(path, password="password").sheet("Benchmark", records).save()
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+def test_records_1m_xlsxwriter(tmp_path):
+    """Baseline: 1M rows records via Python XlsxWriter."""
+    records = _generate_large_records(1_000_000)
+    path = str(tmp_path / "records_1m_baseline.xlsx")
+    _xlsxwriter_write_records(records, path)
+    assert os.path.exists(path)
+
+
+# ---------------------------------------------------------------------------
+# DataFrame benchmarks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.benchmark
+def test_dataframe_500k_rustpy(tmp_path):
+    """Benchmark: 500K rows DataFrame via rustpy-xlsxwriter."""
+    df = _generate_large_dataframe(500_000)
+    path = str(tmp_path / "df_500k.xlsx")
+    FastExcel(path, autofit=False).sheet("Benchmark", df).save()
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+def test_dataframe_500k_xlsxwriter(tmp_path):
+    """Baseline: 500K rows DataFrame via Python XlsxWriter."""
+    df = _generate_large_dataframe(500_000)
+    path = str(tmp_path / "df_500k_baseline.xlsx")
+    _xlsxwriter_write_dataframe(df, path)
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+def test_dataframe_1m_rustpy(tmp_path):
+    """Benchmark: 1M rows DataFrame via rustpy-xlsxwriter."""
+    df = _generate_large_dataframe(1_000_000)
+    path = str(tmp_path / "df_1m.xlsx")
+    FastExcel(path, autofit=False).sheet("Benchmark", df).save()
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+def test_dataframe_1m_xlsxwriter(tmp_path):
+    """Baseline: 1M rows DataFrame via Python XlsxWriter."""
+    df = _generate_large_dataframe(1_000_000)
+    path = str(tmp_path / "df_1m_baseline.xlsx")
+    _xlsxwriter_write_dataframe(df, path)
     assert os.path.exists(path)
