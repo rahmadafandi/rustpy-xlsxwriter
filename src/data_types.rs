@@ -7,23 +7,27 @@ use pyo3::Borrowed;
 
 #[derive(Debug)]
 pub enum WorksheetData {
-    Records(Py<PyAny>),   // Holds the list of dicts or iterable
-    DataFrame(Py<PyAny>), // Holds the DataFrame object
+    Records(Py<PyAny>),        // Holds the list of dicts or iterable
+    PandasDataFrame(Py<PyAny>), // Holds a pandas DataFrame
+    PolarsDataFrame(Py<PyAny>), // Holds a polars DataFrame
 }
 
 impl<'a, 'py> FromPyObject<'a, 'py> for WorksheetData {
     type Error = PyErr;
 
     fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        // Check if it looks like a DataFrame (has "columns" attributes)
-        if ob.getattr("columns").is_ok() {
-             return Ok(WorksheetData::DataFrame(ob.into_py_any(ob.py())?));
+        // Detect Polars DataFrame: has "get_column" method (Polars-specific)
+        if ob.getattr("get_column").is_ok() && ob.getattr("schema").is_ok() {
+            return Ok(WorksheetData::PolarsDataFrame(ob.into_py_any(ob.py())?));
         }
 
-        // Assume it's an iterable of records if not a dataframe
-        // We can check if it has __iter__ but almost everything does. 
-        // Let's just wrap it. The iteration logic will fail later if it's not iterable.
-        return Ok(WorksheetData::Records(ob.into_py_any(ob.py())?));
+        // Detect Pandas DataFrame: has "columns" attribute
+        if ob.getattr("columns").is_ok() {
+            return Ok(WorksheetData::PandasDataFrame(ob.into_py_any(ob.py())?));
+        }
+
+        // Assume it's an iterable of records
+        Ok(WorksheetData::Records(ob.into_py_any(ob.py())?))
     }
 }
 

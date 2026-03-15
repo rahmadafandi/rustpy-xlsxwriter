@@ -50,7 +50,7 @@ with FastExcel("output.xlsx") as f:
 - Freeze panes (rows & columns)
 - Float formatting, custom datetime formatting & bold index columns
 - Bold headers option
-- Pandas DataFrame support with dtype-aware column optimization
+- Pandas and **Polars** DataFrame support with dtype-aware column optimization
 - `io.BytesIO` in-memory buffer support
 - Generator/iterator streaming for memory-efficient large datasets
 - Optional `autofit` control for column widths
@@ -141,6 +141,26 @@ FastExcel("dataframe.xlsx").sheet("Data", df).save()
 (
     FastExcel("styled.xlsx")
     .format(float_format="0.00", index_columns=["Name"])
+    .sheet("Data", df)
+    .save()
+)
+```
+
+### Polars DataFrame
+
+```python
+import polars as pl
+from rustpy_xlsxwriter import FastExcel
+
+df = pl.DataFrame({"Name": ["Alice", "Bob"], "Age": [30, 25], "Score": [88.5, 92.3]})
+
+# Basic
+FastExcel("polars.xlsx").sheet("Data", df).save()
+
+# With styling
+(
+    FastExcel("styled.xlsx")
+    .format(float_format="0.00", bold_headers=True)
     .sheet("Data", df)
     .save()
 )
@@ -311,7 +331,8 @@ Test structure:
 | `test_freeze_panes.py` | Freeze panes (single & multi-sheet) |
 | `test_password.py` | Password protection |
 | `test_bytesio.py` | In-memory buffer I/O |
-| `test_dataframe.py` | DataFrame, numpy scalar types |
+| `test_dataframe.py` | Pandas DataFrame, numpy scalar types |
+| `test_polars.py` | Polars DataFrame: types, datetime, date, null, styling |
 | `test_styling.py` | Float format, datetime format, bold headers, bold index columns |
 | `test_benchmark.py` | 1M row benchmarks (rustpy vs xlsxwriter) |
 

@@ -1,6 +1,6 @@
 use pyo3::{Py, PyAny, Python};
 use pyo3::prelude::*;
-use pyo3::types::{PyDateAccess, PyDateTime, PyTimeAccess};
+use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyTimeAccess};
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
 use std::collections::HashSet;
 
@@ -114,7 +114,7 @@ fn write_worksheet_content(
                 }
             }
         }
-        WorksheetData::DataFrame(df) => {
+        WorksheetData::PandasDataFrame(df) => {
             let columns = df.getattr(py, "columns")?;
             let headers: Vec<String> = columns.extract(py)?;
             let dtypes = df.getattr(py, "dtypes")?;
@@ -229,6 +229,146 @@ fn write_worksheet_content(
                                 float_fmt.as_ref(),
                                 Some(&datetime_fmt),
                                 &mut datetime_cols_set,
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+        WorksheetData::PolarsDataFrame(df) => {
+            let columns: Vec<String> = df.getattr(py, "columns")?.extract(py)?;
+            let dtypes = df.getattr(py, "dtypes")?;
+
+            // Write headers
+            for (col, header) in columns.iter().enumerate() {
+                if bold_headers {
+                    worksheet
+                        .write_string_with_format(0, col as u16, header, &bold_fmt)
+                        .map_err(xlsx_err)?;
+                } else {
+                    worksheet
+                        .write_string(0, col as u16, header)
+                        .map_err(xlsx_err)?;
+                }
+
+                if let Some(index_cols) = index_columns {
+                    if index_cols.contains(header) {
+                        worksheet
+                            .set_column_format(col as u16, &bold_fmt)
+                            .map_err(xlsx_err)?;
+                    }
+                }
+            }
+
+            // Pre-compute dtype flags and column data via get_column().to_list()
+            let dtypes_bound = dtypes.bind(py);
+            let dtypes_list: Vec<Bound<'_, PyAny>> = dtypes_bound.try_iter()?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut col_lists: Vec<Py<PyAny>> = Vec::with_capacity(columns.len());
+            let mut col_flags: Vec<&str> = Vec::with_capacity(columns.len());
+
+            for (col_idx, header) in columns.iter().enumerate() {
+                let dtype = &dtypes_list[col_idx];
+                let dtype_str = dtype.to_string();
+
+                // Detect type via is_*() methods and string matching
+                let flag = if dtype.call_method0("is_integer")?.extract::<bool>()? {
+                    "int"
+                } else if dtype.call_method0("is_float")?.extract::<bool>()? {
+                    "float"
+                } else if dtype.call_method0("is_temporal")?.extract::<bool>()? {
+                    "temporal"
+                } else if dtype_str == "Boolean" {
+                    "bool"
+                } else {
+                    "other"
+                };
+                col_flags.push(flag);
+
+                let col_series = df.call_method1(py, "get_column", (header.as_str(),))?;
+                let col_list = col_series.call_method0(py, "to_list")?;
+                col_lists.push(col_list);
+            }
+
+            let nrows: usize = df.call_method0(py, "__len__")?.extract(py)?;
+
+            // Set datetime column formats upfront
+            for (col_idx, flag) in col_flags.iter().enumerate() {
+                if *flag == "temporal" && datetime_cols_set.insert(col_idx as u16) {
+                    worksheet.set_column_format(col_idx as u16, &datetime_fmt).map_err(xlsx_err)?;
+                }
+            }
+
+            // Write data row-by-row (constant_memory compatible)
+            for row in 0..nrows {
+                let row_u32 = (row + 1) as u32;
+                for (col_idx, (col_list, flag)) in col_lists.iter().zip(col_flags.iter()).enumerate() {
+                    let col_u16 = col_idx as u16;
+                    let item = col_list.bind(py).get_item(row)?;
+
+                    if item.is_none() {
+                        worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
+                        continue;
+                    }
+
+                    match *flag {
+                        "int" => {
+                            let val: f64 = item.extract()?;
+                            worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
+                        }
+                        "float" => {
+                            let val: f64 = item.extract()?;
+                            if val.is_nan() || val.is_infinite() {
+                                worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
+                            } else if let Some(fmt) = float_fmt.as_ref() {
+                                worksheet.write_number_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
+                            } else {
+                                worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
+                            }
+                        }
+                        "bool" => {
+                            let val: bool = item.extract()?;
+                            worksheet.write_boolean(row_u32, col_u16, val).map_err(xlsx_err)?;
+                        }
+                        "temporal" => {
+                            if let Ok(dt) = item.cast::<PyDateTime>() {
+                                let excel_dt = ExcelDateTime::from_ymd(
+                                    dt.get_year() as u16,
+                                    dt.get_month() as u8,
+                                    dt.get_day() as u8,
+                                )
+                                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                    format!("Failed to create datetime: {}", e),
+                                ))?
+                                .and_hms(
+                                    dt.get_hour() as u16,
+                                    dt.get_minute() as u8,
+                                    dt.get_second() as u8,
+                                )
+                                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                    format!("Failed to create timestamp: {}", e),
+                                ))?;
+                                worksheet.write_datetime(row_u32, col_u16, &excel_dt).map_err(xlsx_err)?;
+                            } else if let Ok(d) = item.cast::<PyDate>() {
+                                let excel_dt = ExcelDateTime::from_ymd(
+                                    d.get_year() as u16,
+                                    d.get_month() as u8,
+                                    d.get_day() as u8,
+                                )
+                                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                    format!("Failed to create date: {}", e),
+                                ))?;
+                                worksheet.write_datetime(row_u32, col_u16, &excel_dt).map_err(xlsx_err)?;
+                            } else {
+                                worksheet.write_string(row_u32, col_u16, item.to_string()).map_err(xlsx_err)?;
+                            }
+                        }
+                        _ => {
+                            // String or other — per-cell type dispatch
+                            write_py_any_bound(
+                                worksheet, row_u32, col_u16, &item,
+                                float_fmt.as_ref(), Some(&datetime_fmt), &mut datetime_cols_set,
                             )?;
                         }
                     }

@@ -25,7 +25,7 @@ Records = Union[List[Record], Iterable[Record]]
 """A list (or any iterable, including generators) of :data:`Record` dicts."""
 
 DataFrame = Any
-"""A *pandas* ``DataFrame`` – kept as ``Any`` to avoid a hard dependency."""
+"""A *pandas* or *polars* ``DataFrame`` – kept as ``Any`` to avoid a hard dependency."""
 
 FileTarget = Union[str, BinaryIO]
 """A file path (``str``) or a writable binary buffer (e.g. ``io.BytesIO``)."""
@@ -138,7 +138,8 @@ class FastExcel:
 
         Args:
             name: Sheet name (≤ 31 chars, no ``[ ] : * ? / \\``).
-            data: List of dicts, generator of dicts, or pandas DataFrame.
+            data: List of dicts, generator of dicts, pandas DataFrame,
+                or polars DataFrame.
 
         Raises:
             ValueError: If the sheet name is invalid.
