@@ -1,6 +1,6 @@
 [package]
 name = "rustpy-xlsxwriter"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Rahmad Afandi <rahmadafandiii@gmail.com>"]
 description = "Rust Python bindings for rust_xlsxwriter"
@@ -19,7 +19,7 @@ crate-type = ["cdylib"]
 arrow-array = "58.0.0"
 arrow-schema = "58.0.0"
 indexmap = "2.8.0"
-pyo3 = { version = "0.28.0", features = ["extension-module", "indexmap"] }
+pyo3 = { version = "0.28.2", features = ["extension-module", "indexmap"] }
 pyo3-arrow = "0.17.0"
 rust_xlsxwriter = { version = "0.93.0", features = ["constant_memory", "ryu", "zlib"] }
 
