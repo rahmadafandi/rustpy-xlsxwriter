@@ -49,7 +49,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for FreezePaneConfig {
                     let inner_value = inner_value.extract::<usize>()?;
                     inner_map.insert(inner_key, inner_value);
                 }
-                map.insert(key.clone(), inner_map);
+                map.insert(key, inner_map);
             }
         }
 

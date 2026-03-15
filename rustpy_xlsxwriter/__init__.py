@@ -103,6 +103,7 @@ class FastExcel:
         target: Union[str, BinaryIO],
         *,
         password: Optional[str] = None,
+        autofit: bool = True,
     ) -> None:
         """Create a new writer.
 
@@ -110,13 +111,23 @@ class FastExcel:
             target: File path (``str``) or writable binary buffer
                 (e.g. ``io.BytesIO``).
             password: Optional password to protect the workbook.
+            autofit: Automatically adjust column widths (default ``True``).
+                Set to ``False`` for large datasets to improve performance.
         """
         self._target = target
         self._password = password
+        self._autofit = autofit
         self._sheets: List[Dict[str, Any]] = []
         self._float_format: Optional[str] = None
         self._index_columns: Optional[List[str]] = None
         self._freeze_panes: Dict[str, Dict[str, int]] = {}
+
+    def __enter__(self) -> "FastExcel":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        if exc_type is None and self._sheets:
+            self.save()
 
     # -- configuration (chainable) ------------------------------------------
 
@@ -217,6 +228,7 @@ class FastExcel:
                 freeze_col=freeze_col,
                 float_format=self._float_format,
                 index_columns=self._index_columns,
+                autofit=self._autofit,
             )
         else:
             # Multi-sheet path
@@ -227,6 +239,7 @@ class FastExcel:
                 freeze_panes=self._freeze_panes or None,
                 float_format=self._float_format,
                 index_columns=self._index_columns,
+                autofit=self._autofit,
             )
 
 

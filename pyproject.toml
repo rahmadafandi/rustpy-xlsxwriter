@@ -34,7 +34,7 @@ Repository = "https://github.com/rahmadafandi/rustpy-xlsxwriter"
 Issues = "https://github.com/rahmadafandi/rustpy-xlsxwriter/issues"
 
 [project.optional-dependencies]
-tests = ["pytest", "XlsxWriter", "pytest-codspeed", "faker"]
+tests = ["pytest", "XlsxWriter", "pytest-codspeed", "faker", "openpyxl", "pandas"]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

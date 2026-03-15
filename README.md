@@ -31,13 +31,20 @@ FastExcel("output.xlsx").sheet("Sheet1", records).save()
     .sheet("Orders", order_records)
     .save()
 )
+
+# Context manager (auto-saves on exit)
+with FastExcel("output.xlsx") as f:
+    f.sheet("Users", user_records)
+    f.sheet("Orders", order_records)
 ```
 
 ## Features
 
-- **7x–7.8x faster** than Python's xlsxwriter
+- **7x-7.8x faster** than Python's xlsxwriter
 - Fluent builder API via `FastExcel` class
+- Context manager support (`with` statement) for auto-save
 - Support for `str`, `int`, `float`, `bool`, `None`, `datetime` values
+- Numpy scalar types (`numpy.int64`, `numpy.float64`, `numpy.bool_`) handled correctly
 - Multiple sheets in a single file
 - Password protection
 - Freeze panes (rows & columns)
@@ -45,6 +52,7 @@ FastExcel("output.xlsx").sheet("Sheet1", records).save()
 - Pandas DataFrame support
 - `io.BytesIO` in-memory buffer support
 - Generator/iterator streaming for memory-efficient large datasets
+- Optional `autofit` control for column widths
 
 ## Usage Examples
 
@@ -76,6 +84,19 @@ inventory = [{"Product": "Laptop", "Price": 1000.0}, {"Product": "Phone", "Price
     .sheet("Inventory", inventory)
     .save()
 )
+```
+
+### Context Manager
+
+```python
+from rustpy_xlsxwriter import FastExcel
+
+# Auto-saves when exiting the block; skips save if an exception occurs
+with FastExcel("report.xlsx", password="secret") as f:
+    f.format(float_format="0.00")
+    f.freeze(row=1)
+    f.sheet("Users", user_records)
+    f.sheet("Orders", order_records)
 ```
 
 ### Freeze Panes
@@ -148,6 +169,16 @@ def rows():
 FastExcel("streamed.xlsx").sheet("Data", rows()).save()
 ```
 
+### Disable Autofit (Performance)
+
+For large datasets, disabling autofit can improve write performance:
+
+```python
+from rustpy_xlsxwriter import FastExcel
+
+FastExcel("large.xlsx", autofit=False).sheet("Data", large_records).save()
+```
+
 ### Functional API
 
 The lower-level functional API is also available:
@@ -172,11 +203,13 @@ write_worksheets(
 
 | Method | Description |
 |---|---|
-| `FastExcel(target, *, password=None)` | Create writer for file path or `BytesIO` buffer |
+| `FastExcel(target, *, password=None, autofit=True)` | Create writer for file path or `BytesIO` buffer. Set `autofit=False` to skip column width auto-adjustment. |
 | `.format(*, float_format=None, index_columns=None)` | Set number format & bold index columns |
 | `.freeze(*, row=None, col=None, sheet=None)` | Configure freeze panes (general or per-sheet) |
 | `.sheet(name, data)` | Add a worksheet (list of dicts, generator, or DataFrame) |
 | `.save()` | Write all sheets and save |
+
+`FastExcel` also supports the context manager protocol (`with` statement). When used as a context manager, `.save()` is called automatically on exit unless an exception occurred.
 
 ### Functional API
 
@@ -218,9 +251,42 @@ Key optimizations:
 2. Native machine code compilation
 3. Constant memory mode for large files
 4. Lazy processing of Python iterables (including generators)
-5. High-precision floating point with ryu
-6. Efficient zlib compression
-7. Memory safety via Rust's ownership system
+5. Pre-allocated Format objects (created once, reused across all cells)
+6. Correct numpy scalar type handling (no string fallback)
+7. High-precision floating point with ryu
+8. Efficient zlib compression
+9. Optional autofit for large datasets
+
+## Testing
+
+The test suite uses `pytest` with content verification via `openpyxl`:
+
+```bash
+# Run unit tests only (fast, ~1 second)
+pytest tests/ -m "not benchmark"
+
+# Run all tests including benchmarks (~2 minutes)
+pytest tests/
+
+# Run a specific test file
+pytest tests/test_dataframe.py -v
+```
+
+Test structure:
+
+| File | Tests |
+|---|---|
+| `test_metadata.py` | Package metadata functions |
+| `test_validation.py` | Sheet name validation (unicode, length, special chars) |
+| `test_write_single.py` | Single sheet: types, generator, context manager, autofit |
+| `test_write_multi.py` | Multiple sheets |
+| `test_write_functional.py` | `write_worksheet()`, `write_worksheets()` |
+| `test_freeze_panes.py` | Freeze panes (single & multi-sheet) |
+| `test_password.py` | Password protection |
+| `test_bytesio.py` | In-memory buffer I/O |
+| `test_dataframe.py` | DataFrame, numpy scalar types |
+| `test_styling.py` | Float format, bold index columns |
+| `test_benchmark.py` | 1M row benchmarks (rustpy vs xlsxwriter) |
 
 ## Contributing
 
