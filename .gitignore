@@ -1,4 +1,10 @@
 /target
+/tmp/
+
+# Output files from examples/benchmarks
+output_*.xlsx
+output_*.csv
+output_*.tsv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

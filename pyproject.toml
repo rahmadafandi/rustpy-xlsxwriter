@@ -5,10 +5,10 @@ build-backend = "maturin"
 
 [project]
 name = "rustpy-xlsxwriter"
-description = "High-performance Excel file generation powered by Rust"
+description = "High-performance Excel and CSV file generation powered by Rust (~7-9x faster)"
 readme = "README.md"
 license = { text = "MIT" }
-keywords = ["excel", "xlsx", "rust", "xlsxwriter", "performance"]
+keywords = ["excel", "xlsx", "csv", "rust", "xlsxwriter", "performance", "polars", "pandas", "arrow"]
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Rust",
