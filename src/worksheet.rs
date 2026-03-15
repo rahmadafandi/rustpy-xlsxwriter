@@ -468,6 +468,30 @@ fn write_py_any_bound(
         return Ok(());
     }
 
+    // Check Date (must be after DateTime since datetime is subclass of date)
+    if let Ok(d) = value.cast::<PyDate>() {
+        if let Some(fmt) = datetime_fmt {
+            if datetime_cols_set.insert(col) {
+                worksheet.set_column_format(col, fmt).map_err(xlsx_err)?;
+            }
+        }
+
+        let excel_date = ExcelDateTime::from_ymd(
+            d.get_year() as u16,
+            d.get_month() as u8,
+            d.get_day() as u8,
+        )
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Failed to create date: {}",
+                e
+            ))
+        })?;
+
+        worksheet.write_datetime(row, col, &excel_date).map_err(xlsx_err)?;
+        return Ok(());
+    }
+
     // Fallback: try bool extraction for numpy.bool_ (must be before f64, since bool extracts as f64 too)
     if let Ok(val) = value.extract::<bool>() {
         worksheet.write_boolean(row, col, val).map_err(xlsx_err)?;

@@ -2,32 +2,36 @@
 RustPy-XlsxWriter
 ==================
 
-High-performance Excel file generation powered by Rust.
+High-performance Excel file generation powered by Rust. ~9x faster than
+Python's xlsxwriter.
 
 Quick start::
 
     from rustpy_xlsxwriter import FastExcel
 
-    # Simple usage
-    writer = FastExcel("output.xlsx")
-    writer.sheet("Users", [{"Name": "Alice", "Age": 30}])
-    writer.sheet("Items", [{"SKU": "A1", "Price": 9.99}])
-    writer.save()
-
     # One-liner
     FastExcel("output.xlsx").sheet("Sheet1", records).save()
 
-    # With options
+    # Multiple sheets with options
     (
         FastExcel("report.xlsx", password="secret")
-        .format(float_format="0.00", index_columns=["Name"])
+        .format(float_format="0.00", index_columns=["Name"], bold_headers=True)
         .freeze(row=1, col=1)
-        .sheet("Data", records)
+        .sheet("Users", user_records)
+        .sheet("Orders", order_records)
         .save()
     )
 
+    # Context manager (auto-saves on exit)
+    with FastExcel("output.xlsx") as f:
+        f.sheet("Users", user_records)
+        f.sheet("Orders", order_records)
+
     # Pandas DataFrame
-    FastExcel("df.xlsx").sheet("Sheet1", df).save()
+    FastExcel("df.xlsx").sheet("Sheet1", pandas_df).save()
+
+    # Polars DataFrame
+    FastExcel("df.xlsx").sheet("Sheet1", polars_df).save()
 
     # In-memory buffer
     import io

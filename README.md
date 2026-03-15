@@ -40,7 +40,7 @@ with FastExcel("output.xlsx") as f:
 
 ## Features
 
-- **~9x faster** than Python's xlsxwriter
+- **~6.7x–9.2x faster** than Python's xlsxwriter
 - Fluent builder API via `FastExcel` class
 - Context manager support (`with` statement) for auto-save
 - Support for `str`, `int`, `float`, `bool`, `None`, `datetime` values
@@ -272,23 +272,30 @@ write_worksheets(
 
 ## Performance
 
-![Test Result](image.png)
-
 RustPy-XlsxWriter delivers exceptional speed improvements compared to traditional Python solutions, achieving up to **~9x faster** processing speeds while maintaining optimal memory usage.
+
+Benchmarked via [`benchmark.py`](benchmark.py) (`python benchmark.py`):
 
 ### Records (list of dicts)
 
 | Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
 | --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~4.99s             | ~45.85s           | **9.2x faster**  |
-| 1,000,000 | ~9.87s             | ~91.59s           | **9.3x faster**  |
+| 500,000   | ~2.92s             | ~26.79s           | **9.2x faster**  |
+| 1,000,000 | ~5.82s             | ~52.30s           | **9.0x faster**  |
 
-### DataFrame (dtype-optimized)
+### Pandas DataFrame (dtype-optimized)
 
 | Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
 | --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~2.22s             | ~13.80s           | **6.2x faster**  |
-| 1,000,000 | ~4.33s             | ~27.55s           | **6.4x faster**  |
+| 500,000   | ~1.28s             | ~8.70s            | **6.8x faster**  |
+| 1,000,000 | ~2.54s             | ~17.50s           | **6.9x faster**  |
+
+### Polars DataFrame (dtype-optimized)
+
+| Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
+| --------- | ------------------ | ----------------- | ---------------- |
+| 500,000   | ~1.28s             | ~8.63s            | **6.7x faster**  |
+| 1,000,000 | ~2.56s             | ~17.13s           | **6.7x faster**  |
 
 ### Key optimizations
 

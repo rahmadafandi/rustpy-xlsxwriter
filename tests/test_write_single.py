@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import date, datetime
 
 import openpyxl
 import pytest
@@ -89,6 +89,22 @@ class TestWriteSingleSheet:
         assert cell_val.hour == 10
         assert cell_val.minute == 30
         assert cell_val.second == 45
+        wb.close()
+
+    def test_date_values(self, tmp_path):
+        """date objects should be written as Excel dates."""
+        d = date(2024, 3, 20)
+        records = [{"d": d}]
+        path = str(tmp_path / "date.xlsx")
+        FastExcel(path).sheet("Sheet1", records).save()
+
+        wb = openpyxl.load_workbook(path)
+        ws = wb.active
+        cell_val = ws.cell(2, 1).value
+        assert isinstance(cell_val, datetime)
+        assert cell_val.year == 2024
+        assert cell_val.month == 3
+        assert cell_val.day == 20
         wb.close()
 
     def test_empty_records(self, tmp_path):

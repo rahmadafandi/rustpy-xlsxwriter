@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 from faker import Faker
 
@@ -197,4 +198,83 @@ def test_dataframe_1m_xlsxwriter(tmp_path):
     df = _generate_large_dataframe(1_000_000)
     path = str(tmp_path / "df_1m_baseline.xlsx")
     _xlsxwriter_write_dataframe(df, path)
+    assert os.path.exists(path)
+
+
+# ---------------------------------------------------------------------------
+# Polars DataFrame benchmarks
+# ---------------------------------------------------------------------------
+
+
+def _generate_large_polars_dataframe(count: int) -> pl.DataFrame:
+    """Generate large Polars DataFrame with mixed typed columns."""
+    np.random.seed(42)
+    return pl.DataFrame(
+        {
+            "int_col": np.random.randint(0, 1000, count),
+            "float_col": np.random.uniform(0, 100, count),
+            "str_col": [f"row_{i}" for i in range(count)],
+            "bool_col": np.random.choice([True, False], count),
+        }
+    )
+
+
+def _xlsxwriter_write_polars(df_pl: pl.DataFrame, path: str) -> None:
+    """Baseline: write Polars DataFrame using native Python XlsxWriter."""
+    import xlsxwriter
+
+    wb = xlsxwriter.Workbook(path, {"constant_memory": True})
+    ws = wb.add_worksheet()
+
+    headers = df_pl.columns
+    for col, h in enumerate(headers):
+        ws.write(0, col, h)
+
+    for i, row in enumerate(df_pl.iter_rows(), start=1):
+        for col, val in enumerate(row):
+            if val is None:
+                pass
+            elif isinstance(val, bool):
+                ws.write_boolean(i, col, val)
+            elif isinstance(val, (int, float, np.integer, np.floating)):
+                ws.write_number(i, col, float(val))
+            else:
+                ws.write_string(i, col, str(val))
+
+    wb.close()
+
+
+@pytest.mark.benchmark
+def test_polars_500k_rustpy(tmp_path):
+    """Benchmark: 500K rows Polars DataFrame via rustpy-xlsxwriter."""
+    df = _generate_large_polars_dataframe(500_000)
+    path = str(tmp_path / "polars_500k.xlsx")
+    FastExcel(path, autofit=False).sheet("Benchmark", df).save()
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+def test_polars_500k_xlsxwriter(tmp_path):
+    """Baseline: 500K rows Polars DataFrame via Python XlsxWriter."""
+    df = _generate_large_polars_dataframe(500_000)
+    path = str(tmp_path / "polars_500k_baseline.xlsx")
+    _xlsxwriter_write_polars(df, path)
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+def test_polars_1m_rustpy(tmp_path):
+    """Benchmark: 1M rows Polars DataFrame via rustpy-xlsxwriter."""
+    df = _generate_large_polars_dataframe(1_000_000)
+    path = str(tmp_path / "polars_1m.xlsx")
+    FastExcel(path, autofit=False).sheet("Benchmark", df).save()
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+def test_polars_1m_xlsxwriter(tmp_path):
+    """Baseline: 1M rows Polars DataFrame via Python XlsxWriter."""
+    df = _generate_large_polars_dataframe(1_000_000)
+    path = str(tmp_path / "polars_1m_baseline.xlsx")
+    _xlsxwriter_write_polars(df, path)
     assert os.path.exists(path)
