@@ -8,7 +8,7 @@ use crate::data_types::{FreezePaneConfig, WorksheetData};
 use crate::utils::validate_sheet_name;
 
 /// Helper to convert rust_xlsxwriter errors to PyErr
-fn xlsx_err(e: impl std::fmt::Display) -> PyErr {
+pub fn xlsx_err(e: impl std::fmt::Display) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Excel write error: {}", e))
 }
 
@@ -59,6 +59,75 @@ fn write_worksheet_content(
     let mut datetime_cols_set: HashSet<u16> = HashSet::new();
 
     match records {
+        WorksheetData::ArrowStream(stream_obj) => {
+            // Zero-copy Arrow path: read RecordBatches directly from memory
+            let arrow_ok = (|| -> PyResult<()> {
+                let stream = pyo3_arrow::PyRecordBatchReader::extract(
+                    stream_obj.bind(py).as_borrowed(),
+                )?;
+                let reader = stream.into_reader().map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to create Arrow reader: {}", e
+                    ))
+                })?;
+
+                // Write headers from schema (handles empty DataFrames with 0 batches)
+                let schema = reader.schema();
+                for (col, field) in schema.fields().iter().enumerate() {
+                    let name = field.name().as_str();
+                    if bold_headers {
+                        worksheet.write_string_with_format(0, col as u16, name, &bold_fmt).map_err(xlsx_err)?;
+                    } else {
+                        worksheet.write_string(0, col as u16, name).map_err(xlsx_err)?;
+                    }
+                    if let Some(idx_cols) = index_columns {
+                        if idx_cols.iter().any(|c| c == name) {
+                            worksheet.set_column_format(col as u16, &bold_fmt).map_err(xlsx_err)?;
+                        }
+                    }
+                }
+
+                let mut current_row: u32 = 1;
+                let mut formats_set = false;
+
+                for batch_result in reader {
+                    let batch = batch_result.map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to read Arrow batch: {}", e
+                        ))
+                    })?;
+
+                    if !formats_set {
+                        crate::arrow_writer::set_datetime_column_formats(
+                            worksheet, &batch, &datetime_fmt,
+                        )?;
+                        formats_set = true;
+                    }
+
+                    crate::arrow_writer::write_arrow_batch(
+                        worksheet, &batch, current_row,
+                        float_fmt.as_ref(),
+                    )?;
+
+                    current_row += batch.num_rows() as u32;
+                }
+                Ok(())
+            })();
+
+            // If Arrow path fails (e.g. empty Null-typed DataFrames), write headers only
+            if arrow_ok.is_err() {
+                if let Ok(cols) = stream_obj.getattr(py, "columns") {
+                    let headers: Vec<String> = cols.extract(py).unwrap_or_default();
+                    for (col, header) in headers.iter().enumerate() {
+                        if bold_headers {
+                            worksheet.write_string_with_format(0, col as u16, header, &bold_fmt).map_err(xlsx_err)?;
+                        } else {
+                            worksheet.write_string(0, col as u16, header).map_err(xlsx_err)?;
+                        }
+                    }
+                }
+            }
+        }
         WorksheetData::Records(records_list) => {
             if let Ok(rows) = records_list.bind(py).try_iter() {
                 let mut headers: Vec<String> = Vec::new();

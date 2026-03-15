@@ -40,7 +40,7 @@ with FastExcel("output.xlsx") as f:
 
 ## Features
 
-- **~6.7x–9.2x faster** than Python's xlsxwriter
+- **~7.7x–9.1x faster** than Python's xlsxwriter
 - Fluent builder API via `FastExcel` class
 - Context manager support (`with` statement) for auto-save
 - Support for `str`, `int`, `float`, `bool`, `None`, `datetime` values
@@ -50,7 +50,7 @@ with FastExcel("output.xlsx") as f:
 - Freeze panes (rows & columns)
 - Float formatting, custom datetime formatting & bold index columns
 - Bold headers option
-- Pandas and **Polars** DataFrame support with dtype-aware column optimization
+- Pandas and **Polars** DataFrame support with **Arrow zero-copy** optimization
 - `io.BytesIO` in-memory buffer support
 - Generator/iterator streaming for memory-efficient large datasets
 - Optional `autofit` control for column widths
@@ -280,36 +280,35 @@ Benchmarked via [`benchmark.py`](benchmark.py) (`python benchmark.py`):
 
 | Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
 | --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~2.92s             | ~26.79s           | **9.2x faster**  |
-| 1,000,000 | ~5.82s             | ~52.30s           | **9.0x faster**  |
+| 500,000   | ~2.98s             | ~27.20s           | **9.1x faster**  |
+| 1,000,000 | ~5.95s             | ~53.15s           | **8.9x faster**  |
 
-### Pandas DataFrame (dtype-optimized)
-
-| Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
-| --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~1.28s             | ~8.70s            | **6.8x faster**  |
-| 1,000,000 | ~2.54s             | ~17.50s           | **6.9x faster**  |
-
-### Polars DataFrame (dtype-optimized)
+### Pandas DataFrame (Arrow zero-copy)
 
 | Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
 | --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~1.28s             | ~8.63s            | **6.7x faster**  |
-| 1,000,000 | ~2.56s             | ~17.13s           | **6.7x faster**  |
+| 500,000   | ~1.21s             | ~9.30s            | **7.7x faster**  |
+| 1,000,000 | ~2.39s             | ~18.44s           | **7.7x faster**  |
+
+### Polars DataFrame (Arrow zero-copy)
+
+| Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
+| --------- | ------------------ | ----------------- | ---------------- |
+| 500,000   | ~1.19s             | ~8.64s            | **7.2x faster**  |
+| 1,000,000 | ~2.38s             | ~18.72s           | **7.9x faster**  |
 
 ### Key optimizations
 
-1. Rust's zero-cost abstractions and memory management
-2. LTO (Link-Time Optimization) and single codegen unit for maximum inlining
-3. Constant memory mode for large files
-4. Lazy processing of Python iterables (including generators)
-5. Pre-allocated Format objects (created once, reused across all cells)
-6. Dict `values()` iteration instead of per-key hash lookups
-7. DataFrame dtype-aware column dispatch (skips per-cell type cascade)
-8. Bulk `tolist()` conversion for numpy-to-Python (C-level loop)
-9. Correct numpy scalar type handling (no string fallback)
-10. High-precision floating point with ryu
-11. Efficient zlib compression
+1. **Arrow zero-copy** for DataFrames — reads memory buffers directly, no Python object conversion
+2. Rust's zero-cost abstractions and memory management
+3. LTO (Link-Time Optimization) and single codegen unit for maximum inlining
+4. Constant memory mode for large files
+5. Lazy processing of Python iterables (including generators)
+6. Pre-allocated Format objects (created once, reused across all cells)
+7. Dict `values()` iteration instead of per-key hash lookups
+8. Correct numpy scalar type handling (no string fallback)
+9. High-precision floating point with ryu
+10. Efficient zlib compression
 
 ## Testing
 

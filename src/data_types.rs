@@ -8,14 +8,20 @@ use pyo3::Borrowed;
 #[derive(Debug)]
 pub enum WorksheetData {
     Records(Py<PyAny>),        // Holds the list of dicts or iterable
-    PandasDataFrame(Py<PyAny>), // Holds a pandas DataFrame
-    PolarsDataFrame(Py<PyAny>), // Holds a polars DataFrame
+    ArrowStream(Py<PyAny>),    // Holds an object supporting __arrow_c_stream__ (Pandas/Polars)
+    PandasDataFrame(Py<PyAny>), // Fallback for Pandas without Arrow
+    PolarsDataFrame(Py<PyAny>), // Fallback for Polars without Arrow
 }
 
 impl<'a, 'py> FromPyObject<'a, 'py> for WorksheetData {
     type Error = PyErr;
 
     fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        // Prefer Arrow zero-copy path if __arrow_c_stream__ is available
+        if ob.getattr("__arrow_c_stream__").is_ok() {
+            return Ok(WorksheetData::ArrowStream(ob.into_py_any(ob.py())?));
+        }
+
         // Detect Polars DataFrame: has "get_column" method (Polars-specific)
         if ob.getattr("get_column").is_ok() && ob.getattr("schema").is_ok() {
             return Ok(WorksheetData::PolarsDataFrame(ob.into_py_any(ob.py())?));
