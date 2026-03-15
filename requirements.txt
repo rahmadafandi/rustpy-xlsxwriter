@@ -2,19 +2,24 @@ autoflake==2.3.1
 black==26.1.0
 cffi==2.0.0
 click==8.3.1
+et_xmlfile==2.0.0
 Faker==40.4.0
 iniconfig==2.3.0
 isort==7.0.0
 markdown-it-py==4.0.0
-maturin==1.11.5
+maturin==1.12.6
 mdurl==0.1.2
 mypy_extensions==1.1.0
 numpy==2.4.2
+openpyxl==3.1.5
 packaging==26.0
 pandas==3.0.0
 pathspec==1.0.4
 platformdirs==4.5.1
 pluggy==1.6.0
+polars==1.39.0
+polars-runtime-32==1.39.0
+pyarrow==23.0.1
 pyclean==3.5.0
 pycparser==3.0
 pyflakes==3.4.0
@@ -24,6 +29,7 @@ pytest-codspeed==4.2.0
 python-dateutil==2.9.0.post0
 pytokens==0.4.1
 rich==14.3.2
+-e git+ssh://git@github.com/rahmadafandi/rustpy-xlsxwriter.git@c42b28d5ad71d34ca02485693e1613dc48494f60#egg=rustpy_xlsxwriter
 semantic-version==2.10.0
 setuptools==81.0.0
 setuptools-rust==1.12.0
