@@ -2,32 +2,36 @@
 RustPy-XlsxWriter
 ==================
 
-High-performance Excel file generation powered by Rust.
+High-performance Excel file generation powered by Rust. ~9x faster than
+Python's xlsxwriter.
 
 Quick start::
 
     from rustpy_xlsxwriter import FastExcel
 
-    # Simple usage
-    writer = FastExcel("output.xlsx")
-    writer.sheet("Users", [{"Name": "Alice", "Age": 30}])
-    writer.sheet("Items", [{"SKU": "A1", "Price": 9.99}])
-    writer.save()
-
     # One-liner
     FastExcel("output.xlsx").sheet("Sheet1", records).save()
 
-    # With options
+    # Multiple sheets with options
     (
         FastExcel("report.xlsx", password="secret")
-        .format(float_format="0.00", index_columns=["Name"])
+        .format(float_format="0.00", index_columns=["Name"], bold_headers=True)
         .freeze(row=1, col=1)
-        .sheet("Data", records)
+        .sheet("Users", user_records)
+        .sheet("Orders", order_records)
         .save()
     )
 
+    # Context manager (auto-saves on exit)
+    with FastExcel("output.xlsx") as f:
+        f.sheet("Users", user_records)
+        f.sheet("Orders", order_records)
+
     # Pandas DataFrame
-    FastExcel("df.xlsx").sheet("Sheet1", df).save()
+    FastExcel("df.xlsx").sheet("Sheet1", pandas_df).save()
+
+    # Polars DataFrame
+    FastExcel("df.xlsx").sheet("Sheet1", polars_df).save()
 
     # In-memory buffer
     import io
@@ -103,6 +107,7 @@ class FastExcel:
         target: Union[str, BinaryIO],
         *,
         password: Optional[str] = None,
+        autofit: bool = True,
     ) -> None:
         """Create a new writer.
 
@@ -110,13 +115,25 @@ class FastExcel:
             target: File path (``str``) or writable binary buffer
                 (e.g. ``io.BytesIO``).
             password: Optional password to protect the workbook.
+            autofit: Automatically adjust column widths (default ``True``).
+                Set to ``False`` for large datasets to improve performance.
         """
         self._target = target
         self._password = password
+        self._autofit = autofit
         self._sheets: List[Dict[str, Any]] = []
         self._float_format: Optional[str] = None
+        self._datetime_format: Optional[str] = None
         self._index_columns: Optional[List[str]] = None
+        self._bold_headers: bool = False
         self._freeze_panes: Dict[str, Dict[str, int]] = {}
+
+    def __enter__(self) -> "FastExcel":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        if exc_type is None and self._sheets:
+            self.save()
 
     # -- configuration (chainable) ------------------------------------------
 
@@ -124,18 +141,27 @@ class FastExcel:
         self,
         *,
         float_format: Optional[str] = None,
+        datetime_format: Optional[str] = None,
         index_columns: Optional[List[str]] = None,
+        bold_headers: Optional[bool] = None,
     ) -> "FastExcel":
-        """Set number formatting and index column styling.
+        """Set number formatting and column styling.
 
         Args:
             float_format: Excel number format for floats (e.g. ``"0.00"``).
+            datetime_format: Excel number format for datetimes
+                (default ``"yyyy-mm-ddThh:mm:ss"``).
             index_columns: Column names to render **bold**.
+            bold_headers: Whether to render header row in **bold**.
         """
         if float_format is not None:
             self._float_format = float_format
+        if datetime_format is not None:
+            self._datetime_format = datetime_format
         if index_columns is not None:
             self._index_columns = index_columns
+        if bold_headers is not None:
+            self._bold_headers = bold_headers
         return self
 
     def freeze(
@@ -216,7 +242,10 @@ class FastExcel:
                 freeze_row=freeze_row,
                 freeze_col=freeze_col,
                 float_format=self._float_format,
+                datetime_format=self._datetime_format,
                 index_columns=self._index_columns,
+                autofit=self._autofit,
+                bold_headers=self._bold_headers,
             )
         else:
             # Multi-sheet path
@@ -226,7 +255,10 @@ class FastExcel:
                 password=self._password,
                 freeze_panes=self._freeze_panes or None,
                 float_format=self._float_format,
+                datetime_format=self._datetime_format,
                 index_columns=self._index_columns,
+                autofit=self._autofit,
+                bold_headers=self._bold_headers,
             )
 
 

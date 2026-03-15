@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 /// Returns true if valid, false if invalid
 #[pyfunction]
 pub fn validate_sheet_name(name: &str) -> bool {
-    if name.len() > 31 {
+    if name.is_empty() || name.chars().count() > 31 {
         return false;
     }
     !name.contains(&['[', ']', ':', '*', '?', '/', '\\'][..])

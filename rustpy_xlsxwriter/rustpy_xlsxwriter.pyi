@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import TracebackType
 from typing import (
     Any,
     BinaryIO,
@@ -9,6 +10,7 @@ from typing import (
     Iterable,
     List,
     Optional,
+    Type,
     Union,
 )
 
@@ -23,7 +25,7 @@ Records = Union[List[Record], Iterable[Record]]
 """A list (or any iterable, including generators) of :data:`Record` dicts."""
 
 DataFrame = Any
-"""A *pandas* ``DataFrame`` – kept as ``Any`` to avoid a hard dependency."""
+"""A *pandas* or *polars* ``DataFrame`` – kept as ``Any`` to avoid a hard dependency."""
 
 FileTarget = Union[str, BinaryIO]
 """A file path (``str``) or a writable binary buffer (e.g. ``io.BytesIO``)."""
@@ -64,6 +66,10 @@ class FastExcel:
             .sheet("Orders", order_records)
             .save()
         )
+
+        # Context manager (auto-saves on exit)
+        with FastExcel("out.xlsx") as f:
+            f.sheet("Sheet1", records)
     """
 
     def __init__(
@@ -71,26 +77,43 @@ class FastExcel:
         target: FileTarget,
         *,
         password: Optional[str] = None,
+        autofit: bool = True,
     ) -> None:
         """Create a new writer.
 
         Args:
             target: File path or writable binary buffer (e.g. ``io.BytesIO``).
             password: Optional password to protect the workbook.
+            autofit: Automatically adjust column widths (default ``True``).
+                Set to ``False`` for large datasets to improve performance.
         """
         ...
+
+    def __enter__(self) -> FastExcel: ...
+
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None: ...
 
     def format(
         self,
         *,
         float_format: Optional[str] = None,
+        datetime_format: Optional[str] = None,
         index_columns: Optional[List[str]] = None,
+        bold_headers: Optional[bool] = None,
     ) -> FastExcel:
-        """Set number formatting and index column styling.
+        """Set number formatting and column styling.
 
         Args:
             float_format: Excel number format for floats (e.g. ``"0.00"``).
+            datetime_format: Excel number format for datetimes
+                (default ``"yyyy-mm-ddThh:mm:ss"``).
             index_columns: Column names to render **bold**.
+            bold_headers: Whether to render header row in **bold**.
         """
         ...
 
@@ -115,7 +138,8 @@ class FastExcel:
 
         Args:
             name: Sheet name (≤ 31 chars, no ``[ ] : * ? / \\``).
-            data: List of dicts, generator of dicts, or pandas DataFrame.
+            data: List of dicts, generator of dicts, pandas DataFrame,
+                or polars DataFrame.
 
         Raises:
             ValueError: If the sheet name is invalid.
@@ -143,7 +167,10 @@ def write_worksheet(
     freeze_row: Optional[int] = None,
     freeze_col: Optional[int] = None,
     float_format: Optional[str] = None,
+    datetime_format: Optional[str] = None,
     index_columns: Optional[List[str]] = None,
+    autofit: bool = True,
+    bold_headers: bool = False,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -159,6 +186,7 @@ def write_worksheet(
         freeze_col: Freeze panes to the left of this column number.
         float_format: Excel number format for floats (e.g. ``"0.00"``).
         index_columns: Column names that should be rendered **bold**.
+        autofit: Automatically adjust column widths (default ``True``).
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -175,7 +203,10 @@ def write_worksheets(
     password: Optional[str] = None,
     freeze_panes: Optional[FreezePanesConfig] = None,
     float_format: Optional[str] = None,
+    datetime_format: Optional[str] = None,
     index_columns: Optional[List[str]] = None,
+    autofit: bool = True,
+    bold_headers: bool = False,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -187,6 +218,7 @@ def write_worksheets(
         freeze_panes: Per-sheet and/or general freeze-pane config.
         float_format: Excel number format for floats (e.g. ``"0.00"``).
         index_columns: Column names that should be rendered **bold**.
+        autofit: Automatically adjust column widths (default ``True``).
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -207,7 +239,7 @@ def write_worksheets(
 def validate_sheet_name(name: str) -> bool:
     """Check whether *name* is a valid Excel sheet name.
 
-    Rules: ≤ 31 chars, no ``[ ] : * ? / \\``, not empty, not ``"History"``.
+    Rules: ≤ 31 characters, no ``[ ] : * ? / \\``, not empty.
 
     Examples:
         >>> validate_sheet_name("Sheet1")
@@ -222,7 +254,7 @@ def validate_sheet_name(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_version() -> str:
-    """Return the package version string (e.g. ``'0.0.10'``)."""
+    """Return the package version string (e.g. ``'0.1.0'``)."""
     ...
 
 def get_name() -> str:
