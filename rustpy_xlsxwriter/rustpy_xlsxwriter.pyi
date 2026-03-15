@@ -276,7 +276,7 @@ def validate_sheet_name(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_version() -> str:
-    """Return the package version string (e.g. ``'0.4.1'``)."""
+    """Return the package version string (e.g. ``'0.4.2'``)."""
     ...
 
 def get_name() -> str:
