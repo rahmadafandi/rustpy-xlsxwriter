@@ -34,19 +34,26 @@ departments = [
     {"Dept": "Sales", "Budget": 350000.00, "Headcount": 18},
 ]
 
-(
-    FastExcel("output_full.xlsx", password="admin123")
-    .format(float_format="0.00", index_columns=["ID", "Dept"])
-    .freeze(row=1)
-    .freeze(row=1, col=2, sheet="Employees")  # extra freeze for Employees
-    .sheet("Employees", employees)
-    .sheet("Departments", departments)
-    .save()
-)
+# Using context manager for auto-save
+with FastExcel("output_full.xlsx", password="admin123") as f:
+    f.format(
+        float_format="0.00",
+        datetime_format="dd/mm/yyyy",
+        index_columns=["ID", "Dept"],
+        bold_headers=True,
+    )
+    f.freeze(row=1)
+    f.freeze(row=1, col=2, sheet="Employees")
+    f.sheet("Employees", employees)
+    f.sheet("Departments", departments)
+
 print("✅ output_full.xlsx created")
 print("   - 2 sheets: Employees, Departments")
 print("   - Password protected")
 print("   - Float format: 0.00")
+print("   - Datetime format: dd/mm/yyyy")
+print("   - Bold headers")
 print("   - Bold index columns: ID, Dept")
 print("   - Frozen header row on all sheets")
 print("   - Extra column freeze on Employees sheet")
+print("   - Auto-saved via context manager")

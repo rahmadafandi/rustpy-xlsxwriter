@@ -6,7 +6,13 @@
 [![Downloads](https://pepy.tech/badge/rustpy-xlsxwriter)](https://pepy.tech/project/rustpy-xlsxwriter)
 [![CI](https://github.com/rahmadafandi/rustpy-xlsxwriter/actions/workflows/CI.yml/badge.svg)](https://github.com/rahmadafandi/rustpy-xlsxwriter/actions/workflows/CI.yml)
 
-RustPy-XlsxWriter is a high-performance library for generating Excel files in Python, powered by Rust and integrated using PyO3. This library is ideal for creating Excel files with large datasets efficiently while maintaining a simple and Pythonic interface.
+High-performance Excel file generation for Python, powered by Rust. **~7x-9x faster** than [XlsxWriter](https://github.com/jmcnamara/XlsxWriter) with a simple, Pythonic API.
+
+```python
+from rustpy_xlsxwriter import FastExcel
+
+FastExcel("report.xlsx").sheet("Sheet1", records).save()
+```
 
 ## Installation
 
@@ -14,193 +20,117 @@ RustPy-XlsxWriter is a high-performance library for generating Excel files in Py
 pip install rustpy-xlsxwriter
 ```
 
+## Performance
+
+Benchmarked via [`benchmark.py`](benchmark.py) — run `python benchmark.py` to reproduce:
+
+| Input type | Records | RustPy-XlsxWriter | Python xlsxwriter | Speedup |
+|---|---|---|---|---|
+| **Records** (list of dicts) | 500K | ~2.89s | ~27.32s | **9.4x** |
+| | 1M | ~5.74s | ~52.81s | **9.2x** |
+| **Pandas DataFrame** | 500K | ~1.19s | ~9.10s | **7.7x** |
+| | 1M | ~2.36s | ~19.25s | **8.2x** |
+| **Polars DataFrame** | 500K | ~1.33s | ~10.30s | **7.7x** |
+| | 1M | ~2.34s | ~17.12s | **7.3x** |
+
+<details>
+<summary>Key optimizations</summary>
+
+1. **Arrow zero-copy** for DataFrames — reads memory buffers directly via Arrow C Data Interface
+2. **First-row type caching** for Records — detect column types once, skip type cascade
+3. LTO (Link-Time Optimization) and single codegen unit
+4. Constant memory mode for large files
+5. Pre-allocated Format objects (created once, reused across all cells)
+6. Dict `values()` iteration instead of per-key hash lookups
+7. Lazy processing of Python iterables (including generators)
+8. High-precision floating point with ryu
+9. Efficient zlib compression
+
+</details>
+
+## Features
+
+**Data Sources**
+- List of dicts, generators/iterators, Pandas DataFrame, Polars DataFrame
+- All Python types: `str`, `int`, `float`, `bool`, `None`, `datetime`, `date`
+- Numpy scalar types (`numpy.int64`, `numpy.float64`, `numpy.bool_`)
+
+**Formatting & Styling**
+- Float number format (e.g. `"0.00"`)
+- Custom datetime format (e.g. `"dd/mm/yyyy"`)
+- Bold headers and bold index columns
+- Freeze panes (rows, columns, per-sheet overrides)
+
+**Output Options**
+- File path or `io.BytesIO` in-memory buffer
+- Password protection
+- Optional column auto-fit (`autofit=True/False`)
+- Multiple sheets in a single file
+
+**API**
+- Fluent builder via `FastExcel` class
+- Context manager (`with` statement) for auto-save
+- Lower-level functional API (`write_worksheet`, `write_worksheets`)
+
 ## Quick Start
 
 ```python
 from rustpy_xlsxwriter import FastExcel
 
-# One-liner
-FastExcel("output.xlsx").sheet("Sheet1", records).save()
+# Simple
+FastExcel("output.xlsx").sheet("Users", [{"Name": "Alice", "Age": 30}]).save()
 
-# Multiple sheets with options
-(
-    FastExcel("report.xlsx", password="secret")
-    .format(float_format="0.00", index_columns=["Name"])
-    .freeze(row=1, col=1)
-    .sheet("Users", user_records)
-    .sheet("Orders", order_records)
-    .save()
-)
-
-# Context manager (auto-saves on exit)
-with FastExcel("output.xlsx") as f:
-    f.sheet("Users", user_records)
-    f.sheet("Orders", order_records)
+# Full-featured with context manager
+with FastExcel("report.xlsx", password="secret") as f:
+    f.format(
+        float_format="0.00",
+        datetime_format="dd/mm/yyyy",
+        bold_headers=True,
+        index_columns=["ID"],
+    )
+    f.freeze(row=1)
+    f.sheet("Employees", employee_records)
+    f.sheet("Departments", dept_records)
 ```
-
-## Features
-
-- **~7.7x–9.1x faster** than Python's xlsxwriter
-- Fluent builder API via `FastExcel` class
-- Context manager support (`with` statement) for auto-save
-- Support for `str`, `int`, `float`, `bool`, `None`, `datetime` values
-- Numpy scalar types (`numpy.int64`, `numpy.float64`, `numpy.bool_`) handled correctly
-- Multiple sheets in a single file
-- Password protection
-- Freeze panes (rows & columns)
-- Float formatting, custom datetime formatting & bold index columns
-- Bold headers option
-- Pandas and **Polars** DataFrame support with **Arrow zero-copy** optimization
-- `io.BytesIO` in-memory buffer support
-- Generator/iterator streaming for memory-efficient large datasets
-- Optional `autofit` control for column widths
 
 ## Usage Examples
 
-### Single Sheet
+### Pandas & Polars DataFrames
 
 ```python
-from rustpy_xlsxwriter import FastExcel
-from datetime import datetime
-
-records = [
-    {"Name": "Alice", "Age": 30, "City": "New York", "Active": True, "Join Date": datetime(2023, 1, 15)},
-    {"Name": "Bob", "Age": 25, "City": "San Francisco", "Active": False, "Join Date": datetime(2023, 2, 1)},
-]
-
-FastExcel("output.xlsx").sheet("Employees", records).save()
-```
-
-### Multiple Sheets
-
-```python
+import pandas as pd
+import polars as pl
 from rustpy_xlsxwriter import FastExcel
 
-employees = [{"Name": "Alice", "Age": 30}, {"Name": "Bob", "Age": 25}]
-inventory = [{"Product": "Laptop", "Price": 1000.0}, {"Product": "Phone", "Price": 500.0}]
+# Pandas — Arrow zero-copy, dtype-aware
+df_pd = pd.DataFrame({"Name": ["Alice", "Bob"], "Score": [88.5, 92.3]})
+FastExcel("pandas.xlsx").sheet("Data", df_pd).save()
 
-(
-    FastExcel("report.xlsx")
-    .sheet("Employees", employees)
-    .sheet("Inventory", inventory)
-    .save()
-)
-```
-
-### Context Manager
-
-```python
-from rustpy_xlsxwriter import FastExcel
-
-# Auto-saves when exiting the block; skips save if an exception occurs
-with FastExcel("report.xlsx", password="secret") as f:
-    f.format(float_format="0.00")
-    f.freeze(row=1)
-    f.sheet("Users", user_records)
-    f.sheet("Orders", order_records)
+# Polars — native support, no .to_pandas() needed
+df_pl = pl.DataFrame({"Name": ["Alice", "Bob"], "Score": [88.5, 92.3]})
+FastExcel("polars.xlsx").sheet("Data", df_pl).save()
 ```
 
 ### Freeze Panes
 
 ```python
-from rustpy_xlsxwriter import FastExcel
+# Freeze header row on all sheets
+FastExcel("frozen.xlsx").freeze(row=1).sheet("Sheet1", data).save()
 
-# Freeze first row on all sheets
+# Per-sheet freeze configuration
 (
-    FastExcel("frozen.xlsx")
-    .freeze(row=1)
-    .sheet("Sheet1", records)
-    .sheet("Sheet2", more_records)
-    .save()
-)
-
-# Per-sheet freeze pane configuration
-(
-    FastExcel("custom_freeze.xlsx")
-    .freeze(row=1, col=0)                  # general (all sheets)
-    .freeze(row=1, col=2, sheet="Sheet1")  # override for Sheet1
-    .freeze(row=2, col=1, sheet="Sheet2")  # override for Sheet2
-    .sheet("Sheet1", data1)
-    .sheet("Sheet2", data2)
+    FastExcel("custom.xlsx")
+    .freeze(row=1)                             # all sheets
+    .freeze(row=1, col=2, sheet="Details")     # override for Details
+    .sheet("Summary", summary_data)
+    .sheet("Details", detail_data)
     .save()
 )
 ```
 
-### Pandas DataFrame
+### Generator Streaming
 
 ```python
-import pandas as pd
-from rustpy_xlsxwriter import FastExcel
-
-df = pd.DataFrame({"Name": ["Alice", "Bob"], "Age": [30, 25], "Score": [88.5, 92.3]})
-
-# Basic
-FastExcel("dataframe.xlsx").sheet("Data", df).save()
-
-# With styling
-(
-    FastExcel("styled.xlsx")
-    .format(float_format="0.00", index_columns=["Name"])
-    .sheet("Data", df)
-    .save()
-)
-```
-
-### Polars DataFrame
-
-```python
-import polars as pl
-from rustpy_xlsxwriter import FastExcel
-
-df = pl.DataFrame({"Name": ["Alice", "Bob"], "Age": [30, 25], "Score": [88.5, 92.3]})
-
-# Basic
-FastExcel("polars.xlsx").sheet("Data", df).save()
-
-# With styling
-(
-    FastExcel("styled.xlsx")
-    .format(float_format="0.00", bold_headers=True)
-    .sheet("Data", df)
-    .save()
-)
-```
-
-### Custom Datetime Format
-
-```python
-from rustpy_xlsxwriter import FastExcel
-
-# Default: "yyyy-mm-ddThh:mm:ss"
-# Custom format:
-FastExcel("report.xlsx").format(datetime_format="dd/mm/yyyy").sheet("Sheet1", records).save()
-```
-
-### Bold Headers
-
-```python
-from rustpy_xlsxwriter import FastExcel
-
-FastExcel("report.xlsx").format(bold_headers=True).sheet("Sheet1", records).save()
-```
-
-### In-Memory Buffer
-
-```python
-import io
-from rustpy_xlsxwriter import FastExcel
-
-buf = io.BytesIO()
-FastExcel(buf).sheet("Sheet1", [{"Name": "Alice", "Age": 30}]).save()
-
-xlsx_data = buf.getvalue()
-```
-
-### Generator Streaming (Memory-Efficient)
-
-```python
-from rustpy_xlsxwriter import FastExcel
-
 def rows():
     for i in range(1_000_000):
         yield {"id": i, "value": f"row_{i}"}
@@ -208,27 +138,24 @@ def rows():
 FastExcel("streamed.xlsx").sheet("Data", rows()).save()
 ```
 
-### Disable Autofit (Performance)
-
-For large datasets, disabling autofit can improve write performance:
+### In-Memory Buffer (Web Frameworks)
 
 ```python
+import io
 from rustpy_xlsxwriter import FastExcel
 
-FastExcel("large.xlsx", autofit=False).sheet("Data", large_records).save()
+buf = io.BytesIO()
+FastExcel(buf).sheet("Sheet1", records).save()
+xlsx_bytes = buf.getvalue()  # send as HTTP response
 ```
 
 ### Functional API
 
-The lower-level functional API is also available:
-
 ```python
 from rustpy_xlsxwriter import write_worksheet, write_worksheets
 
-# Single sheet
 write_worksheet(records, "output.xlsx", sheet_name="Sheet1", password="secret")
 
-# Multiple sheets
 write_worksheets(
     [{"Sheet1": records1}, {"Sheet2": records2}],
     "output.xlsx",
@@ -242,13 +169,13 @@ write_worksheets(
 
 | Method | Description |
 |---|---|
-| `FastExcel(target, *, password=None, autofit=True)` | Create writer for file path or `BytesIO` buffer. Set `autofit=False` to skip column width auto-adjustment. |
-| `.format(*, float_format=None, datetime_format=None, index_columns=None, bold_headers=None)` | Set number/datetime format, bold index columns, and bold headers |
+| `FastExcel(target, *, password=None, autofit=True)` | Create writer for file path or `BytesIO` buffer |
+| `.format(*, float_format, datetime_format, index_columns, bold_headers)` | Set number/datetime format and styling |
 | `.freeze(*, row=None, col=None, sheet=None)` | Configure freeze panes (general or per-sheet) |
 | `.sheet(name, data)` | Add a worksheet (list of dicts, generator, or DataFrame) |
 | `.save()` | Write all sheets and save |
 
-`FastExcel` also supports the context manager protocol (`with` statement). When used as a context manager, `.save()` is called automatically on exit unless an exception occurred.
+Supports context manager (`with` statement) — auto-saves on exit, skips save on exception.
 
 ### Functional API
 
@@ -258,89 +185,74 @@ write_worksheets(
 | `write_worksheets(records_with_sheet_name, file_name, ...)` | Write multiple sheets |
 | `validate_sheet_name(name)` | Check if sheet name is valid for Excel |
 
-### Metadata
+### Supported Data Types
 
-| Function | Description |
+| Python Type | Excel Output |
 |---|---|
-| `get_version()` | Package version |
-| `get_name()` | Package name |
-| `get_authors()` | Package authors |
-| `get_description()` | Package description |
-| `get_repository()` | Repository URL |
-| `get_homepage()` | Homepage URL |
-| `get_license()` | License identifier |
+| `str` | Text |
+| `int` | Number |
+| `float` | Number (with optional format) |
+| `bool` | Boolean |
+| `None` | Empty cell |
+| `datetime.datetime` | DateTime (with optional format) |
+| `datetime.date` | Date (with optional format) |
+| `numpy.int64` / `numpy.float64` | Number |
+| `numpy.bool_` | Boolean |
+| `dict`, other | String representation |
 
-## Performance
+## Examples
 
-RustPy-XlsxWriter delivers exceptional speed improvements compared to traditional Python solutions, achieving up to **~9x faster** processing speeds while maintaining optimal memory usage.
+See [`examples/`](examples/) for 13 runnable scripts + a Jupyter notebook:
 
-Benchmarked via [`benchmark.py`](benchmark.py) (`python benchmark.py`):
-
-### Records (list of dicts)
-
-| Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
-| --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~2.98s             | ~27.20s           | **9.1x faster**  |
-| 1,000,000 | ~5.95s             | ~53.15s           | **8.9x faster**  |
-
-### Pandas DataFrame (Arrow zero-copy)
-
-| Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
-| --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~1.21s             | ~9.30s            | **7.7x faster**  |
-| 1,000,000 | ~2.39s             | ~18.44s           | **7.7x faster**  |
-
-### Polars DataFrame (Arrow zero-copy)
-
-| Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
-| --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~1.19s             | ~8.64s            | **7.2x faster**  |
-| 1,000,000 | ~2.38s             | ~18.72s           | **7.9x faster**  |
-
-### Key optimizations
-
-1. **Arrow zero-copy** for DataFrames — reads memory buffers directly, no Python object conversion
-2. Rust's zero-cost abstractions and memory management
-3. LTO (Link-Time Optimization) and single codegen unit for maximum inlining
-4. Constant memory mode for large files
-5. Lazy processing of Python iterables (including generators)
-6. Pre-allocated Format objects (created once, reused across all cells)
-7. Dict `values()` iteration instead of per-key hash lookups
-8. Correct numpy scalar type handling (no string fallback)
-9. High-precision floating point with ryu
-10. Efficient zlib compression
+| File | Description |
+|---|---|
+| [`01_basic.py`](examples/01_basic.py) | Single sheet from list of dicts |
+| [`02_multiple_sheets.py`](examples/02_multiple_sheets.py) | Multiple sheets in one file |
+| [`03_dataframe.py`](examples/03_dataframe.py) | Pandas DataFrame with styling |
+| [`04_freeze_panes.py`](examples/04_freeze_panes.py) | Freeze rows, columns, per-sheet config |
+| [`05_bytesio.py`](examples/05_bytesio.py) | In-memory buffer for web frameworks |
+| [`06_generator.py`](examples/06_generator.py) | Memory-efficient streaming (100K rows) |
+| [`07_password.py`](examples/07_password.py) | Password-protected workbook |
+| [`08_full_featured.py`](examples/08_full_featured.py) | All features combined |
+| [`09_polars.py`](examples/09_polars.py) | Polars DataFrame (native support) |
+| [`10_context_manager.py`](examples/10_context_manager.py) | Auto-save with `with` statement |
+| [`11_datetime_format.py`](examples/11_datetime_format.py) | Custom datetime/date formatting |
+| [`12_bold_headers.py`](examples/12_bold_headers.py) | Bold header row |
+| [`13_autofit.py`](examples/13_autofit.py) | Column auto-fit toggle |
+| [`quickstart.ipynb`](examples/quickstart.ipynb) | Jupyter notebook walkthrough |
 
 ## Testing
 
-The test suite uses `pytest` with content verification via `openpyxl`:
-
 ```bash
-# Run unit tests only (fast, ~1 second)
+# Unit tests (~1 second)
 pytest tests/ -m "not benchmark"
 
-# Run all tests including benchmarks (~2 minutes)
+# All tests including benchmarks
 pytest tests/
 
-# Run a specific test file
-pytest tests/test_dataframe.py -v
+# Benchmark only
+python benchmark.py
 ```
 
-Test structure:
+<details>
+<summary>Test structure (86 tests)</summary>
 
-| File | Tests |
+| File | Coverage |
 |---|---|
 | `test_metadata.py` | Package metadata functions |
 | `test_validation.py` | Sheet name validation (unicode, length, special chars) |
-| `test_write_single.py` | Single sheet: types, generator, context manager, autofit |
+| `test_write_single.py` | Single sheet: all types, generator, context manager, autofit |
 | `test_write_multi.py` | Multiple sheets |
-| `test_write_functional.py` | `write_worksheet()`, `write_worksheets()` |
+| `test_write_functional.py` | Functional API |
 | `test_freeze_panes.py` | Freeze panes (single & multi-sheet) |
 | `test_password.py` | Password protection |
 | `test_bytesio.py` | In-memory buffer I/O |
 | `test_dataframe.py` | Pandas DataFrame, numpy scalar types |
 | `test_polars.py` | Polars DataFrame: types, datetime, date, null, styling |
-| `test_styling.py` | Float format, datetime format, bold headers, bold index columns |
-| `test_benchmark.py` | 1M row benchmarks (rustpy vs xlsxwriter) |
+| `test_styling.py` | Float format, datetime format, bold headers, index columns |
+| `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
+
+</details>
 
 ## Contributing
 
@@ -348,12 +260,8 @@ Contributions are welcome! Please submit issues or pull requests on the [GitHub 
 
 ## License
 
-This project is licensed under the MIT ![License](LICENSE).
+This project is licensed under the MIT [License](LICENSE).
 
 ## Acknowledgements
 
-This project is inspired by [Rust-XlsxWriter](https://github.com/jmcnamara/rust_xlsxwriter) and [PyO3](https://github.com/pyo3/pyo3) with the help of [maturin](https://github.com/PyO3/maturin).
-
-## Contributors
-
-- [Rahmad Afandi](https://github.com/rahmadafandi)
+This project is powered by [rust_xlsxwriter](https://github.com/jmcnamara/rust_xlsxwriter), [PyO3](https://github.com/pyo3/pyo3), and [maturin](https://github.com/PyO3/maturin).
