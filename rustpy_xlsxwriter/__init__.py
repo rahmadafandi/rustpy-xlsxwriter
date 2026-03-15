@@ -71,6 +71,7 @@ from .rustpy_xlsxwriter import (
     get_repository,
     get_version,
     validate_sheet_name,
+    write_csv,
     write_worksheet,
     write_worksheets,
 )
@@ -214,12 +215,27 @@ class FastExcel:
     def save(self) -> None:
         """Write all sheets to the target file or buffer.
 
+        Automatically detects output format from file extension:
+        - ``.xlsx`` → Excel (default)
+        - ``.csv`` → CSV
+        - ``.tsv`` → TSV (tab-separated)
+
         Raises:
             ValueError: If no sheets have been added.
             OSError: If there are filesystem errors while writing.
         """
         if not self._sheets:
             raise ValueError("No sheets added. Call .sheet() before .save().")
+
+        # Auto-detect CSV/TSV from file extension
+        if isinstance(self._target, str):
+            lower = self._target.lower()
+            if lower.endswith(".csv") or lower.endswith(".tsv"):
+                delimiter = "\t" if lower.endswith(".tsv") else ","
+                # CSV only supports single sheet — use first sheet's data
+                _, data = next(iter(self._sheets[0].items()))
+                write_csv(data, self._target, delimiter=delimiter)
+                return
 
         if len(self._sheets) == 1:
             sheet_name, data = next(iter(self._sheets[0].items()))
@@ -270,6 +286,7 @@ __all__ = [
     # Class API
     "FastExcel",
     # Functional API
+    "write_csv",
     "write_worksheet",
     "write_worksheets",
     # Utilities

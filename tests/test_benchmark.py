@@ -15,7 +15,7 @@ import polars as pl
 import pytest
 from faker import Faker
 
-from rustpy_xlsxwriter import FastExcel
+from rustpy_xlsxwriter import FastExcel, write_csv
 
 
 # ---------------------------------------------------------------------------
@@ -277,4 +277,42 @@ def test_polars_1m_xlsxwriter(tmp_path):
     df = _generate_large_polars_dataframe(1_000_000)
     path = str(tmp_path / "polars_1m_baseline.xlsx")
     _xlsxwriter_write_polars(df, path)
+    assert os.path.exists(path)
+
+
+# ---------------------------------------------------------------------------
+# CSV benchmarks
+# ---------------------------------------------------------------------------
+
+
+def _generate_csv_rows(count: int):
+    """Generate rows for CSV benchmark."""
+    for i in range(count):
+        yield {"id": i, "name": f"user_{i}", "score": i * 0.1, "active": i % 2 == 0}
+
+
+def _python_csv_write(count: int, path: str) -> None:
+    """Baseline: write CSV using Python csv module."""
+    import csv
+
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["id", "name", "score", "active"])
+        writer.writeheader()
+        for row in _generate_csv_rows(count):
+            writer.writerow(row)
+
+
+@pytest.mark.benchmark
+def test_csv_1m_rustpy(tmp_path):
+    """Benchmark: 1M rows CSV via rustpy write_csv."""
+    path = str(tmp_path / "bench_1m.csv")
+    write_csv(_generate_csv_rows(1_000_000), path)
+    assert os.path.exists(path)
+
+
+@pytest.mark.benchmark
+def test_csv_1m_python(tmp_path):
+    """Baseline: 1M rows CSV via Python csv module."""
+    path = str(tmp_path / "bench_1m_baseline.csv")
+    _python_csv_write(1_000_000, path)
     assert os.path.exists(path)

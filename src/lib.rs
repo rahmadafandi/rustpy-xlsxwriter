@@ -1,5 +1,6 @@
 mod arrow_ffi;
 mod arrow_writer;
+mod csv_writer;
 mod data_types;
 mod metadata;
 mod utils;
@@ -20,5 +21,6 @@ fn rustpy_xlsxwriter(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(metadata::get_homepage, m)?)?;
     m.add_function(wrap_pyfunction!(metadata::get_license, m)?)?;
     m.add_function(wrap_pyfunction!(utils::validate_sheet_name, m)?)?;
+    m.add_function(wrap_pyfunction!(csv_writer::write_csv, m)?)?;
     Ok(())
 }

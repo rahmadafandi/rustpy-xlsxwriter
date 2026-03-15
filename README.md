@@ -6,7 +6,7 @@
 [![Downloads](https://pepy.tech/badge/rustpy-xlsxwriter)](https://pepy.tech/project/rustpy-xlsxwriter)
 [![CI](https://github.com/rahmadafandi/rustpy-xlsxwriter/actions/workflows/CI.yml/badge.svg)](https://github.com/rahmadafandi/rustpy-xlsxwriter/actions/workflows/CI.yml)
 
-High-performance Excel file generation for Python, powered by Rust. **~7x-9x faster** than [XlsxWriter](https://github.com/jmcnamara/XlsxWriter) with a simple, Pythonic API.
+High-performance Excel and CSV file generation for Python, powered by Rust. **~7x-9x faster** than [XlsxWriter](https://github.com/jmcnamara/XlsxWriter), **~5x faster** CSV than Python's csv module.
 
 ```python
 from rustpy_xlsxwriter import FastExcel
@@ -24,14 +24,18 @@ pip install rustpy-xlsxwriter
 
 Benchmarked via [`benchmark.py`](benchmark.py) — run `python benchmark.py` to reproduce:
 
-| Input type | Records | RustPy-XlsxWriter | Python xlsxwriter | Speedup |
-|---|---|---|---|---|
-| **Records** (list of dicts) | 500K | ~2.89s | ~27.32s | **9.4x** |
-| | 1M | ~5.74s | ~52.81s | **9.2x** |
-| **Pandas DataFrame** | 500K | ~1.19s | ~9.10s | **7.7x** |
-| | 1M | ~2.36s | ~19.25s | **8.2x** |
-| **Polars DataFrame** | 500K | ~1.33s | ~10.30s | **7.7x** |
-| | 1M | ~2.34s | ~17.12s | **7.3x** |
+| Output | Input type | Records | RustPy | Baseline | Speedup |
+|---|---|---|---|---|---|
+| **Excel** | Records (list of dicts) | 500K | ~2.99s | ~26.72s | **8.9x** |
+| | | 1M | ~5.94s | ~51.92s | **8.7x** |
+| | Pandas DataFrame | 500K | ~1.21s | ~9.11s | **7.6x** |
+| | | 1M | ~2.41s | ~18.17s | **7.5x** |
+| | Polars DataFrame | 500K | ~1.20s | ~8.59s | **7.1x** |
+| | | 1M | ~2.42s | ~17.07s | **7.1x** |
+| **CSV** | Records (generator) | 500K | ~0.16s | ~0.77s | **4.8x** |
+| | | 1M | ~0.32s | ~1.53s | **4.8x** |
+
+*Excel baseline: Python xlsxwriter. CSV baseline: Python csv module.*
 
 <details>
 <summary>Key optimizations</summary>
@@ -62,10 +66,12 @@ Benchmarked via [`benchmark.py`](benchmark.py) — run `python benchmark.py` to 
 - Freeze panes (rows, columns, per-sheet overrides)
 
 **Output Options**
-- File path or `io.BytesIO` in-memory buffer
-- Password protection
+- `.xlsx` (Excel) — auto-detected from file extension
+- `.csv` / `.tsv` — auto-detected, ~5x faster than Python csv module
+- `io.BytesIO` in-memory buffer
+- Password protection (Excel only)
 - Optional column auto-fit (`autofit=True/False`)
-- Multiple sheets in a single file
+- Multiple sheets in a single file (Excel only)
 
 **API**
 - Fluent builder via `FastExcel` class
@@ -149,6 +155,20 @@ FastExcel(buf).sheet("Sheet1", records).save()
 xlsx_bytes = buf.getvalue()  # send as HTTP response
 ```
 
+### CSV / TSV Output
+
+```python
+# Auto-detected from file extension — same API, no code change
+FastExcel("output.csv").sheet("Sheet1", records).save()
+FastExcel("output.tsv").sheet("Sheet1", records).save()
+
+# Or use write_csv directly
+from rustpy_xlsxwriter import write_csv
+
+write_csv(records, "output.csv")
+write_csv(records, "output.csv", delimiter=";")  # custom delimiter
+```
+
 ### Functional API
 
 ```python
@@ -181,8 +201,9 @@ Supports context manager (`with` statement) — auto-saves on exit, skips save o
 
 | Function | Description |
 |---|---|
-| `write_worksheet(records, file_name, ...)` | Write single sheet |
-| `write_worksheets(records_with_sheet_name, file_name, ...)` | Write multiple sheets |
+| `write_worksheet(records, file_name, ...)` | Write single Excel sheet |
+| `write_worksheets(records_with_sheet_name, file_name, ...)` | Write multiple Excel sheets |
+| `write_csv(records, file_name, delimiter=",")` | Write CSV/TSV file |
 | `validate_sheet_name(name)` | Check if sheet name is valid for Excel |
 
 ### Supported Data Types

@@ -22,7 +22,7 @@ import pandas as pd
 import polars as pl
 import xlsxwriter
 
-from rustpy_xlsxwriter import FastExcel
+from rustpy_xlsxwriter import FastExcel, write_csv
 
 TMP_DIR = "/tmp/rustpy_benchmark"
 
@@ -237,10 +237,46 @@ def main() -> None:
         cleanup(p1)
         cleanup(p2)
 
+    # --- CSV ---
+    for n in [500_000, 1_000_000]:
+        label = f"{n:,}"
+        print(f"CSV benchmark ({label} rows)...")
+
+        def _gen_csv_rows():
+            for i in range(n):
+                yield {"id": i, "name": f"user_{i}", "score": i * 0.1, "active": i % 2 == 0}
+
+        p1 = os.path.join(TMP_DIR, f"csv_{n}_rustpy.csv")
+        p2 = os.path.join(TMP_DIR, f"csv_{n}_python.csv")
+
+        print(f"  rustpy write_csv...", end=" ", flush=True)
+        t_r = bench("", lambda: write_csv(_gen_csv_rows(), p1))
+        print(f"{t_r:.2f}s")
+
+        print(f"  python csv...", end=" ", flush=True)
+
+        def _python_csv():
+            import csv
+
+            with open(p2, "w", newline="") as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=["id", "name", "score", "active"]
+                )
+                writer.writeheader()
+                for row in _gen_csv_rows():
+                    writer.writerow(row)
+
+        t_x = bench("", _python_csv)
+        print(f"{t_x:.2f}s")
+
+        results.append(("CSV", label, t_r, t_x))
+        cleanup(p1)
+        cleanup(p2)
+
     # --- Summary ---
     print()
     print("=" * 65)
-    print(f"{'Type':<10} {'Rows':>10} {'RustPy':>10} {'xlsxwriter':>12} {'Speedup':>10}")
+    print(f"{'Type':<10} {'Rows':>10} {'RustPy':>10} {'Baseline':>12} {'Speedup':>10}")
     print("-" * 65)
     for typ, label, t_r, t_x in results:
         print(f"{typ:<10} {label:>10} {t_r:>9.2f}s {t_x:>11.2f}s {t_x/t_r:>8.1f}x")
