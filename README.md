@@ -240,6 +240,7 @@ See [`examples/`](examples/) for 13 runnable scripts + a Jupyter notebook:
 | [`11_datetime_format.py`](examples/11_datetime_format.py) | Custom datetime/date formatting |
 | [`12_bold_headers.py`](examples/12_bold_headers.py) | Bold header row |
 | [`13_autofit.py`](examples/13_autofit.py) | Column auto-fit toggle |
+| [`14_csv_tsv.py`](examples/14_csv_tsv.py) | CSV/TSV output (~5x faster) |
 | [`quickstart.ipynb`](examples/quickstart.ipynb) | Jupyter notebook walkthrough |
 
 ## Testing

@@ -233,6 +233,28 @@ def write_worksheets(
     ...
 
 # ---------------------------------------------------------------------------
+# CSV writer
+# ---------------------------------------------------------------------------
+
+def write_csv(
+    records: SheetData,
+    file_name: FileTarget,
+    delimiter: Optional[str] = None,
+) -> None:
+    """Write data to a CSV file.
+
+    Args:
+        records: Data to write – a list of dicts, a generator of dicts,
+            a *pandas* ``DataFrame``, or a *polars* ``DataFrame``.
+        file_name: Destination file path or writable binary buffer.
+        delimiter: Column delimiter (default ``","``). Use ``"\\t"`` for TSV.
+
+    Examples:
+        >>> write_csv([{"Name": "Alice", "Age": 30}], "out.csv")
+    """
+    ...
+
+# ---------------------------------------------------------------------------
 # Sheet-name validation
 # ---------------------------------------------------------------------------
 
@@ -254,7 +276,7 @@ def validate_sheet_name(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_version() -> str:
-    """Return the package version string (e.g. ``'0.4.0'``)."""
+    """Return the package version string (e.g. ``'0.4.1'``)."""
     ...
 
 def get_name() -> str:
@@ -287,6 +309,7 @@ def get_license() -> str:
 
 __all__ = [
     "FastExcel",
+    "write_csv",
     "write_worksheet",
     "write_worksheets",
     "validate_sheet_name",

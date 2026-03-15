@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-RustPy-XlsxWriter is a high-performance Excel file generation library for Python, powered by Rust via PyO3. It achieves ~7-9x faster performance than Python's xlsxwriter.
+RustPy-XlsxWriter is a high-performance Excel and CSV file generation library for Python, powered by Rust via PyO3. It achieves ~7-9x faster Excel and ~5x faster CSV than Python equivalents.
 
 ## Build & Development
 
@@ -23,11 +23,8 @@ maturin build --release
 # Unit tests only (fast, ~1 second)
 pytest tests/ -m "not benchmark"
 
-# All tests including benchmarks (~8 minutes)
+# All tests including benchmarks
 pytest tests/
-
-# Run benchmarks with codspeed
-pytest tests/test_benchmark.py --codspeed
 
 # Standalone benchmark script
 python benchmark.py
@@ -38,8 +35,10 @@ python benchmark.py
 ```
 src/
 ├── lib.rs              # PyO3 module entry point
-├── worksheet.rs        # Core write logic (Records, Pandas, Polars, Arrow)
-├── arrow_writer.rs     # Arrow zero-copy batch writer
+├── worksheet.rs        # Core Excel write logic (Records, Pandas, Polars, Arrow)
+├── csv_writer.rs       # Fast CSV/TSV writer
+├── arrow_ffi.rs        # Arrow C Data Interface bridge (manual, no pyo3-arrow)
+├── arrow_writer.rs     # Arrow RecordBatch → Excel writer
 ├── data_types.rs       # WorksheetData enum (ArrowStream, Records, Pandas, Polars)
 ├── metadata.rs         # Package metadata functions
 └── utils.rs            # Sheet name validation
@@ -60,23 +59,27 @@ tests/
 ├── test_bytesio.py        # In-memory buffer
 ├── test_dataframe.py      # Pandas DataFrame
 ├── test_polars.py         # Polars DataFrame
+├── test_csv.py            # CSV/TSV output
 ├── test_styling.py        # Float/datetime format, bold headers
 └── test_benchmark.py      # Performance benchmarks
 ```
 
 ## Key Architecture
 
-- **Data input detection** (`data_types.rs`): `__arrow_c_stream__` → Arrow zero-copy, `get_column` → Polars fallback, `columns` → Pandas fallback, else → Records (list of dicts / generator)
-- **Arrow path**: Uses `pyo3-arrow` + `arrow-array` to read DataFrame memory directly in Rust — no Python object conversion
-- **Records path**: First-row type caching — detect column types from row 1, use fast single-cast dispatch for subsequent rows
-- **Constant memory mode**: All paths write row-by-row for `rust_xlsxwriter` constant memory compatibility
+- **Output format detection**: `.xlsx` → Excel, `.csv` → CSV, `.tsv` → TSV (auto-detected from file extension)
+- **Data input detection** (`data_types.rs`): `__arrow_c_stream__` → Arrow zero-copy, `get_column` → Polars fallback, `columns` → Pandas fallback, else → Records
+- **Arrow path**: Manual Arrow C Data Interface via `arrow_ffi.rs` (no `pyo3-arrow` — avoids chrono-tz cross-compilation issues)
+- **Records path**: First-row type caching — detect column types from row 1, skip type cascade for subsequent rows
+- **CSV path**: Rust `Vec<u8>` buffer with `ryu` float formatting, proper CSV escaping
+- **Constant memory mode**: All Excel paths write row-by-row for `rust_xlsxwriter` compatibility
 - **Format caching**: `Format` objects created once, reused across all cells
 
 ## Dependencies
 
 - `pyo3` 0.28 — Rust-Python bindings
 - `rust_xlsxwriter` 0.93 — Excel file generation (constant_memory, ryu, zlib)
-- `pyo3-arrow` 0.17 + `arrow-array` 58 — Arrow zero-copy for DataFrames
+- `arrow-array` + `arrow-schema` 58 (ffi feature) — Arrow zero-copy for DataFrames
+- `ryu` — Fast float-to-string for CSV
 - `indexmap` — Ordered maps for deterministic sheet ordering
 
 ## Coding Conventions
@@ -87,6 +90,7 @@ tests/
 - Use `chars().count()` not `len()` for Unicode string length validation
 - Keep `write_py_any_bound` and `write_py_any_bound_detect` in sync — they share the same type cascade logic
 - Tests must verify actual cell content via `openpyxl`, not just file existence
+- CSV tests verify raw file content via string comparison
 
 ## Version Bumping
 
