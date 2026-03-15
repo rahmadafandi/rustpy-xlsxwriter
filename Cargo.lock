@@ -298,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "rustpy-xlsxwriter"
-version = "0.0.12"
+version = "0.1.0"
 dependencies = [
  "indexmap",
  "pyo3",
