@@ -1,3 +1,4 @@
+mod arrow_writer;
 mod data_types;
 mod metadata;
 mod utils;
