@@ -16,11 +16,10 @@ name = "rustpy_xlsxwriter"
 crate-type = ["cdylib"]
 
 [dependencies]
-arrow-array = "58.0.0"
-arrow-schema = "58.0.0"
+arrow-array = { version = "58.0.0", features = ["ffi"] }
+arrow-schema = { version = "58.0.0", features = ["ffi"] }
 indexmap = "2.8.0"
 pyo3 = { version = "0.28.2", features = ["extension-module", "indexmap"] }
-pyo3-arrow = "0.17.0"
 rust_xlsxwriter = { version = "0.93.0", features = ["constant_memory", "ryu", "zlib"] }
 
 [profile.release]

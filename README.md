@@ -40,7 +40,7 @@ with FastExcel("output.xlsx") as f:
 
 ## Features
 
-- **~7.3x–9.0x faster** than Python's xlsxwriter
+- **~7.3x–9.4x faster** than Python's xlsxwriter
 - Fluent builder API via `FastExcel` class
 - Context manager support (`with` statement) for auto-save
 - Support for `str`, `int`, `float`, `bool`, `None`, `datetime` values
@@ -280,22 +280,22 @@ Benchmarked via [`benchmark.py`](benchmark.py) (`python benchmark.py`):
 
 | Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
 | --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~2.95s             | ~26.67s           | **9.0x faster**  |
-| 1,000,000 | ~5.86s             | ~52.36s           | **8.9x faster**  |
+| 500,000   | ~2.89s             | ~27.32s           | **9.4x faster**  |
+| 1,000,000 | ~5.74s             | ~52.81s           | **9.2x faster**  |
 
 ### Pandas DataFrame (Arrow zero-copy)
 
 | Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
 | --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~1.18s             | ~9.01s            | **7.6x faster**  |
-| 1,000,000 | ~2.36s             | ~18.00s           | **7.6x faster**  |
+| 500,000   | ~1.19s             | ~9.10s            | **7.7x faster**  |
+| 1,000,000 | ~2.36s             | ~19.25s           | **8.2x faster**  |
 
 ### Polars DataFrame (Arrow zero-copy)
 
 | Records   | RustPy-XlsxWriter | Python xlsxwriter | Speedup          |
 | --------- | ------------------ | ----------------- | ---------------- |
-| 500,000   | ~1.18s             | ~8.63s            | **7.3x faster**  |
-| 1,000,000 | ~2.35s             | ~17.21s           | **7.3x faster**  |
+| 500,000   | ~1.33s             | ~10.30s           | **7.7x faster**  |
+| 1,000,000 | ~2.34s             | ~17.12s           | **7.3x faster**  |
 
 ### Key optimizations
 

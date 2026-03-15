@@ -60,16 +60,9 @@ fn write_worksheet_content(
 
     match records {
         WorksheetData::ArrowStream(stream_obj) => {
-            // Zero-copy Arrow path: read RecordBatches directly from memory
+            // Zero-copy Arrow path via Arrow C Stream Interface (no pyo3-arrow dependency)
             let arrow_ok = (|| -> PyResult<()> {
-                let stream = pyo3_arrow::PyRecordBatchReader::extract(
-                    stream_obj.bind(py).as_borrowed(),
-                )?;
-                let reader = stream.into_reader().map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to create Arrow reader: {}", e
-                    ))
-                })?;
+                let reader = crate::arrow_ffi::stream_to_reader(stream_obj, py)?;
 
                 // Write headers from schema (handles empty DataFrames with 0 batches)
                 let schema = reader.schema();
