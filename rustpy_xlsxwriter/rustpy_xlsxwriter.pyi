@@ -10,6 +10,7 @@ from typing import (
     Iterable,
     List,
     Optional,
+    Tuple,
     Type,
     Union,
 )
@@ -45,7 +46,10 @@ SheetData = Union[Records, DataFrame]
 """Data accepted per sheet – either :data:`Records` or a :data:`DataFrame`."""
 
 SheetMap = Dict[str, SheetData]
-"""Maps a sheet name to its data, e.g. ``{"Sheet1": records}``."""
+"""(Legacy alias) Maps a sheet name to its data."""
+
+SheetEntry = Tuple[str, SheetData]
+"""A ``(sheet_name, data)`` pair as accepted by :func:`write_worksheets`."""
 
 # ---------------------------------------------------------------------------
 # Builder class
@@ -198,7 +202,7 @@ def write_worksheet(
     ...
 
 def write_worksheets(
-    records_with_sheet_name: List[SheetMap],
+    records_with_sheet_name: List[SheetEntry],
     file_name: FileTarget,
     password: Optional[str] = None,
     freeze_panes: Optional[FreezePanesConfig] = None,
@@ -211,8 +215,7 @@ def write_worksheets(
     """Write data to **multiple** worksheets in an Excel file.
 
     Args:
-        records_with_sheet_name: A list where each element is a dict
-            mapping **one** sheet name to its data.
+        records_with_sheet_name: A list of ``(sheet_name, data)`` tuples.
         file_name: Destination file path or writable binary buffer.
         password: Optional password to protect the workbook.
         freeze_panes: Per-sheet and/or general freeze-pane config.
@@ -226,7 +229,7 @@ def write_worksheets(
 
     Examples:
         >>> write_worksheets(
-        ...     [{"Users": [{"Name": "Alice"}]}, {"Items": [{"SKU": "A1"}]}],
+        ...     [("Users", [{"Name": "Alice"}]), ("Items", [{"SKU": "A1"}])],
         ...     "multi.xlsx",
         ... )
     """
@@ -276,7 +279,7 @@ def validate_sheet_name(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_version() -> str:
-    """Return the package version string (e.g. ``'0.4.3'``)."""
+    """Return the package version string (e.g. ``'0.4.4'``)."""
     ...
 
 def get_name() -> str:
@@ -326,5 +329,6 @@ __all__ = [
     "FileTarget",
     "FreezePanesConfig",
     "SheetData",
+    "SheetEntry",
     "SheetMap",
 ]

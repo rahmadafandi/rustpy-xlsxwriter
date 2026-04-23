@@ -6,7 +6,7 @@
 [![Downloads](https://pepy.tech/badge/rustpy-xlsxwriter)](https://pepy.tech/project/rustpy-xlsxwriter)
 [![CI](https://github.com/rahmadafandi/rustpy-xlsxwriter/actions/workflows/CI.yml/badge.svg)](https://github.com/rahmadafandi/rustpy-xlsxwriter/actions/workflows/CI.yml)
 
-High-performance Excel and CSV file generation for Python, powered by Rust. **~7x-9x faster** than [XlsxWriter](https://github.com/jmcnamara/XlsxWriter), **~5x faster** CSV than Python's csv module.
+High-performance Excel and CSV file generation for Python, powered by Rust. **~7x-9x faster** than [XlsxWriter](https://github.com/jmcnamara/XlsxWriter), **~5x faster** CSV (records) than Python's `csv` module, and **~12x faster** Pandas DataFrame → CSV than `pandas.to_csv` via zero-copy Arrow.
 
 ```python
 from rustpy_xlsxwriter import FastExcel
@@ -34,13 +34,17 @@ Benchmarked via [`benchmark.py`](benchmark.py) — run `python benchmark.py` to 
 | | | 1M | ~2.42s | ~17.07s | **7.1x** |
 | **CSV** | Records (generator) | 500K | ~0.16s | ~0.77s | **4.8x** |
 | | | 1M | ~0.32s | ~1.53s | **4.8x** |
+| | Pandas DataFrame | 1M | — | — | **~12x**† |
+| | Polars DataFrame | 1M | — | — | (use Polars' native `write_csv` — already faster)† |
 
-*Excel baseline: Python xlsxwriter. CSV baseline: Python csv module.*
+*Baselines: Excel → Python `xlsxwriter`; Records CSV → Python `csv` module; Pandas DataFrame CSV → `DataFrame.to_csv()`.*
+
+† *DataFrame → CSV rows measured on a separate machine — only speedup ratio shown. The Pandas path goes through zero-copy Arrow C Data Interface.*
 
 <details>
 <summary>Key optimizations</summary>
 
-1. **Arrow zero-copy** for DataFrames — reads memory buffers directly via Arrow C Data Interface
+1. **Arrow zero-copy** for DataFrames — reads memory buffers directly via Arrow C Data Interface (Excel and CSV paths)
 2. **First-row type caching** for Records — detect column types once, skip type cascade
 3. LTO (Link-Time Optimization) and single codegen unit
 4. Constant memory mode for large files
@@ -67,7 +71,7 @@ Benchmarked via [`benchmark.py`](benchmark.py) — run `python benchmark.py` to 
 
 **Output Options**
 - `.xlsx` (Excel) — auto-detected from file extension
-- `.csv` / `.tsv` — auto-detected, ~5x faster than Python csv module
+- `.csv` / `.tsv` — auto-detected; ~5x faster than Python `csv` (records), ~12x faster than `pandas.to_csv` (Pandas DataFrame, via Arrow zero-copy)
 - `io.BytesIO` in-memory buffer
 - Password protection (Excel only)
 - Optional column auto-fit (`autofit=True/False`)

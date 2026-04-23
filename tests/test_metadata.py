@@ -1,4 +1,4 @@
-from importlib.metadata import version
+from importlib.metadata import metadata, version
 
 from rustpy_xlsxwriter import (
     get_authors,
@@ -24,7 +24,7 @@ def test_authors():
 
 
 def test_description():
-    assert get_description() == "Rust Python bindings for rust_xlsxwriter"
+    assert get_description() == metadata("rustpy-xlsxwriter")["Summary"]
 
 
 def test_repository():

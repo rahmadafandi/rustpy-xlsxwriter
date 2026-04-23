@@ -59,22 +59,66 @@ from typing import (
     Dict,
     List,
     Optional,
+    Tuple,
     Union,
 )
 
+from importlib.metadata import metadata as _metadata
+from importlib.metadata import version as _version
+
 from .rustpy_xlsxwriter import (
-    get_authors,
-    get_description,
-    get_homepage,
-    get_license,
-    get_name,
-    get_repository,
-    get_version,
     validate_sheet_name,
     write_csv,
     write_worksheet,
     write_worksheets,
 )
+
+_PKG = "rustpy-xlsxwriter"
+_META = _metadata(_PKG)
+
+
+def _project_url(label: str) -> str:
+    prefix = f"{label}, "
+    for entry in _META.get_all("Project-URL") or ():
+        if entry.startswith(prefix):
+            return entry[len(prefix):]
+    return ""
+
+
+def get_version() -> str:
+    """Return the package version string."""
+    return _version(_PKG)
+
+
+def get_name() -> str:
+    """Return the package name."""
+    return _PKG
+
+
+def get_authors() -> str:
+    """Return the package authors (``'Name <email>'`` form)."""
+    return _META.get("Author-email") or _META.get("Author") or ""
+
+
+def get_description() -> str:
+    """Return the package description."""
+    return _META.get("Summary") or ""
+
+
+def get_repository() -> str:
+    """Return the repository URL."""
+    return _project_url("Repository") or _META.get("Home-page") or ""
+
+
+def get_homepage() -> str:
+    """Return the homepage URL."""
+    return _project_url("Homepage") or _META.get("Home-page") or ""
+
+
+def get_license() -> str:
+    """Return the license identifier."""
+    return _META.get("License") or ""
+
 
 __version__ = get_version()
 
@@ -117,12 +161,14 @@ class FastExcel:
                 (e.g. ``io.BytesIO``).
             password: Optional password to protect the workbook.
             autofit: Automatically adjust column widths (default ``True``).
-                Set to ``False`` for large datasets to improve performance.
+                Under constant-memory mode (used by this library for all
+                Excel paths) autofit sizing is approximate. Set to
+                ``False`` for large datasets to improve performance.
         """
         self._target = target
         self._password = password
         self._autofit = autofit
-        self._sheets: List[Dict[str, Any]] = []
+        self._sheets: List[Tuple[str, Any]] = []
         self._float_format: Optional[str] = None
         self._datetime_format: Optional[str] = None
         self._index_columns: Optional[List[str]] = None
@@ -200,14 +246,9 @@ class FastExcel:
             data: List of dicts, generator of dicts, or pandas DataFrame.
 
         Raises:
-            ValueError: If the sheet name is invalid.
+            ValueError: If the sheet name is invalid (validated on save).
         """
-        if not validate_sheet_name(name):
-            raise ValueError(
-                f"Invalid sheet name '{name}'. "
-                "Must be ≤ 31 chars and cannot contain [ ] : * ? / \\"
-            )
-        self._sheets.append({name: data})
+        self._sheets.append((name, data))
         return self
 
     # -- output -------------------------------------------------------------
@@ -231,14 +272,17 @@ class FastExcel:
         if isinstance(self._target, str):
             lower = self._target.lower()
             if lower.endswith(".csv") or lower.endswith(".tsv"):
+                if len(self._sheets) > 1:
+                    raise ValueError(
+                        f"CSV/TSV output supports a single sheet; got {len(self._sheets)}."
+                    )
                 delimiter = "\t" if lower.endswith(".tsv") else ","
-                # CSV only supports single sheet — use first sheet's data
-                _, data = next(iter(self._sheets[0].items()))
+                _, data = self._sheets[0]
                 write_csv(data, self._target, delimiter=delimiter)
                 return
 
         if len(self._sheets) == 1:
-            sheet_name, data = next(iter(self._sheets[0].items()))
+            sheet_name, data = self._sheets[0]
             # Single-sheet path: use write_worksheet for simpler freeze pane
             freeze_row = None
             freeze_col = None

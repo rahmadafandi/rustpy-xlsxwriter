@@ -1,9 +1,9 @@
 [package]
 name = "rustpy-xlsxwriter"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2021"
 authors = ["Rahmad Afandi <rahmadafandiii@gmail.com>"]
-description = "High-performance Excel and CSV file generation for Python, powered by Rust (~7-9x faster)"
+description = "High-performance Excel and CSV file generation powered by Rust (~7-9x faster)"
 license = "MIT"
 keywords = ["excel", "xlsx", "csv", "python", "pyo3"]
 categories = ["api-bindings", "encoding"]
@@ -24,6 +24,7 @@ indexmap = "2.13.0"
 pyo3 = { version = "0.28.2", features = ["extension-module", "indexmap"] }
 rust_xlsxwriter = { version = "0.94.0", features = ["constant_memory", "ryu", "zlib"] }
 ryu = "1.0"
+itoa = "1.0"
 
 [profile.release]
 lto = "thin"
