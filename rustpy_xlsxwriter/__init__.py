@@ -200,13 +200,8 @@ class FastExcel:
             data: List of dicts, generator of dicts, or pandas DataFrame.
 
         Raises:
-            ValueError: If the sheet name is invalid.
+            ValueError: If the sheet name is invalid (validated on save).
         """
-        if not validate_sheet_name(name):
-            raise ValueError(
-                f"Invalid sheet name '{name}'. "
-                "Must be ≤ 31 chars and cannot contain [ ] : * ? / \\"
-            )
         self._sheets.append({name: data})
         return self
 
@@ -231,8 +226,11 @@ class FastExcel:
         if isinstance(self._target, str):
             lower = self._target.lower()
             if lower.endswith(".csv") or lower.endswith(".tsv"):
+                if len(self._sheets) > 1:
+                    raise ValueError(
+                        f"CSV/TSV output supports a single sheet; got {len(self._sheets)}."
+                    )
                 delimiter = "\t" if lower.endswith(".tsv") else ","
-                # CSV only supports single sheet — use first sheet's data
                 _, data = next(iter(self._sheets[0].items()))
                 write_csv(data, self._target, delimiter=delimiter)
                 return

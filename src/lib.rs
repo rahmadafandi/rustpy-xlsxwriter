@@ -2,6 +2,7 @@ mod arrow_ffi;
 mod arrow_writer;
 mod csv_writer;
 mod data_types;
+mod helpers;
 mod metadata;
 mod utils;
 mod worksheet;

@@ -1,14 +1,82 @@
 use arrow_array::cast::AsArray;
 use arrow_array::types::*;
-use arrow_array::{Array, BooleanArray, RecordBatch};
-use arrow_schema::DataType;
+use arrow_array::{Array, ArrayRef, BooleanArray, RecordBatch};
+use arrow_schema::{DataType, TimeUnit};
 use pyo3::prelude::*;
 use rust_xlsxwriter::{ExcelDateTime, Format, Worksheet};
 
 use crate::worksheet::xlsx_err;
 
-/// Write an Arrow RecordBatch data rows to a worksheet (zero-copy, no Python object conversion).
-/// Headers and formatting are handled by the caller.
+/// Column type classification done once (outside the row loop) to avoid
+/// paying `match data_type()` on every cell.
+#[derive(Copy, Clone)]
+enum ColKind {
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    Float16,
+    Float32,
+    Float64,
+    Bool,
+    Utf8,
+    LargeUtf8,
+    Utf8View,
+    Date32,
+    Date64,
+    Timestamp(TimeUnit),
+    Unsupported,
+}
+
+fn classify(dt: &DataType) -> ColKind {
+    match dt {
+        DataType::Int8 => ColKind::Int8,
+        DataType::Int16 => ColKind::Int16,
+        DataType::Int32 => ColKind::Int32,
+        DataType::Int64 => ColKind::Int64,
+        DataType::UInt8 => ColKind::UInt8,
+        DataType::UInt16 => ColKind::UInt16,
+        DataType::UInt32 => ColKind::UInt32,
+        DataType::UInt64 => ColKind::UInt64,
+        DataType::Float16 => ColKind::Float16,
+        DataType::Float32 => ColKind::Float32,
+        DataType::Float64 => ColKind::Float64,
+        DataType::Boolean => ColKind::Bool,
+        DataType::Utf8 => ColKind::Utf8,
+        DataType::LargeUtf8 => ColKind::LargeUtf8,
+        DataType::Utf8View => ColKind::Utf8View,
+        DataType::Date32 => ColKind::Date32,
+        DataType::Date64 => ColKind::Date64,
+        DataType::Timestamp(unit, _) => ColKind::Timestamp(*unit),
+        _ => ColKind::Unsupported,
+    }
+}
+
+fn write_float(
+    worksheet: &mut Worksheet,
+    row: u32,
+    col: u16,
+    val: f64,
+    float_fmt: Option<&Format>,
+) -> PyResult<()> {
+    if val.is_nan() || val.is_infinite() {
+        worksheet.write_string(row, col, "").map_err(xlsx_err)?;
+    } else if let Some(fmt) = float_fmt {
+        worksheet
+            .write_number_with_format(row, col, val, fmt)
+            .map_err(xlsx_err)?;
+    } else {
+        worksheet.write_number(row, col, val).map_err(xlsx_err)?;
+    }
+    Ok(())
+}
+
+/// Write an Arrow `RecordBatch` starting at `start_row`.
+/// Column types are classified once; each cell dispatches on the cached kind.
 pub fn write_arrow_batch(
     worksheet: &mut Worksheet,
     batch: &RecordBatch,
@@ -18,138 +86,133 @@ pub fn write_arrow_batch(
     let num_cols = batch.num_columns();
     let num_rows = batch.num_rows();
 
-    // Write data row-by-row for constant_memory compatibility
-    // (headers are written by the caller before calling this function)
+    let columns: Vec<ArrayRef> = (0..num_cols).map(|c| batch.column(c).clone()).collect();
+    let kinds: Vec<ColKind> = columns.iter().map(|c| classify(c.data_type())).collect();
+
     for row in 0..num_rows {
         let row_u32 = start_row + row as u32;
-
         for col_idx in 0..num_cols {
             let col_u16 = col_idx as u16;
-            let column = batch.column(col_idx);
+            let column = &columns[col_idx];
 
             if column.is_null(row) {
                 worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
                 continue;
             }
 
-            match column.data_type() {
-                DataType::Int8 => {
+            match kinds[col_idx] {
+                ColKind::Int8 => {
                     let val = column.as_primitive::<Int8Type>().value(row) as f64;
                     worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::Int16 => {
+                ColKind::Int16 => {
                     let val = column.as_primitive::<Int16Type>().value(row) as f64;
                     worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::Int32 => {
+                ColKind::Int32 => {
                     let val = column.as_primitive::<Int32Type>().value(row) as f64;
                     worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::Int64 => {
+                ColKind::Int64 => {
                     let val = column.as_primitive::<Int64Type>().value(row) as f64;
                     worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::UInt8 => {
+                ColKind::UInt8 => {
                     let val = column.as_primitive::<UInt8Type>().value(row) as f64;
                     worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::UInt16 => {
+                ColKind::UInt16 => {
                     let val = column.as_primitive::<UInt16Type>().value(row) as f64;
                     worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::UInt32 => {
+                ColKind::UInt32 => {
                     let val = column.as_primitive::<UInt32Type>().value(row) as f64;
                     worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::UInt64 => {
+                ColKind::UInt64 => {
                     let val = column.as_primitive::<UInt64Type>().value(row) as f64;
                     worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::Float16 => {
+                ColKind::Float16 => {
                     let val = column.as_primitive::<Float16Type>().value(row).to_f64();
                     worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::Float32 => {
+                ColKind::Float32 => {
                     let val = column.as_primitive::<Float32Type>().value(row) as f64;
-                    if val.is_nan() || val.is_infinite() {
-                        worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
-                    } else if let Some(fmt) = float_fmt {
-                        worksheet
-                            .write_number_with_format(row_u32, col_u16, val, fmt)
-                            .map_err(xlsx_err)?;
-                    } else {
-                        worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
-                    }
+                    write_float(worksheet, row_u32, col_u16, val, float_fmt)?;
                 }
-                DataType::Float64 => {
+                ColKind::Float64 => {
                     let val = column.as_primitive::<Float64Type>().value(row);
-                    if val.is_nan() || val.is_infinite() {
-                        worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
-                    } else if let Some(fmt) = float_fmt {
-                        worksheet
-                            .write_number_with_format(row_u32, col_u16, val, fmt)
-                            .map_err(xlsx_err)?;
-                    } else {
-                        worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
-                    }
+                    write_float(worksheet, row_u32, col_u16, val, float_fmt)?;
                 }
-                DataType::Boolean => {
-                    let arr = column.as_any().downcast_ref::<BooleanArray>().unwrap();
+                ColKind::Bool => {
+                    let arr = column
+                        .as_any()
+                        .downcast_ref::<BooleanArray>()
+                        .expect("Boolean dtype guarantees downcast");
                     worksheet
                         .write_boolean(row_u32, col_u16, arr.value(row))
                         .map_err(xlsx_err)?;
                 }
-                DataType::Utf8 => {
+                ColKind::Utf8 => {
                     let val = column.as_string::<i32>().value(row);
                     worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::LargeUtf8 => {
+                ColKind::LargeUtf8 => {
                     let val = column.as_string::<i64>().value(row);
                     worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::Utf8View => {
+                ColKind::Utf8View => {
                     let val = column.as_string_view().value(row);
                     worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
                 }
-                DataType::Date32 => {
+                ColKind::Date32 => {
                     let days = column.as_primitive::<Date32Type>().value(row);
-                    if let Some(dt) = days_to_excel_date(days as i64) {
-                        worksheet.write_datetime(row_u32, col_u16, &dt).map_err(xlsx_err)?;
-                    } else {
-                        worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
-                    }
+                    match days_to_excel_date(days as i64) {
+                        Some(dt) => worksheet
+                            .write_datetime(row_u32, col_u16, &dt)
+                            .map_err(xlsx_err)?,
+                        None => worksheet
+                            .write_string(row_u32, col_u16, "")
+                            .map_err(xlsx_err)?,
+                    };
                 }
-                DataType::Date64 => {
+                ColKind::Date64 => {
                     let ms = column.as_primitive::<Date64Type>().value(row);
-                    if let Some(dt) = millis_to_excel_datetime(ms) {
-                        worksheet.write_datetime(row_u32, col_u16, &dt).map_err(xlsx_err)?;
-                    } else {
-                        worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
-                    }
+                    match millis_to_excel_datetime(ms) {
+                        Some(dt) => worksheet
+                            .write_datetime(row_u32, col_u16, &dt)
+                            .map_err(xlsx_err)?,
+                        None => worksheet
+                            .write_string(row_u32, col_u16, "")
+                            .map_err(xlsx_err)?,
+                    };
                 }
-                DataType::Timestamp(unit, _) => {
+                ColKind::Timestamp(unit) => {
                     let micros = match unit {
-                        arrow_schema::TimeUnit::Second => {
+                        TimeUnit::Second => {
                             column.as_primitive::<TimestampSecondType>().value(row) * 1_000_000
                         }
-                        arrow_schema::TimeUnit::Millisecond => {
+                        TimeUnit::Millisecond => {
                             column.as_primitive::<TimestampMillisecondType>().value(row) * 1_000
                         }
-                        arrow_schema::TimeUnit::Microsecond => {
+                        TimeUnit::Microsecond => {
                             column.as_primitive::<TimestampMicrosecondType>().value(row)
                         }
-                        arrow_schema::TimeUnit::Nanosecond => {
+                        TimeUnit::Nanosecond => {
                             column.as_primitive::<TimestampNanosecondType>().value(row) / 1_000
                         }
                     };
-                    if let Some(dt) = micros_to_excel_datetime(micros) {
-                        worksheet.write_datetime(row_u32, col_u16, &dt).map_err(xlsx_err)?;
-                    } else {
-                        worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
-                    }
+                    match micros_to_excel_datetime(micros) {
+                        Some(dt) => worksheet
+                            .write_datetime(row_u32, col_u16, &dt)
+                            .map_err(xlsx_err)?,
+                        None => worksheet
+                            .write_string(row_u32, col_u16, "")
+                            .map_err(xlsx_err)?,
+                    };
                 }
-                _ => {
-                    // Fallback: write empty for unsupported types
+                ColKind::Unsupported => {
                     worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
                 }
             }
@@ -159,33 +222,27 @@ pub fn write_arrow_batch(
     Ok(())
 }
 
-/// Set datetime column formats for an Arrow schema
 pub fn set_datetime_column_formats(
     worksheet: &mut Worksheet,
     batch: &RecordBatch,
     datetime_fmt: &Format,
 ) -> PyResult<()> {
     for (col_idx, field) in batch.schema().fields().iter().enumerate() {
-        match field.data_type() {
-            DataType::Date32 | DataType::Date64 | DataType::Timestamp(_, _) => {
-                worksheet
-                    .set_column_format(col_idx as u16, datetime_fmt)
-                    .map_err(xlsx_err)?;
-            }
-            _ => {}
+        if matches!(
+            field.data_type(),
+            DataType::Date32 | DataType::Date64 | DataType::Timestamp(_, _)
+        ) {
+            worksheet
+                .set_column_format(col_idx as u16, datetime_fmt)
+                .map_err(xlsx_err)?;
         }
     }
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Date/time conversion helpers
-// ---------------------------------------------------------------------------
-
 fn days_to_excel_date(days_since_epoch: i64) -> Option<ExcelDateTime> {
-    // Unix epoch = 1970-01-01, convert days to y/m/d
-    let dt = chrono_from_days(days_since_epoch)?;
-    ExcelDateTime::from_ymd(dt.0, dt.1, dt.2).ok()
+    let (y, m, d) = chrono_from_days(days_since_epoch)?;
+    ExcelDateTime::from_ymd(y, m, d).ok()
 }
 
 fn millis_to_excel_datetime(ms: i64) -> Option<ExcelDateTime> {
@@ -208,9 +265,8 @@ fn micros_to_excel_datetime(micros: i64) -> Option<ExcelDateTime> {
         .ok()
 }
 
-/// Convert days since Unix epoch to (year, month, day)
+/// Howard Hinnant's civil_from_days — days since Unix epoch → (y, m, d).
 fn chrono_from_days(days: i64) -> Option<(u16, u8, u8)> {
-    // Algorithm from Howard Hinnant's civil_from_days
     let z = days + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
     let doe = (z - era * 146097) as u32;

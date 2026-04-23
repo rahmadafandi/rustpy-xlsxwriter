@@ -592,11 +592,12 @@ dependencies = [
 
 [[package]]
 name = "rustpy-xlsxwriter"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "arrow-array",
  "arrow-schema",
  "indexmap",
+ "itoa",
  "pyo3",
  "rust_xlsxwriter",
  "ryu",
