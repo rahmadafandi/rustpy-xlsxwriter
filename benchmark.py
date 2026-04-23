@@ -33,31 +33,16 @@ TMP_DIR = "/tmp/rustpy_benchmark"
 
 
 def generate_records(count: int) -> List[Dict[str, Any]]:
+    # Reuse the fixture builder to avoid a second copy of the schema.
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tests"))
+    from conftest import _make_record  # type: ignore
+
     from faker import Faker
 
-    fake = Faker()
-    fake.seed_instance(42)
     random.seed(42)
-
     chunk_size = 10_000
     num_chunks = (count + chunk_size - 1) // chunk_size
-
-    def _make_record(f: Faker) -> Dict[str, Any]:
-        return {
-            "name": f.name(),
-            "email": f.email(),
-            "address": f.address() if random.random() > 0.2 else None,
-            "phone": f.phone_number() if random.random() > 0.2 else None,
-            "date": f.date() if random.random() > 0.2 else None,
-            "numeric_int": random.randint(-1000, 1000),
-            "numeric_float": round(random.uniform(-100.0, 100.0), 2),
-            "text": f.text(max_nb_chars=50) if random.random() > 0.2 else None,
-            "boolean": random.choice([True, False, None]),
-            "datetime": f.date_time() if random.random() > 0.2 else None,
-            "timestamp": f.date_time() if random.random() > 0.2 else None,
-            "time": f.time() if random.random() > 0.2 else None,
-            "dict": {"name": f.name(), "email": f.email()},
-        }
 
     def _chunk(idx: int) -> List[Dict[str, Any]]:
         f = Faker()
@@ -100,56 +85,41 @@ def generate_polars_df(count: int) -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def xlsxwriter_write_records(records: List[Dict[str, Any]], path: str) -> None:
+def _xlsx_write_cell(ws, row, col, val) -> None:
+    if val is None:
+        return
+    if isinstance(val, bool):
+        ws.write_boolean(row, col, val)
+    elif isinstance(val, (int, float, np.integer, np.floating)):
+        ws.write_number(row, col, float(val))
+    elif isinstance(val, dict):
+        ws.write_string(row, col, str(val))
+    else:
+        ws.write(row, col, val)
+
+
+def _xlsxwriter_write(path: str, headers, rows) -> None:
     wb = xlsxwriter.Workbook(path, {"constant_memory": True})
     ws = wb.add_worksheet()
-    headers = list(records[0].keys())
     for col, h in enumerate(headers):
         ws.write(0, col, h)
-    for i, rec in enumerate(records, start=1):
-        for col, h in enumerate(headers):
-            val = rec[h]
-            if isinstance(val, dict):
-                ws.write_string(i, col, str(val))
-            else:
-                ws.write(i, col, val)
+    for i, row in enumerate(rows, start=1):
+        for col, val in enumerate(row):
+            _xlsx_write_cell(ws, i, col, val)
     wb.close()
+
+
+def xlsxwriter_write_records(records: List[Dict[str, Any]], path: str) -> None:
+    headers = list(records[0].keys())
+    _xlsxwriter_write(path, headers, (tuple(r[h] for h in headers) for r in records))
 
 
 def xlsxwriter_write_dataframe(df: pd.DataFrame, path: str) -> None:
-    wb = xlsxwriter.Workbook(path, {"constant_memory": True})
-    ws = wb.add_worksheet()
-    headers = list(df.columns)
-    for col, h in enumerate(headers):
-        ws.write(0, col, h)
-    for i, row in enumerate(df.itertuples(index=False, name=None), start=1):
-        for col, val in enumerate(row):
-            if isinstance(val, bool):
-                ws.write_boolean(i, col, val)
-            elif isinstance(val, (int, float, np.integer, np.floating)):
-                ws.write_number(i, col, float(val))
-            else:
-                ws.write_string(i, col, str(val))
-    wb.close()
+    _xlsxwriter_write(path, list(df.columns), df.itertuples(index=False, name=None))
 
 
 def xlsxwriter_write_polars(df_pl: pl.DataFrame, path: str) -> None:
-    wb = xlsxwriter.Workbook(path, {"constant_memory": True})
-    ws = wb.add_worksheet()
-    headers = df_pl.columns
-    for col, h in enumerate(headers):
-        ws.write(0, col, h)
-    for i, row in enumerate(df_pl.iter_rows(), start=1):
-        for col, val in enumerate(row):
-            if val is None:
-                pass
-            elif isinstance(val, bool):
-                ws.write_boolean(i, col, val)
-            elif isinstance(val, (int, float, np.integer, np.floating)):
-                ws.write_number(i, col, float(val))
-            else:
-                ws.write_string(i, col, str(val))
-    wb.close()
+    _xlsxwriter_write(path, df_pl.columns, df_pl.iter_rows())
 
 
 # ---------------------------------------------------------------------------

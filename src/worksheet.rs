@@ -4,7 +4,7 @@ use pyo3::{Py, PyAny, Python};
 use rust_xlsxwriter::{Format, Workbook};
 use std::collections::HashSet;
 
-use crate::data_types::{FreezePaneConfig, WorksheetData};
+use crate::data_types::{FreezePanesConfig, WorksheetData};
 use crate::helpers::{
     py_date_to_excel, py_datetime_to_excel, save_workbook, write_header, write_num, ColType,
 };
@@ -227,7 +227,7 @@ fn write_worksheet_content(
     let mut datetime_cols_set: HashSet<u16> = HashSet::new();
 
     match records {
-        WorksheetData::ArrowStream(stream_obj) => {
+        WorksheetData::ArrowDataFrame(stream_obj) => {
             let arrow_ok = (|| -> PyResult<()> {
                 let reader = crate::arrow_ffi::stream_to_reader(stream_obj, py)?;
 
@@ -492,6 +492,23 @@ fn map_pandas_kind(kind: char) -> PolarsKind {
     }
 }
 
+/// Per-column accessor. `.tolist()`/`.to_list()` return Python lists, so
+/// the fast path goes through `PyList` directly (`PyList_GET_ITEM`); the
+/// generic branch is kept only for non-list iterables.
+enum ColAccess<'py> {
+    List(Bound<'py, pyo3::types::PyList>),
+    Generic(Bound<'py, PyAny>),
+}
+
+impl<'py> ColAccess<'py> {
+    fn get(&self, row: usize) -> PyResult<Bound<'py, PyAny>> {
+        match self {
+            ColAccess::List(list) => list.get_item(row),
+            ColAccess::Generic(obj) => obj.get_item(row),
+        }
+    }
+}
+
 /// Shared row writer for Pandas and Polars paths. Both frameworks provide
 /// per-column Python lists plus a per-column kind — the row-level dispatch
 /// is identical, so a single helper handles both.
@@ -509,15 +526,22 @@ fn write_df_rows<F>(
 where
     F: Fn(usize) -> PolarsKind,
 {
-    // Convert `Py<PyAny>` column lists into `Bound` once so per-row access
-    // doesn't redo the GIL attach.
-    let bound_cols: Vec<Bound<PyAny>> = col_lists.iter().map(|c| c.bind(py).clone()).collect();
+    let bound_cols: Vec<ColAccess> = col_lists
+        .iter()
+        .map(|c| {
+            let b = c.bind(py).clone();
+            match b.cast_into::<pyo3::types::PyList>() {
+                Ok(list) => ColAccess::List(list),
+                Err(e) => ColAccess::Generic(e.into_inner()),
+            }
+        })
+        .collect();
 
     for row in 0..nrows {
         let row_u32 = (row + 1) as u32;
         for (col_idx, col_list) in bound_cols.iter().enumerate() {
             let col_u16 = col_idx as u16;
-            let item = col_list.get_item(row)?;
+            let item = col_list.get(row)?;
 
             if item.is_none() {
                 worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
@@ -579,10 +603,10 @@ where
 #[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false))]
 pub fn write_worksheets(
     py: Python,
-    records_with_sheet_name: Vec<indexmap::IndexMap<String, WorksheetData>>,
+    records_with_sheet_name: Vec<(String, WorksheetData)>,
     file_name: Py<PyAny>,
     password: Option<String>,
-    freeze_panes: Option<FreezePaneConfig>,
+    freeze_panes: Option<FreezePanesConfig>,
     float_format: Option<String>,
     datetime_format: Option<String>,
     index_columns: Option<Vec<String>>,
@@ -590,55 +614,34 @@ pub fn write_worksheets(
     bold_headers: bool,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
-    for record_map in records_with_sheet_name {
-        for (sheet_name, records) in record_map {
-            ensure_valid_sheet_name(&sheet_name)?;
+    for (sheet_name, records) in records_with_sheet_name {
+        ensure_valid_sheet_name(&sheet_name)?;
 
-            let mut worksheet = workbook.add_worksheet_with_constant_memory();
-            worksheet.set_name(&sheet_name).map_err(xlsx_err)?;
+        let mut worksheet = workbook.add_worksheet_with_constant_memory();
+        worksheet.set_name(&sheet_name).map_err(xlsx_err)?;
 
-            let (freeze_row, freeze_col) = resolve_freeze_panes(&freeze_panes, &sheet_name);
+        let pane = freeze_panes
+            .as_ref()
+            .map(|c| c.resolve(&sheet_name))
+            .unwrap_or_default();
 
-            write_worksheet_content(
-                &mut worksheet,
-                &records,
-                password.as_ref(),
-                freeze_row,
-                freeze_col,
-                float_format.as_ref(),
-                datetime_format.as_ref(),
-                index_columns.as_ref(),
-                autofit,
-                bold_headers,
-                py,
-            )?;
-        }
+        write_worksheet_content(
+            &mut worksheet,
+            &records,
+            password.as_ref(),
+            pane.row,
+            pane.col,
+            float_format.as_ref(),
+            datetime_format.as_ref(),
+            index_columns.as_ref(),
+            autofit,
+            bold_headers,
+            py,
+        )?;
     }
 
     save_workbook(py, &mut workbook, file_name)?;
     Ok(())
-}
-
-fn resolve_freeze_panes(
-    freeze_panes: &Option<FreezePaneConfig>,
-    sheet_name: &str,
-) -> (Option<u32>, Option<u16>) {
-    let Some(config) = freeze_panes.as_ref() else {
-        return (None, None);
-    };
-    let mut freeze_row = None;
-    let mut freeze_col = None;
-    for key in ["general", sheet_name] {
-        if let Some(inner) = config.config.get(key) {
-            if let Some(&row) = inner.get("row") {
-                freeze_row = Some(row as u32);
-            }
-            if let Some(&col) = inner.get("col") {
-                freeze_col = Some(col as u16);
-            }
-        }
-    }
-    (freeze_row, freeze_col)
 }
 
 #[pyfunction]

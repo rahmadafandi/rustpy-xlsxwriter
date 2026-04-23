@@ -30,11 +30,21 @@ pub fn write_csv(
     // Heuristic: 16 bytes per cell is a decent starting point.
     let mut output: Vec<u8> = Vec::with_capacity(4096);
 
-    if bound.getattr("columns").is_ok() {
+    // Fast path: Arrow zero-copy if the object exposes `__arrow_c_stream__`
+    // (Pandas ≥2.0, Polars). Falls back to the per-object paths below on
+    // failure (e.g. empty Null-typed columns).
+    if bound.hasattr("__arrow_c_stream__")? {
+        if write_csv_via_arrow(&records, py, &mut output, delim_byte).is_ok() {
+            return write_bytes_to_target(py, &output, file_name);
+        }
+        output.clear();
+    }
+
+    if bound.hasattr("columns")? {
         let columns: Vec<String> = bound.getattr("columns")?.extract()?;
         write_csv_row_strings(&mut output, &columns, delim_byte);
 
-        if bound.getattr("get_column").is_ok() {
+        if bound.hasattr("get_column")? {
             // Polars
             let mut col_lists: Vec<Py<PyAny>> = Vec::with_capacity(columns.len());
             for header in &columns {
@@ -42,11 +52,13 @@ pub fn write_csv(
                 col_lists.push(col_series.call_method0(py, "to_list")?);
             }
             let nrows: usize = records.call_method0(py, "__len__")?.extract(py)?;
-            let bound_cols: Vec<Bound<PyAny>> =
-                col_lists.iter().map(|c| c.bind(py).clone()).collect();
+            let bound_lists: Vec<Bound<pyo3::types::PyList>> = col_lists
+                .iter()
+                .map(|c| c.bind(py).cast::<pyo3::types::PyList>().cloned())
+                .collect::<Result<_, _>>()?;
 
             for row in 0..nrows {
-                for (i, col_list) in bound_cols.iter().enumerate() {
+                for (i, col_list) in bound_lists.iter().enumerate() {
                     if i > 0 {
                         output.push(delim_byte);
                     }
@@ -112,6 +124,33 @@ pub fn write_csv(
     }
 
     write_bytes_to_target(py, &output, file_name)
+}
+
+fn write_csv_via_arrow(
+    records: &Py<PyAny>,
+    py: Python,
+    output: &mut Vec<u8>,
+    delim: u8,
+) -> PyResult<()> {
+    let reader = crate::arrow_ffi::stream_to_reader(records, py)?;
+    let schema = reader.schema();
+    let headers: Vec<String> = schema
+        .fields()
+        .iter()
+        .map(|f| f.name().clone())
+        .collect();
+    write_csv_row_strings(output, &headers, delim);
+
+    for batch_result in reader {
+        let batch = batch_result.map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to read Arrow batch: {}",
+                e
+            ))
+        })?;
+        crate::arrow_writer::write_arrow_batch_csv(output, &batch, delim)?;
+    }
+    Ok(())
 }
 
 fn write_csv_row_strings(output: &mut Vec<u8>, values: &[String], delim: u8) {

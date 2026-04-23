@@ -31,7 +31,7 @@ class TestWriteWorksheets:
     def test_write_multiple_sheets(self, tmp_path):
         path = str(tmp_path / "multi_func.xlsx")
         write_worksheets(
-            [{"Sheet1": [{"A": 1}]}, {"Sheet2": [{"B": 2}]}],
+            [("Sheet1", [{"A": 1}]), ("Sheet2", [{"B": 2}])],
             path,
         )
 
