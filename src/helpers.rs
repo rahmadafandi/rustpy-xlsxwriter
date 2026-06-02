@@ -1,7 +1,7 @@
 //! Shared helpers for Excel/CSV writing paths.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyTimeAccess};
+use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyDict, PyList, PyTimeAccess};
 use pyo3::Py;
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, Worksheet};
 
@@ -65,6 +65,7 @@ pub fn py_date_to_excel(d: &Bound<PyDate>) -> PyResult<ExcelDateTime> {
 
 /// Write a header cell at row 0, optionally bold, and mark the column
 /// as an index (bold) column if listed in `index_columns`.
+/// When `header_fmt` is `Some`, it wins over `bold_headers` for the cell itself.
 pub fn write_header(
     worksheet: &mut Worksheet,
     col: u16,
@@ -72,7 +73,14 @@ pub fn write_header(
     bold_headers: bool,
     bold_fmt: &Format,
     index_columns: Option<&Vec<String>>,
+    header_fmt: Option<&Format>,
 ) -> PyResult<()> {
+    if let Some(fmt) = header_fmt {
+        worksheet
+            .write_string_with_format(0, col, header, fmt)
+            .map_err(xlsx_err)?;
+        return Ok(());
+    }
     if bold_headers {
         worksheet
             .write_string_with_format(0, col, header, bold_fmt)
@@ -108,6 +116,23 @@ pub fn write_num(
         worksheet.write_number(row, col, val).map_err(xlsx_err)?;
     }
     Ok(())
+}
+
+/// Escape per RFC 4180: wrap in quotes if value contains delim-relevant
+/// chars (comma, newline, CR, quote) and double any internal quote.
+pub fn write_csv_escaped(output: &mut Vec<u8>, val: &str) {
+    if val.contains(',') || val.contains('\n') || val.contains('\r') || val.contains('"') {
+        output.push(b'"');
+        for b in val.bytes() {
+            if b == b'"' {
+                output.push(b'"');
+            }
+            output.push(b);
+        }
+        output.push(b'"');
+    } else {
+        output.extend_from_slice(val.as_bytes());
+    }
 }
 
 /// Save a workbook to a file path or writable buffer.
@@ -157,4 +182,99 @@ pub fn write_bytes_to_target(
     Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
         "Argument must be a string path or a file-like object with a 'write' method",
     ))
+}
+
+/// `true` if `w` is a usable Excel column width (finite, non-negative).
+fn is_valid_width(w: f64) -> bool {
+    w.is_finite() && w >= 0.0
+}
+
+/// Emit a Python `UserWarning` from Rust.
+fn warn_py(py: Python, msg: &str) -> PyResult<()> {
+    py.import("warnings")?.call_method1("warn", (msg,))?;
+    Ok(())
+}
+
+/// Apply explicit column widths AFTER `autofit()` so they override it.
+///
+/// `uniform` (from `column_width`) sets every column as a base layer;
+/// `spec` (from `column_widths`) then overrides individual columns —
+/// a dict keyed by header name, or a positional list. Unknown names,
+/// out-of-range list indices, and invalid widths emit a `UserWarning`
+/// and are skipped. An unsupported `spec` type raises `ValueError`.
+pub fn apply_column_widths(
+    worksheet: &mut Worksheet,
+    headers: &[String],
+    uniform: Option<f64>,
+    spec: Option<&Bound<'_, PyAny>>,
+    py: Python,
+) -> PyResult<()> {
+    let ncols = headers.len() as u16;
+
+    if let Some(w) = uniform {
+        if is_valid_width(w) {
+            if ncols > 0 {
+                worksheet
+                    .set_column_range_width(0, ncols - 1, w)
+                    .map_err(xlsx_err)?;
+            }
+        } else {
+            warn_py(py, &format!("column_width: invalid width {w}, skipped"))?;
+        }
+    }
+
+    let Some(spec) = spec else {
+        return Ok(());
+    };
+
+    if let Ok(dict) = spec.cast::<PyDict>() {
+        for (key, val) in dict.iter() {
+            let name: String = key.extract()?;
+            let width: f64 = val.extract()?;
+            match headers.iter().position(|h| h == &name) {
+                Some(idx) if is_valid_width(width) => {
+                    worksheet
+                        .set_column_width(idx as u16, width)
+                        .map_err(xlsx_err)?;
+                }
+                Some(_) => warn_py(
+                    py,
+                    &format!("column_widths: invalid width {width} for '{name}', skipped"),
+                )?,
+                None => warn_py(
+                    py,
+                    &format!("column_widths: unknown column '{name}', skipped"),
+                )?,
+            }
+        }
+    } else if let Ok(list) = spec.cast::<PyList>() {
+        for (idx, item) in list.iter().enumerate() {
+            let width: f64 = item.extract()?;
+            if idx as u16 >= ncols {
+                warn_py(
+                    py,
+                    &format!(
+                        "column_widths: index {idx} out of range ({ncols} columns), skipped"
+                    ),
+                )?;
+                continue;
+            }
+            if is_valid_width(width) {
+                worksheet
+                    .set_column_width(idx as u16, width)
+                    .map_err(xlsx_err)?;
+            } else {
+                warn_py(
+                    py,
+                    &format!("column_widths: invalid width {width} at index {idx}, skipped"),
+                )?;
+            }
+        }
+    } else {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "column_widths must be a dict (by column name) or a list (positional)",
+        ));
+    }
+
+    Ok(())
 }

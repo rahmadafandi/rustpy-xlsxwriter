@@ -138,6 +138,55 @@ FastExcel("frozen.xlsx").freeze(row=1).sheet("Sheet1", data).save()
 )
 ```
 
+### Column widths
+
+Override `autofit` with explicit widths (Excel character units):
+
+```python
+from rustpy_xlsxwriter import FastExcel
+
+(
+    FastExcel("out.xlsx")
+    .sheet("RawData", rows, column_width=15)                    # uniform
+    .sheet("Meta", meta, column_widths={"row": 7, "var": 22})   # per-column (by name)
+    .sheet("Other", rows, column_widths=[7, 22, 40])            # per-column (positional)
+    .save()
+)
+```
+
+`column_widths` overrides `column_width` per named/positional column, and explicit
+widths win over `autofit=True`. Unknown column names and out-of-range list indices
+emit a warning and are skipped. For `write_worksheets`, pass `column_width` /
+`column_widths` as dicts keyed by sheet name (with a `"general"` fallback key).
+
+### Cell formatting
+
+Build a reusable `Format` and attach it per column or to the header row:
+
+```python
+from rustpy_xlsxwriter import FastExcel, Format
+
+money = Format().set_num_format("$#,##0.00").set_font_color("#006600")
+header = Format().set_bold().set_background_color("#1F4E78").set_font_color("white")
+
+(
+    FastExcel("out.xlsx")
+    .sheet("Products", rows, header_format=header, column_formats={"price": money})
+    .save()
+)
+```
+
+`Format` chains setters (font, fill, border, alignment, number format). Colors
+accept `"#RRGGBB"` or names (`"red"`); enum-valued setters take lowercase strings
+(`set_align("center")`, `set_border("thin")`). A column's format wins over
+`float_format` / `datetime_format`. For `write_worksheets`, pass `column_formats` /
+`header_format` as dicts keyed by sheet name (with a `"general"` fallback key).
+
+> **Note:** a column format wins *entirely* over the automatic number format. On
+> a date/datetime column, a `Format` without `set_num_format(...)` makes cells
+> show the raw Excel serial number — chain `.set_num_format("yyyy-mm-dd")` (or
+> similar) to keep a date display.
+
 ### Generator Streaming
 
 ```python
@@ -181,7 +230,7 @@ from rustpy_xlsxwriter import write_worksheet, write_worksheets
 write_worksheet(records, "output.xlsx", sheet_name="Sheet1", password="secret")
 
 write_worksheets(
-    [{"Sheet1": records1}, {"Sheet2": records2}],
+    [("Sheet1", records1), ("Sheet2", records2)],
     "output.xlsx",
     freeze_panes={"general": {"row": 1, "col": 0}},
 )
@@ -227,7 +276,7 @@ Supports context manager (`with` statement) — auto-saves on exit, skips save o
 
 ## Examples
 
-See [`examples/`](examples/) for 13 runnable scripts + a Jupyter notebook:
+See [`examples/`](examples/) for 16 runnable scripts + a Jupyter notebook:
 
 | File | Description |
 |---|---|
@@ -245,6 +294,8 @@ See [`examples/`](examples/) for 13 runnable scripts + a Jupyter notebook:
 | [`12_bold_headers.py`](examples/12_bold_headers.py) | Bold header row |
 | [`13_autofit.py`](examples/13_autofit.py) | Column auto-fit toggle |
 | [`14_csv_tsv.py`](examples/14_csv_tsv.py) | CSV/TSV output (~5x faster) |
+| [`15_column_widths.py`](examples/15_column_widths.py) | Uniform & per-column widths |
+| [`16_cell_formats.py`](examples/16_cell_formats.py) | Cell formatting (Format class) |
 | [`quickstart.ipynb`](examples/quickstart.ipynb) | Jupyter notebook walkthrough |
 
 ## Testing

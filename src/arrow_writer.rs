@@ -5,6 +5,7 @@ use arrow_schema::{DataType, TimeUnit};
 use pyo3::prelude::*;
 use rust_xlsxwriter::{ExcelDateTime, Format, Worksheet};
 
+use crate::helpers::write_csv_escaped;
 use crate::worksheet::xlsx_err;
 
 /// Column type classification done once (outside the row loop) to avoid
@@ -77,11 +78,17 @@ fn write_float(
 
 /// Write an Arrow `RecordBatch` starting at `start_row`.
 /// Column types are classified once; each cell dispatches on the cached kind.
+///
+/// `col_formats` is a per-column slice of optional `Format`s resolved from
+/// `column_formats`. When a column has an explicit format, it wins over
+/// `float_fmt` for numeric columns. Pass an empty slice when no overrides
+/// are needed (byte-identical behaviour).
 pub fn write_arrow_batch(
     worksheet: &mut Worksheet,
     batch: &RecordBatch,
     start_row: u32,
     float_fmt: Option<&Format>,
+    col_formats: &[Option<crate::format::Format>],
 ) -> PyResult<()> {
     let num_cols = batch.num_columns();
     let num_rows = batch.num_rows();
@@ -95,6 +102,10 @@ pub fn write_arrow_batch(
             let col_u16 = col_idx as u16;
             let column = &columns[col_idx];
 
+            // Per-column format override: wins over float_fmt for numeric cols.
+            let col_override: Option<&Format> =
+                col_formats.get(col_idx).and_then(|o| o.as_ref()).map(|f| &f.inner);
+
             if column.is_null(row) {
                 worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
                 continue;
@@ -103,7 +114,11 @@ pub fn write_arrow_batch(
             macro_rules! write_int {
                 ($ty:ty) => {{
                     let val = column.as_primitive::<$ty>().value(row) as f64;
-                    worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
+                    if let Some(fmt) = col_override {
+                        worksheet.write_number_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
+                    } else {
+                        worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
+                    }
                 }};
             }
 
@@ -118,15 +133,19 @@ pub fn write_arrow_batch(
                 ColKind::UInt64 => write_int!(UInt64Type),
                 ColKind::Float16 => {
                     let val = column.as_primitive::<Float16Type>().value(row).to_f64();
-                    worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
+                    if let Some(fmt) = col_override {
+                        worksheet.write_number_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
+                    } else {
+                        worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
+                    }
                 }
                 ColKind::Float32 => {
                     let val = column.as_primitive::<Float32Type>().value(row) as f64;
-                    write_float(worksheet, row_u32, col_u16, val, float_fmt)?;
+                    write_float(worksheet, row_u32, col_u16, val, col_override.or(float_fmt))?;
                 }
                 ColKind::Float64 => {
                     let val = column.as_primitive::<Float64Type>().value(row);
-                    write_float(worksheet, row_u32, col_u16, val, float_fmt)?;
+                    write_float(worksheet, row_u32, col_u16, val, col_override.or(float_fmt))?;
                 }
                 ColKind::Bool => {
                     let arr = column
@@ -139,15 +158,27 @@ pub fn write_arrow_batch(
                 }
                 ColKind::Utf8 => {
                     let val = column.as_string::<i32>().value(row);
-                    worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
+                    if let Some(fmt) = col_override {
+                        worksheet.write_string_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
+                    } else {
+                        worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
+                    }
                 }
                 ColKind::LargeUtf8 => {
                     let val = column.as_string::<i64>().value(row);
-                    worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
+                    if let Some(fmt) = col_override {
+                        worksheet.write_string_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
+                    } else {
+                        worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
+                    }
                 }
                 ColKind::Utf8View => {
                     let val = column.as_string_view().value(row);
-                    worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
+                    if let Some(fmt) = col_override {
+                        worksheet.write_string_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
+                    } else {
+                        worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
+                    }
                 }
                 ColKind::Date32 => {
                     let days = column.as_primitive::<Date32Type>().value(row);
@@ -328,25 +359,6 @@ fn emit_timestamp_csv(output: &mut Vec<u8>, micros: i64) {
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
         y, m, d, hour, minute, second
     );
-}
-
-fn write_csv_escaped(output: &mut Vec<u8>, val: &str) {
-    if val.contains(',')
-        || val.contains('\n')
-        || val.contains('\r')
-        || val.contains('"')
-    {
-        output.push(b'"');
-        for b in val.bytes() {
-            if b == b'"' {
-                output.push(b'"');
-            }
-            output.push(b);
-        }
-        output.push(b'"');
-    } else {
-        output.extend_from_slice(val.as_bytes());
-    }
 }
 
 pub fn set_datetime_column_formats(

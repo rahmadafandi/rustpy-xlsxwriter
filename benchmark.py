@@ -154,7 +154,7 @@ def main() -> None:
         p2 = os.path.join(TMP_DIR, f"records_{n}_xlsxwriter.xlsx")
 
         print(f"  rustpy-xlsxwriter...", end=" ", flush=True)
-        t_r = bench("", lambda: FastExcel(p1, password="pw").sheet("B", records).save())
+        t_r = bench("", lambda: FastExcel(p1, autofit=False).sheet("B", records).save())
         print(f"{t_r:.2f}s")
 
         print(f"  xlsxwriter...", end=" ", flush=True)
