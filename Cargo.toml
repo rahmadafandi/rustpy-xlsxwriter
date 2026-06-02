@@ -1,6 +1,6 @@
 [package]
 name = "rustpy-xlsxwriter"
-version = "0.4.4"
+version = "0.5.0"
 edition = "2021"
 authors = ["Rahmad Afandi <rahmadafandiii@gmail.com>"]
 description = "High-performance Excel and CSV file generation powered by Rust (~7-9x faster)"

@@ -63,15 +63,39 @@ from typing import (
     Union,
 )
 
+import os as _os
 from importlib.metadata import metadata as _metadata
 from importlib.metadata import version as _version
 
 from .rustpy_xlsxwriter import (
+    Format,
     validate_sheet_name,
-    write_csv,
-    write_worksheet,
-    write_worksheets,
 )
+from .rustpy_xlsxwriter import write_csv as _write_csv_rs
+from .rustpy_xlsxwriter import write_worksheet as _write_worksheet_rs
+from .rustpy_xlsxwriter import write_worksheets as _write_worksheets_rs
+
+
+def _coerce_target(target: Any) -> Any:
+    """Accept str, bytes, or any os.PathLike as a file path; pass other
+    objects (file-like buffers) through unchanged."""
+    if isinstance(target, _os.PathLike):
+        return _os.fspath(target)
+    return target
+
+
+def write_worksheet(records, file_name, *args, **kwargs):
+    return _write_worksheet_rs(records, _coerce_target(file_name), *args, **kwargs)
+
+
+def write_worksheets(records_with_sheet_name, file_name, *args, **kwargs):
+    return _write_worksheets_rs(
+        records_with_sheet_name, _coerce_target(file_name), *args, **kwargs
+    )
+
+
+def write_csv(records, file_name, *args, **kwargs):
+    return _write_csv_rs(records, _coerce_target(file_name), *args, **kwargs)
 
 _PKG = "rustpy-xlsxwriter"
 _META = _metadata(_PKG)
@@ -149,7 +173,7 @@ class FastExcel:
 
     def __init__(
         self,
-        target: Union[str, BinaryIO],
+        target: Union[str, _os.PathLike, BinaryIO],
         *,
         password: Optional[str] = None,
         autofit: bool = True,
@@ -157,7 +181,8 @@ class FastExcel:
         """Create a new writer.
 
         Args:
-            target: File path (``str``) or writable binary buffer
+            target: File path (``str`` or :class:`os.PathLike`, e.g.
+                ``pathlib.Path``) or writable binary buffer
                 (e.g. ``io.BytesIO``).
             password: Optional password to protect the workbook.
             autofit: Automatically adjust column widths (default ``True``).
@@ -165,7 +190,7 @@ class FastExcel:
                 Excel paths) autofit sizing is approximate. Set to
                 ``False`` for large datasets to improve performance.
         """
-        self._target = target
+        self._target = _coerce_target(target)
         self._password = password
         self._autofit = autofit
         self._sheets: List[Tuple[str, Any]] = []
@@ -174,6 +199,10 @@ class FastExcel:
         self._index_columns: Optional[List[str]] = None
         self._bold_headers: bool = False
         self._freeze_panes: Dict[str, Dict[str, int]] = {}
+        self._col_width: Dict[str, float] = {}
+        self._col_widths: Dict[str, Union[Dict[str, float], List[float]]] = {}
+        self._col_formats: Dict[str, Any] = {}
+        self._header_format: Dict[str, Any] = {}
 
     def __enter__(self) -> "FastExcel":
         return self
@@ -238,17 +267,43 @@ class FastExcel:
 
     # -- data ---------------------------------------------------------------
 
-    def sheet(self, name: str, data: Any) -> "FastExcel":
+    def sheet(
+        self,
+        name: str,
+        data: Any,
+        *,
+        column_width: Optional[float] = None,
+        column_widths: Optional[Union[Dict[str, float], List[float]]] = None,
+        column_formats: Optional[Union[Dict[str, "Format"], List["Format"]]] = None,
+        header_format: Optional["Format"] = None,
+    ) -> "FastExcel":
         """Add a worksheet with data.
 
         Args:
             name: Sheet name (≤ 31 chars, no ``[ ] : * ? / \\``).
             data: List of dicts, generator of dicts, or pandas DataFrame.
+            column_width: Uniform width applied to every column of this sheet.
+            column_widths: Per-column width — a dict keyed by header name
+                (``{"name": 22}``) or a positional list (``[7, 22, 40]``).
+                Overrides ``column_width`` for the columns it names.
+            column_formats: Per-column :class:`Format` — a dict keyed by header
+                name (``{"name": Format().set_bold()}``) or a positional list
+                (``[Format().set_bold(), None]``).
+            header_format: :class:`Format` applied to every header cell of this
+                sheet.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save).
         """
         self._sheets.append((name, data))
+        if column_width is not None:
+            self._col_width[name] = column_width
+        if column_widths is not None:
+            self._col_widths[name] = column_widths
+        if column_formats is not None:
+            self._col_formats[name] = column_formats
+        if header_format is not None:
+            self._header_format[name] = header_format
         return self
 
     # -- output -------------------------------------------------------------
@@ -294,6 +349,9 @@ class FastExcel:
                 freeze_row = cfg.get("row")
                 freeze_col = cfg.get("col")
 
+            cw = self._col_width.get(sheet_name)
+            cws = self._col_widths.get(sheet_name)
+
             write_worksheet(
                 data,
                 self._target,
@@ -306,6 +364,10 @@ class FastExcel:
                 index_columns=self._index_columns,
                 autofit=self._autofit,
                 bold_headers=self._bold_headers,
+                column_width=cw,
+                column_widths=cws,
+                column_formats=self._col_formats.get(sheet_name),
+                header_format=self._header_format.get(sheet_name),
             )
         else:
             # Multi-sheet path
@@ -319,6 +381,10 @@ class FastExcel:
                 index_columns=self._index_columns,
                 autofit=self._autofit,
                 bold_headers=self._bold_headers,
+                column_width=self._col_width or None,
+                column_widths=self._col_widths or None,
+                column_formats=self._col_formats or None,
+                header_format=self._header_format or None,
             )
 
 
@@ -329,6 +395,8 @@ class FastExcel:
 __all__ = [
     # Class API
     "FastExcel",
+    # Format API
+    "Format",
     # Functional API
     "write_csv",
     "write_worksheet",

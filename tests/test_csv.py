@@ -123,6 +123,128 @@ class TestCSVGenerator:
         assert len(lines) == 101  # header + 100 rows
 
 
+class TestCSVRecordsTypeCache:
+    """Exercise the Records first-row type cache in csv_writer: the cached
+    column type is set from row 1, hit on stable columns, and must fall back
+    to the full cascade when a later row's value type differs."""
+
+    def test_stable_types_cache_hit(self, tmp_path):
+        path = str(tmp_path / "stable.csv")
+        records = [
+            {"i": 1, "f": 1.5, "s": "a", "b": True},
+            {"i": 2, "f": 2.5, "s": "b", "b": False},
+            {"i": 3, "f": 3.5, "s": "c", "b": True},
+        ]
+        FastExcel(path).sheet("S", records).save()
+
+        lines = open(path).read().strip().split("\n")
+        assert lines[0] == "i,f,s,b"
+        assert lines[1] == "1,1.5,a,true"
+        assert lines[2] == "2,2.5,b,false"
+        assert lines[3] == "3,3.5,c,true"
+
+    def test_type_switch_falls_back(self, tmp_path):
+        """Column ``v``: int in row 1 (caches Int), then string / float /
+        bool in later rows — cache misses must re-run the cascade, not coerce
+        to the cached type."""
+        path = str(tmp_path / "switch.csv")
+        records = [
+            {"v": 1},
+            {"v": "two"},
+            {"v": 3.5},
+            {"v": True},
+        ]
+        FastExcel(path).sheet("S", records).save()
+
+        lines = open(path).read().strip().split("\n")
+        assert lines[0] == "v"
+        assert lines[1] == "1"
+        assert lines[2] == "two"
+        assert lines[3] == "3.5"
+        assert lines[4] == "true"
+
+    def test_none_in_first_row_then_typed(self, tmp_path):
+        """A ``None`` in row 1 leaves the column type Unknown; the first
+        non-null value sets the cache, and escaping still applies on miss."""
+        path = str(tmp_path / "none_first.csv")
+        records = [
+            {"x": None},
+            {"x": "has,comma"},
+            {"x": "plain"},
+        ]
+        FastExcel(path).sheet("S", records).save()
+
+        lines = open(path).read().strip().split("\n")
+        assert lines[0] == "x"
+        assert lines[1] == ""
+        assert lines[2] == '"has,comma"'
+        assert lines[3] == "plain"
+
+
+class TestCSVArrowPath:
+    """Verify DataFrame → CSV goes through the Arrow C Data Interface
+    and produces the expected output for mixed types + nulls."""
+
+    def test_pandas_arrow_types(self, tmp_path):
+        path = str(tmp_path / "arrow.csv")
+        df = pd.DataFrame(
+            {
+                "i": [1, 2, 3],
+                "f": [1.5, 2.5, 3.5],
+                "s": ["a", "b", "c"],
+                "b": [True, False, True],
+                "ts": pd.to_datetime(
+                    ["2024-01-02 03:04:05", "2025-06-07 08:09:10", pd.NaT]
+                ),
+            }
+        )
+        write_csv(df, path)
+
+        lines = open(path).read().strip().split("\n")
+        assert lines[0] == "i,f,s,b,ts"
+        assert lines[1] == "1,1.5,a,true,2024-01-02T03:04:05"
+        assert lines[2] == "2,2.5,b,false,2025-06-07T08:09:10"
+        # Null datetime → empty cell
+        assert lines[3].split(",")[4] == ""
+
+    def test_polars_arrow_types(self, tmp_path):
+        path = str(tmp_path / "arrow_pl.csv")
+        df = pl.DataFrame(
+            {
+                "i": [10, 20, 30],
+                "s": ["x", "y", None],
+                "b": [True, None, False],
+            }
+        )
+        write_csv(df, path)
+
+        lines = open(path).read().strip().split("\n")
+        assert lines[0] == "i,s,b"
+        assert lines[1] == "10,x,true"
+        # Row 1: b is None → trailing empty
+        assert lines[2] == "20,y,"
+        # Row 2: s is None → middle empty
+        assert lines[3] == "30,,false"
+
+    def test_pandas_escape_in_arrow_path(self, tmp_path):
+        path = str(tmp_path / "arrow_esc.csv")
+        df = pd.DataFrame({"A": ['has,comma', 'has"quote']})
+        write_csv(df, path)
+
+        content = open(path).read()
+        assert '"has,comma"' in content
+        assert '"has""quote"' in content
+
+    def test_pathlib_path_target(self, tmp_path):
+        """write_csv accepts a pathlib.Path, not only str."""
+        from pathlib import Path
+
+        p = Path(tmp_path) / "pathlib.csv"
+        df = pd.DataFrame({"A": [1, 2]})
+        write_csv(df, p)
+        assert p.read_text().startswith("A\n")
+
+
 class TestWriteCSVFunction:
     def test_direct_call(self, tmp_path):
         path = str(tmp_path / "out.csv")

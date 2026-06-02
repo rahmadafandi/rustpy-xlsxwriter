@@ -16,6 +16,11 @@ pub fn xlsx_err(e: impl std::fmt::Display) -> PyErr {
 
 /// Generic cell writer with full Python type cascade. Returns the
 /// detected column type so callers may cache and fast-path subsequent rows.
+///
+/// `col_override` is an explicit per-column `Format` (from `column_formats`).
+/// When `Some`, it wins over `float_fmt` for numeric cells and over
+/// `datetime_fmt` for datetime cells. When `None`, behaviour is identical
+/// to before (byte-for-byte compatible with no-override callers).
 fn write_py_any(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     row: u32,
@@ -24,6 +29,7 @@ fn write_py_any(
     float_fmt: Option<&Format>,
     datetime_fmt: Option<&Format>,
     datetime_cols_set: &mut HashSet<u16>,
+    col_override: Option<&Format>,
 ) -> PyResult<ColType> {
     if value.is_none() {
         worksheet.write_string(row, col, "").map_err(xlsx_err)?;
@@ -38,7 +44,8 @@ fn write_py_any(
     }
 
     if let Ok(f) = value.cast::<pyo3::types::PyFloat>() {
-        write_num(worksheet, row, col, f.value(), float_fmt)?;
+        let num_fmt = col_override.or(float_fmt);
+        write_num(worksheet, row, col, f.value(), num_fmt)?;
         return Ok(ColType::Float);
     }
 
@@ -52,12 +59,19 @@ fn write_py_any(
 
     if let Ok(i) = value.cast::<pyo3::types::PyInt>() {
         let val: f64 = i.extract()?;
-        worksheet.write_number(row, col, val).map_err(xlsx_err)?;
+        if let Some(fmt) = col_override {
+            worksheet
+                .write_number_with_format(row, col, val, fmt)
+                .map_err(xlsx_err)?;
+        } else {
+            worksheet.write_number(row, col, val).map_err(xlsx_err)?;
+        }
         return Ok(ColType::Int);
     }
 
     if let Ok(dt) = value.cast::<PyDateTime>() {
-        if let Some(fmt) = datetime_fmt {
+        let eff_dt_fmt = col_override.or(datetime_fmt);
+        if let Some(fmt) = eff_dt_fmt {
             if datetime_cols_set.insert(col) {
                 worksheet.set_column_format(col, fmt).map_err(xlsx_err)?;
             }
@@ -71,7 +85,8 @@ fn write_py_any(
 
     // Date AFTER DateTime (datetime is a subclass of date)
     if let Ok(d) = value.cast::<PyDate>() {
-        if let Some(fmt) = datetime_fmt {
+        let eff_dt_fmt = col_override.or(datetime_fmt);
+        if let Some(fmt) = eff_dt_fmt {
             if datetime_cols_set.insert(col) {
                 worksheet.set_column_format(col, fmt).map_err(xlsx_err)?;
             }
@@ -90,7 +105,8 @@ fn write_py_any(
     }
 
     if let Ok(val) = value.extract::<f64>() {
-        write_num(worksheet, row, col, val, float_fmt)?;
+        let num_fmt = col_override.or(float_fmt);
+        write_num(worksheet, row, col, val, num_fmt)?;
         return Ok(ColType::Float);
     }
 
@@ -103,6 +119,12 @@ fn write_py_any(
 /// Fast-path dispatch using a cached `ColType`. Returns `true` if the
 /// value matched the cached type and was written; `false` to fall back
 /// to [`write_py_any`].
+///
+/// `col_override` is an explicit per-column `Format` (from `column_formats`).
+/// When `Some`, it wins over `float_fmt` for numeric cells and over
+/// `datetime_fmt` for datetime cells. When `None`, behaviour is identical
+/// to before (byte-for-byte compatible with no-override callers).
+#[allow(clippy::too_many_arguments)]
 fn try_cached_write(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     row: u32,
@@ -112,6 +134,7 @@ fn try_cached_write(
     float_fmt: Option<&Format>,
     datetime_fmt: &Format,
     datetime_cols_set: &mut HashSet<u16>,
+    col_override: Option<&Format>,
 ) -> PyResult<bool> {
     match cached {
         ColType::String => {
@@ -124,7 +147,8 @@ fn try_cached_write(
         }
         ColType::Float => {
             if let Ok(f) = value.cast::<pyo3::types::PyFloat>() {
-                write_num(worksheet, row, col, f.value(), float_fmt)?;
+                let num_fmt = col_override.or(float_fmt);
+                write_num(worksheet, row, col, f.value(), num_fmt)?;
                 return Ok(true);
             }
         }
@@ -139,15 +163,22 @@ fn try_cached_write(
         ColType::Int => {
             if let Ok(i) = value.cast::<pyo3::types::PyInt>() {
                 let val: f64 = i.extract()?;
-                worksheet.write_number(row, col, val).map_err(xlsx_err)?;
+                if let Some(fmt) = col_override {
+                    worksheet
+                        .write_number_with_format(row, col, val, fmt)
+                        .map_err(xlsx_err)?;
+                } else {
+                    worksheet.write_number(row, col, val).map_err(xlsx_err)?;
+                }
                 return Ok(true);
             }
         }
         ColType::DateTime => {
             if let Ok(dt) = value.cast::<PyDateTime>() {
+                let eff_dt_fmt = col_override.unwrap_or(datetime_fmt);
                 if datetime_cols_set.insert(col) {
                     worksheet
-                        .set_column_format(col, datetime_fmt)
+                        .set_column_format(col, eff_dt_fmt)
                         .map_err(xlsx_err)?;
                 }
                 let excel_dt = py_datetime_to_excel(&dt)?;
@@ -159,9 +190,10 @@ fn try_cached_write(
         }
         ColType::Date => {
             if let Ok(d) = value.cast::<PyDate>() {
+                let eff_dt_fmt = col_override.unwrap_or(datetime_fmt);
                 if datetime_cols_set.insert(col) {
                     worksheet
-                        .set_column_format(col, datetime_fmt)
+                        .set_column_format(col, eff_dt_fmt)
                         .map_err(xlsx_err)?;
                 }
                 let excel_dt = py_date_to_excel(&d)?;
@@ -205,6 +237,7 @@ fn polars_kind(dtype_str: &str) -> PolarsKind {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_worksheet_content(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     records: &WorksheetData,
@@ -216,6 +249,10 @@ fn write_worksheet_content(
     index_columns: Option<&Vec<String>>,
     autofit: bool,
     bold_headers: bool,
+    column_width: Option<f64>,
+    column_widths: Option<&Bound<'_, PyAny>>,
+    column_formats: Option<&Bound<'_, PyAny>>,
+    header_format: Option<&crate::format::Format>,
     py: Python,
 ) -> PyResult<()> {
     let float_fmt = float_format.map(|s| Format::new().set_num_format(s));
@@ -225,6 +262,7 @@ fn write_worksheet_content(
     let datetime_fmt = Format::new().set_num_format(dt_fmt_str);
     let bold_fmt = Format::new().set_bold();
     let mut datetime_cols_set: HashSet<u16> = HashSet::new();
+    let mut final_headers: Vec<String> = Vec::new();
 
     match records {
         WorksheetData::ArrowDataFrame(stream_obj) => {
@@ -232,6 +270,11 @@ fn write_worksheet_content(
                 let reader = crate::arrow_ffi::stream_to_reader(stream_obj, py)?;
 
                 let schema = reader.schema();
+                final_headers = schema
+                    .fields()
+                    .iter()
+                    .map(|f| f.name().to_string())
+                    .collect();
                 for (col, field) in schema.fields().iter().enumerate() {
                     write_header(
                         worksheet,
@@ -240,11 +283,18 @@ fn write_worksheet_content(
                         bold_headers,
                         &bold_fmt,
                         index_columns,
+                        header_format.map(|h| &h.inner),
                     )?;
                 }
 
                 let mut current_row: u32 = 1;
                 let mut formats_set = false;
+
+                // Resolve per-column formats ONCE (after headers are known).
+                // Apply set_column_format BEFORE the first batch — constant memory mode requires
+                // column formats to be set before their data rows.
+                let col_formats: Vec<Option<crate::format::Format>> =
+                    crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
 
                 for batch_result in reader {
                     let batch = batch_result.map_err(|e| {
@@ -255,11 +305,14 @@ fn write_worksheet_content(
                     })?;
 
                     if !formats_set {
+                        // Auto datetime column formats first…
                         crate::arrow_writer::set_datetime_column_formats(
                             worksheet,
                             &batch,
                             &datetime_fmt,
                         )?;
+                        // …then explicit column_formats override them (and any other cols).
+                        crate::format::apply_column_formats(worksheet, &col_formats)?;
                         formats_set = true;
                     }
 
@@ -268,6 +321,7 @@ fn write_worksheet_content(
                         &batch,
                         current_row,
                         float_fmt.as_ref(),
+                        &col_formats,
                     )?;
 
                     current_row += batch.num_rows() as u32;
@@ -279,8 +333,8 @@ fn write_worksheet_content(
             // least write the header row from `.columns`.
             if arrow_ok.is_err() {
                 if let Ok(cols) = stream_obj.getattr(py, "columns") {
-                    let headers: Vec<String> = cols.extract(py).unwrap_or_default();
-                    for (col, header) in headers.iter().enumerate() {
+                    final_headers = cols.extract(py).unwrap_or_default();
+                    for (col, header) in final_headers.iter().enumerate() {
                         write_header(
                             worksheet,
                             col as u16,
@@ -288,6 +342,7 @@ fn write_worksheet_content(
                             bold_headers,
                             &bold_fmt,
                             index_columns,
+                            header_format.map(|h| &h.inner),
                         )?;
                     }
                 }
@@ -299,6 +354,9 @@ fn write_worksheet_content(
                 let mut headers: Vec<String> = Vec::new();
                 let mut headers_written = false;
                 let mut col_types: Vec<ColType> = Vec::new();
+                // Resolved once when headers are first seen; kept alive for the
+                // entire row loop so we can hand out &Format borrows per cell.
+                let mut col_formats: Vec<Option<crate::format::Format>> = Vec::new();
 
                 for (row_idx, row_res) in rows.enumerate() {
                     let row_obj = row_res?;
@@ -320,9 +378,16 @@ fn write_worksheet_content(
                                 bold_headers,
                                 &bold_fmt,
                                 index_columns,
+                                header_format.map(|h| &h.inner),
                             )?;
                         }
                         col_types.resize(headers.len(), ColType::Unknown);
+                        final_headers = headers.clone();
+                        // Resolve per-column formats ONCE and keep them for the whole loop.
+                        // Apply set_column_format BEFORE writing data rows (constant memory mode).
+                        col_formats =
+                            crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
+                        crate::format::apply_column_formats(worksheet, &col_formats)?;
                         headers_written = true;
                     }
 
@@ -334,6 +399,10 @@ fn write_worksheet_content(
                             .copied()
                             .unwrap_or(ColType::Unknown);
 
+                        // Column format override: wins over float_fmt / datetime_fmt.
+                        let col_override: Option<&rust_xlsxwriter::Format> =
+                            col_formats.get(col).and_then(|o| o.as_ref()).map(|f| &f.inner);
+
                         let written = try_cached_write(
                             worksheet,
                             row_u32,
@@ -343,6 +412,7 @@ fn write_worksheet_content(
                             float_fmt.as_ref(),
                             &datetime_fmt,
                             &mut datetime_cols_set,
+                            col_override,
                         )?;
 
                         if !written {
@@ -354,6 +424,7 @@ fn write_worksheet_content(
                                 float_fmt.as_ref(),
                                 Some(&datetime_fmt),
                                 &mut datetime_cols_set,
+                                col_override,
                             )?;
                             if col < col_types.len() && col_types[col] == ColType::Unknown {
                                 col_types[col] = detected;
@@ -367,6 +438,7 @@ fn write_worksheet_content(
         WorksheetData::PandasDataFrame(df) => {
             let columns = df.getattr(py, "columns")?;
             let headers: Vec<String> = columns.extract(py)?;
+            final_headers = headers.clone();
             let dtypes = df.getattr(py, "dtypes")?;
             let dtypes_list: Vec<Bound<'_, PyAny>> =
                 dtypes.bind(py).try_iter()?.collect::<Result<Vec<_>, _>>()?;
@@ -379,6 +451,7 @@ fn write_worksheet_content(
                     bold_headers,
                     &bold_fmt,
                     index_columns,
+                    header_format.map(|h| &h.inner),
                 )?;
             }
 
@@ -395,6 +468,8 @@ fn write_worksheet_content(
 
             let nrows: usize = df.call_method0(py, "__len__")?.extract(py)?;
 
+            // Auto datetime column formats first, then explicit column_formats
+            // override (constant memory: BEFORE writing data rows).
             for (col_idx, kind) in col_kinds.iter().enumerate() {
                 if *kind == 'M' && datetime_cols_set.insert(col_idx as u16) {
                     worksheet
@@ -402,6 +477,9 @@ fn write_worksheet_content(
                         .map_err(xlsx_err)?;
                 }
             }
+            let col_formats: Vec<Option<crate::format::Format>> =
+                crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
+            crate::format::apply_column_formats(worksheet, &col_formats)?;
 
             write_df_rows(
                 worksheet,
@@ -412,11 +490,13 @@ fn write_worksheet_content(
                 float_fmt.as_ref(),
                 &datetime_fmt,
                 &mut datetime_cols_set,
+                &col_formats,
             )?;
         }
 
         WorksheetData::PolarsDataFrame(df) => {
             let columns: Vec<String> = df.getattr(py, "columns")?.extract(py)?;
+            final_headers = columns.clone();
             let dtypes = df.getattr(py, "dtypes")?;
             let dtypes_list: Vec<Bound<'_, PyAny>> =
                 dtypes.bind(py).try_iter()?.collect::<Result<Vec<_>, _>>()?;
@@ -429,6 +509,7 @@ fn write_worksheet_content(
                     bold_headers,
                     &bold_fmt,
                     index_columns,
+                    header_format.map(|h| &h.inner),
                 )?;
             }
 
@@ -443,6 +524,8 @@ fn write_worksheet_content(
 
             let nrows: usize = df.call_method0(py, "__len__")?.extract(py)?;
 
+            // Auto datetime column formats first, then explicit column_formats
+            // override (constant memory: BEFORE writing data rows).
             for (col_idx, kind) in col_kinds.iter().enumerate() {
                 if *kind == PolarsKind::Temporal
                     && datetime_cols_set.insert(col_idx as u16)
@@ -452,6 +535,9 @@ fn write_worksheet_content(
                         .map_err(xlsx_err)?;
                 }
             }
+            let col_formats: Vec<Option<crate::format::Format>> =
+                crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
+            crate::format::apply_column_formats(worksheet, &col_formats)?;
 
             write_df_rows(
                 worksheet,
@@ -462,6 +548,7 @@ fn write_worksheet_content(
                 float_fmt.as_ref(),
                 &datetime_fmt,
                 &mut datetime_cols_set,
+                &col_formats,
             )?;
         }
     }
@@ -475,6 +562,14 @@ fn write_worksheet_content(
     if autofit {
         worksheet.autofit();
     }
+    crate::helpers::apply_column_widths(
+        worksheet,
+        &final_headers,
+        column_width,
+        column_widths,
+        py,
+    )?;
+
     if let Some(password) = password {
         worksheet.protect_with_password(password);
     }
@@ -512,6 +607,11 @@ impl<'py> ColAccess<'py> {
 /// Shared row writer for Pandas and Polars paths. Both frameworks provide
 /// per-column Python lists plus a per-column kind — the row-level dispatch
 /// is identical, so a single helper handles both.
+///
+/// `col_formats` is a per-column slice of optional `Format`s resolved from
+/// `column_formats`. When `Some`, the column format wins over `float_fmt` for
+/// numeric/float columns, and is applied to string columns as well. Pass an
+/// empty slice when no overrides are needed (byte-identical behaviour).
 #[allow(clippy::too_many_arguments)]
 fn write_df_rows<F>(
     worksheet: &mut rust_xlsxwriter::Worksheet,
@@ -522,6 +622,7 @@ fn write_df_rows<F>(
     float_fmt: Option<&Format>,
     datetime_fmt: &Format,
     datetime_cols_set: &mut HashSet<u16>,
+    col_formats: &[Option<crate::format::Format>],
 ) -> PyResult<()>
 where
     F: Fn(usize) -> PolarsKind,
@@ -543,6 +644,10 @@ where
             let col_u16 = col_idx as u16;
             let item = col_list.get(row)?;
 
+            // Per-column format override: wins over float_fmt for numeric cols.
+            let col_override: Option<&Format> =
+                col_formats.get(col_idx).and_then(|o| o.as_ref()).map(|f| &f.inner);
+
             if item.is_none() {
                 worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
                 continue;
@@ -551,13 +656,19 @@ where
             match kind_at(col_idx) {
                 PolarsKind::Int => {
                     let val: f64 = item.extract()?;
-                    worksheet
-                        .write_number(row_u32, col_u16, val)
-                        .map_err(xlsx_err)?;
+                    if let Some(fmt) = col_override {
+                        worksheet
+                            .write_number_with_format(row_u32, col_u16, val, fmt)
+                            .map_err(xlsx_err)?;
+                    } else {
+                        worksheet
+                            .write_number(row_u32, col_u16, val)
+                            .map_err(xlsx_err)?;
+                    }
                 }
                 PolarsKind::Float => {
                     let val: f64 = item.extract()?;
-                    write_num(worksheet, row_u32, col_u16, val, float_fmt)?;
+                    write_num(worksheet, row_u32, col_u16, val, col_override.or(float_fmt))?;
                 }
                 PolarsKind::Bool => {
                     let val: bool = item.extract()?;
@@ -591,6 +702,7 @@ where
                         float_fmt,
                         Some(datetime_fmt),
                         datetime_cols_set,
+                        col_override,
                     )?;
                 }
             }
@@ -599,8 +711,22 @@ where
     Ok(())
 }
 
+/// Resolve a per-sheet value from a dict keyed by sheet name, falling back
+/// to the `"general"` key. Returns the matching Python value, if any.
+fn keyed_get<'py>(
+    dict: Option<&Bound<'py, pyo3::types::PyDict>>,
+    sheet: &str,
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    let Some(dict) = dict else { return Ok(None) };
+    if let Some(v) = dict.get_item(sheet)? {
+        return Ok(Some(v));
+    }
+    dict.get_item("general")
+}
+
+#[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -612,6 +738,10 @@ pub fn write_worksheets(
     index_columns: Option<Vec<String>>,
     autofit: bool,
     bold_headers: bool,
+    column_width: Option<Bound<'_, pyo3::types::PyDict>>,
+    column_widths: Option<Bound<'_, pyo3::types::PyDict>>,
+    column_formats: Option<Bound<'_, pyo3::types::PyDict>>,
+    header_format: Option<Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
@@ -625,6 +755,22 @@ pub fn write_worksheets(
             .map(|c| c.resolve(&sheet_name))
             .unwrap_or_default();
 
+        let sheet_uniform: Option<f64> =
+            match keyed_get(column_width.as_ref(), &sheet_name)? {
+                Some(v) => Some(v.extract()?),
+                None => None,
+            };
+        let sheet_spec: Option<Bound<'_, PyAny>> =
+            keyed_get(column_widths.as_ref(), &sheet_name)?;
+
+        let sheet_col_fmts: Option<Bound<'_, PyAny>> =
+            keyed_get(column_formats.as_ref(), &sheet_name)?;
+        let sheet_hdr_fmt: Option<crate::format::Format> =
+            match keyed_get(header_format.as_ref(), &sheet_name)? {
+                Some(v) => Some(v.extract()?),
+                None => None,
+            };
+
         write_worksheet_content(
             &mut worksheet,
             &records,
@@ -636,6 +782,10 @@ pub fn write_worksheets(
             index_columns.as_ref(),
             autofit,
             bold_headers,
+            sheet_uniform,
+            sheet_spec.as_ref(),
+            sheet_col_fmts.as_ref(),
+            sheet_hdr_fmt.as_ref(),
             py,
         )?;
     }
@@ -644,8 +794,9 @@ pub fn write_worksheets(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -659,6 +810,10 @@ pub fn write_worksheet(
     index_columns: Option<Vec<String>>,
     autofit: bool,
     bold_headers: bool,
+    column_width: Option<f64>,
+    column_widths: Option<Bound<'_, PyAny>>,
+    column_formats: Option<Bound<'_, PyAny>>,
+    header_format: Option<Bound<'_, crate::format::Format>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     let mut worksheet = workbook.add_worksheet_with_constant_memory();
@@ -667,6 +822,9 @@ pub fn write_worksheet(
         ensure_valid_sheet_name(&sheet_name)?;
         worksheet.set_name(sheet_name).map_err(xlsx_err)?;
     }
+
+    let hdr_borrow = header_format.as_ref().map(|h| h.borrow());
+    let hdr_ref = hdr_borrow.as_deref();
 
     write_worksheet_content(
         &mut worksheet,
@@ -679,6 +837,10 @@ pub fn write_worksheet(
         index_columns.as_ref(),
         autofit,
         bold_headers,
+        column_width,
+        column_widths.as_ref(),
+        column_formats.as_ref(),
+        hdr_ref,
         py,
     )?;
 

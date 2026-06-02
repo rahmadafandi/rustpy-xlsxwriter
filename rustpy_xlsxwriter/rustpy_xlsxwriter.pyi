@@ -28,8 +28,10 @@ Records = Union[List[Record], Iterable[Record]]
 DataFrame = Any
 """A *pandas* or *polars* ``DataFrame`` – kept as ``Any`` to avoid a hard dependency."""
 
-FileTarget = Union[str, BinaryIO]
-"""A file path (``str``) or a writable binary buffer (e.g. ``io.BytesIO``)."""
+import os as _os
+
+FileTarget = Union[str, _os.PathLike, BinaryIO]
+"""A file path (``str`` / :class:`os.PathLike`) or a writable binary buffer (e.g. ``io.BytesIO``)."""
 
 FreezePanesConfig = Dict[str, Dict[str, int]]
 """Freeze-pane configuration.
@@ -42,6 +44,12 @@ Example::
     }
 """
 
+ColumnWidths = Union[Dict[str, float], List[float]]
+"""Per-column width — a dict keyed by header name or a positional list of widths."""
+
+ColumnFormats = Union[Dict[str, "Format"], List["Format"]]
+"""Per-column formats — a dict keyed by header name or a positional list of :class:`Format`."""
+
 SheetData = Union[Records, DataFrame]
 """Data accepted per sheet – either :data:`Records` or a :data:`DataFrame`."""
 
@@ -50,6 +58,70 @@ SheetMap = Dict[str, SheetData]
 
 SheetEntry = Tuple[str, SheetData]
 """A ``(sheet_name, data)`` pair as accepted by :func:`write_worksheets`."""
+
+# ---------------------------------------------------------------------------
+# Cell format
+# ---------------------------------------------------------------------------
+
+class Format:
+    """A reusable cell format (font, fill, border, alignment, number format).
+
+    Setters are chainable — each returns ``self``::
+
+        Format().set_bold().set_font_color("#FF0000").set_num_format("0.00%")
+
+    Colors accept ``"#RRGGBB"`` / ``"RRGGBB"`` hex or a color name
+    (e.g. ``"red"``). Enum-valued setters accept lowercase string names.
+    """
+
+    def __init__(self) -> None: ...
+    # Font
+    def set_bold(self) -> Format: ...
+    def set_italic(self) -> Format: ...
+    def set_underline(self, style: str = "single") -> Format: ...
+    def set_font_strikethrough(self) -> Format: ...
+    def set_font_size(self, size: float) -> Format: ...
+    def set_font_name(self, name: str) -> Format: ...
+    def set_font_color(self, color: str) -> Format: ...
+    def set_font_script(self, script: str) -> Format: ...
+    def set_font_family(self, n: int) -> Format: ...
+    def set_font_charset(self, n: int) -> Format: ...
+    def set_font_scheme(self, scheme: str) -> Format: ...
+    # Fill
+    def set_background_color(self, color: str) -> Format: ...
+    def set_foreground_color(self, color: str) -> Format: ...
+    def set_pattern(self, pattern: str) -> Format: ...
+    # Border
+    def set_border(self, style: str) -> Format: ...
+    def set_border_color(self, color: str) -> Format: ...
+    def set_border_top(self, style: str) -> Format: ...
+    def set_border_bottom(self, style: str) -> Format: ...
+    def set_border_left(self, style: str) -> Format: ...
+    def set_border_right(self, style: str) -> Format: ...
+    def set_border_top_color(self, color: str) -> Format: ...
+    def set_border_bottom_color(self, color: str) -> Format: ...
+    def set_border_left_color(self, color: str) -> Format: ...
+    def set_border_right_color(self, color: str) -> Format: ...
+    def set_border_diagonal(self, style: str) -> Format: ...
+    def set_border_diagonal_color(self, color: str) -> Format: ...
+    def set_border_diagonal_type(self, t: str) -> Format: ...
+    # Alignment / layout
+    def set_align(self, align: str) -> Format: ...
+    def set_text_wrap(self) -> Format: ...
+    def set_rotation(self, degrees: int) -> Format: ...
+    def set_indent(self, n: int) -> Format: ...
+    def set_shrink(self) -> Format: ...
+    def set_reading_direction(self, n: int) -> Format: ...
+    # Number
+    def set_num_format(self, fmt: str) -> Format: ...
+    def set_num_format_index(self, i: int) -> Format: ...
+    # Protection / misc
+    def set_locked(self) -> Format: ...
+    def set_unlocked(self) -> Format: ...
+    def set_hidden(self) -> Format: ...
+    def set_quote_prefix(self) -> Format: ...
+    def set_checkbox(self) -> Format: ...
+    def set_hyperlink(self) -> Format: ...
 
 # ---------------------------------------------------------------------------
 # Builder class
@@ -137,13 +209,28 @@ class FastExcel:
         """
         ...
 
-    def sheet(self, name: str, data: SheetData) -> FastExcel:
+    def sheet(
+        self,
+        name: str,
+        data: SheetData,
+        *,
+        column_width: Optional[float] = None,
+        column_widths: Optional[ColumnWidths] = None,
+        column_formats: Optional[ColumnFormats] = None,
+        header_format: Optional[Format] = None,
+    ) -> FastExcel:
         """Add a worksheet with data.
 
         Args:
             name: Sheet name (≤ 31 chars, no ``[ ] : * ? / \\``).
             data: List of dicts, generator of dicts, pandas DataFrame,
                 or polars DataFrame.
+            column_width: Uniform width applied to every column of this sheet.
+            column_widths: Per-column width — a dict keyed by header name
+                or a positional list of widths.
+            column_formats: Per-column :class:`Format` — a dict keyed by header
+                name or a positional list.
+            header_format: A :class:`Format` applied to the header row.
 
         Raises:
             ValueError: If the sheet name is invalid.
@@ -175,6 +262,10 @@ def write_worksheet(
     index_columns: Optional[List[str]] = None,
     autofit: bool = True,
     bold_headers: bool = False,
+    column_width: Optional[float] = None,
+    column_widths: Optional[ColumnWidths] = None,
+    column_formats: Optional[ColumnFormats] = None,
+    header_format: Optional[Format] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -191,6 +282,8 @@ def write_worksheet(
         float_format: Excel number format for floats (e.g. ``"0.00"``).
         index_columns: Column names that should be rendered **bold**.
         autofit: Automatically adjust column widths (default ``True``).
+        column_width: Uniform width applied to every column.
+        column_widths: Per-column width — a dict keyed by header name or a positional list.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -211,6 +304,10 @@ def write_worksheets(
     index_columns: Optional[List[str]] = None,
     autofit: bool = True,
     bold_headers: bool = False,
+    column_width: Optional[Dict[str, float]] = None,
+    column_widths: Optional[Dict[str, ColumnWidths]] = None,
+    column_formats: Optional[Dict[str, ColumnFormats]] = None,
+    header_format: Optional[Dict[str, Format]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -222,6 +319,8 @@ def write_worksheets(
         float_format: Excel number format for floats (e.g. ``"0.00"``).
         index_columns: Column names that should be rendered **bold**.
         autofit: Automatically adjust column widths (default ``True``).
+        column_width: Uniform width per sheet — dict keyed by sheet name (``"general"`` applies to all).
+        column_widths: Per-column width per sheet — dict keyed by sheet name mapping to :data:`ColumnWidths`.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -279,7 +378,7 @@ def validate_sheet_name(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_version() -> str:
-    """Return the package version string (e.g. ``'0.4.4'``)."""
+    """Return the package version string (e.g. ``'0.5.0'``)."""
     ...
 
 def get_name() -> str:
@@ -306,12 +405,16 @@ def get_license() -> str:
     """Return the license identifier (``'MIT'``)."""
     ...
 
+__version__: str
+"""Package version string — same value as :func:`get_version`."""
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 __all__ = [
     "FastExcel",
+    "Format",
     "write_csv",
     "write_worksheet",
     "write_worksheets",
@@ -328,7 +431,10 @@ __all__ = [
     "DataFrame",
     "FileTarget",
     "FreezePanesConfig",
+    "ColumnWidths",
+    "ColumnFormats",
     "SheetData",
     "SheetEntry",
     "SheetMap",
+    "__version__",
 ]
