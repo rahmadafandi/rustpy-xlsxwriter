@@ -98,6 +98,29 @@ pub fn write_header(
     Ok(())
 }
 
+/// Write every header cell for a sheet (row 0) via [`write_header`].
+pub fn write_all_headers(
+    worksheet: &mut Worksheet,
+    headers: &[String],
+    bold_headers: bool,
+    bold_fmt: &Format,
+    index_columns: Option<&Vec<String>>,
+    header_fmt: Option<&Format>,
+) -> PyResult<()> {
+    for (col, header) in headers.iter().enumerate() {
+        write_header(
+            worksheet,
+            col as u16,
+            header,
+            bold_headers,
+            bold_fmt,
+            index_columns,
+            header_fmt,
+        )?;
+    }
+    Ok(())
+}
+
 /// Write a numeric cell with optional float format. NaN/Inf → empty string.
 pub fn write_num(
     worksheet: &mut Worksheet,
@@ -118,11 +141,23 @@ pub fn write_num(
     Ok(())
 }
 
-/// Escape per RFC 4180: wrap in quotes if value contains delim-relevant
-/// chars (comma, newline, CR, quote) and double any internal quote.
-pub fn write_csv_escaped(output: &mut Vec<u8>, val: &str) {
+/// `true` if `val` begins with a character a spreadsheet may interpret as a
+/// formula (`=`, `+`, `-`, `@`) — the classic CSV-injection vector.
+fn needs_formula_guard(val: &str) -> bool {
+    matches!(val.as_bytes().first(), Some(b'=' | b'+' | b'-' | b'@'))
+}
+
+/// RFC-4180 escape with optional formula-injection guard. When `guard` is set
+/// and `val` starts with `= + - @`, a leading `'` is emitted so spreadsheet
+/// apps treat the cell as text instead of a formula. The guard byte is placed
+/// inside the quotes when the field is quoted.
+pub fn write_csv_escaped_guarded(output: &mut Vec<u8>, val: &str, guard: bool) {
+    let prefix = guard && needs_formula_guard(val);
     if val.contains(',') || val.contains('\n') || val.contains('\r') || val.contains('"') {
         output.push(b'"');
+        if prefix {
+            output.push(b'\'');
+        }
         for b in val.bytes() {
             if b == b'"' {
                 output.push(b'"');
@@ -131,6 +166,9 @@ pub fn write_csv_escaped(output: &mut Vec<u8>, val: &str) {
         }
         output.push(b'"');
     } else {
+        if prefix {
+            output.push(b'\'');
+        }
         output.extend_from_slice(val.as_bytes());
     }
 }

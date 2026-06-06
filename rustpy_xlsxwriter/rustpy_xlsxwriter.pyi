@@ -154,14 +154,20 @@ class FastExcel:
         *,
         password: Optional[str] = None,
         autofit: bool = True,
+        sanitize_formulas: bool = False,
     ) -> None:
         """Create a new writer.
 
         Args:
             target: File path or writable binary buffer (e.g. ``io.BytesIO``).
-            password: Optional password to protect the workbook.
+            password: Optional worksheet-protection password. Sets Excel's sheet
+                protection flag only — it does NOT encrypt the file; data is
+                stored in plaintext.
             autofit: Automatically adjust column widths (default ``True``).
                 Set to ``False`` for large datasets to improve performance.
+            sanitize_formulas: CSV/TSV only. When ``True``, string fields
+                starting with ``= + - @`` are prefixed with ``'`` to neutralize
+                CSV formula injection. Off by default. No effect on ``.xlsx``.
         """
         ...
 
@@ -342,6 +348,7 @@ def write_csv(
     records: SheetData,
     file_name: FileTarget,
     delimiter: Optional[str] = None,
+    sanitize_formulas: bool = False,
 ) -> None:
     """Write data to a CSV file.
 
@@ -350,6 +357,9 @@ def write_csv(
             a *pandas* ``DataFrame``, or a *polars* ``DataFrame``.
         file_name: Destination file path or writable binary buffer.
         delimiter: Column delimiter (default ``","``). Use ``"\\t"`` for TSV.
+        sanitize_formulas: When ``True``, string fields starting with
+            ``= + - @`` are prefixed with ``'`` to neutralize CSV formula
+            injection. Off by default (output stays byte-identical).
 
     Examples:
         >>> write_csv([{"Name": "Alice", "Age": 30}], "out.csv")
@@ -378,7 +388,7 @@ def validate_sheet_name(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_version() -> str:
-    """Return the package version string (e.g. ``'0.5.0'``)."""
+    """Return the package version string (e.g. ``'0.5.1'``)."""
     ...
 
 def get_name() -> str:

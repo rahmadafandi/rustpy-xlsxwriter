@@ -1,12 +1,13 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDate, PyDateTime};
+use pyo3::types::{PyDate, PyDateTime, PyInt};
 use pyo3::{Py, PyAny, Python};
 use rust_xlsxwriter::{Format, Workbook};
 use std::collections::HashSet;
 
+use crate::cell::{classify_and_write, try_cached, CellWriter};
 use crate::data_types::{FreezePanesConfig, WorksheetData};
 use crate::helpers::{
-    py_date_to_excel, py_datetime_to_excel, save_workbook, write_header, write_num, ColType,
+    py_date_to_excel, py_datetime_to_excel, save_workbook, write_all_headers, write_num, ColType,
 };
 use crate::utils::ensure_valid_sheet_name;
 
@@ -14,204 +15,105 @@ pub fn xlsx_err(e: impl std::fmt::Display) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Excel write error: {}", e))
 }
 
-/// Generic cell writer with full Python type cascade. Returns the
-/// detected column type so callers may cache and fast-path subsequent rows.
+/// [`CellWriter`] sink that writes one Python scalar to an Excel cell.
 ///
 /// `col_override` is an explicit per-column `Format` (from `column_formats`).
 /// When `Some`, it wins over `float_fmt` for numeric cells and over
-/// `datetime_fmt` for datetime cells. When `None`, behaviour is identical
-/// to before (byte-for-byte compatible with no-override callers).
-fn write_py_any(
-    worksheet: &mut rust_xlsxwriter::Worksheet,
+/// `datetime_fmt` for datetime cells. The detection order lives in
+/// [`crate::cell`]; this only encodes the per-type Excel action.
+struct ExcelCell<'a> {
+    worksheet: &'a mut rust_xlsxwriter::Worksheet,
     row: u32,
     col: u16,
-    value: &Bound<PyAny>,
-    float_fmt: Option<&Format>,
-    datetime_fmt: Option<&Format>,
-    datetime_cols_set: &mut HashSet<u16>,
-    col_override: Option<&Format>,
-) -> PyResult<ColType> {
-    if value.is_none() {
-        worksheet.write_string(row, col, "").map_err(xlsx_err)?;
-        return Ok(ColType::Unknown);
-    }
+    float_fmt: Option<&'a Format>,
+    datetime_fmt: &'a Format,
+    datetime_cols_set: &'a mut HashSet<u16>,
+    col_override: Option<&'a Format>,
+}
 
-    if let Ok(s) = value.cast::<pyo3::types::PyString>() {
-        worksheet
-            .write_string(row, col, s.to_str()?)
+impl ExcelCell<'_> {
+    /// Set the datetime column format once, on first datetime cell in the column.
+    fn ensure_datetime_format(&mut self) -> PyResult<()> {
+        let fmt = self.col_override.unwrap_or(self.datetime_fmt);
+        if self.datetime_cols_set.insert(self.col) {
+            self.worksheet
+                .set_column_format(self.col, fmt)
+                .map_err(xlsx_err)?;
+        }
+        Ok(())
+    }
+}
+
+impl CellWriter for ExcelCell<'_> {
+    fn write_none(&mut self) -> PyResult<()> {
+        self.worksheet
+            .write_string(self.row, self.col, "")
             .map_err(xlsx_err)?;
-        return Ok(ColType::String);
+        Ok(())
     }
 
-    if let Ok(f) = value.cast::<pyo3::types::PyFloat>() {
-        let num_fmt = col_override.or(float_fmt);
-        write_num(worksheet, row, col, f.value(), num_fmt)?;
-        return Ok(ColType::Float);
-    }
-
-    // Bool BEFORE Int (Python bool is a subclass of int)
-    if let Ok(b) = value.cast::<pyo3::types::PyBool>() {
-        worksheet
-            .write_boolean(row, col, b.is_true())
+    fn write_str(&mut self, s: &str) -> PyResult<()> {
+        self.worksheet
+            .write_string(self.row, self.col, s)
             .map_err(xlsx_err)?;
-        return Ok(ColType::Bool);
+        Ok(())
     }
 
-    if let Ok(i) = value.cast::<pyo3::types::PyInt>() {
+    fn write_bool(&mut self, b: bool) -> PyResult<()> {
+        self.worksheet
+            .write_boolean(self.row, self.col, b)
+            .map_err(xlsx_err)?;
+        Ok(())
+    }
+
+    fn write_float(&mut self, f: f64) -> PyResult<()> {
+        write_num(
+            self.worksheet,
+            self.row,
+            self.col,
+            f,
+            self.col_override.or(self.float_fmt),
+        )
+    }
+
+    fn write_int(&mut self, i: &Bound<'_, PyInt>) -> PyResult<()> {
         let val: f64 = i.extract()?;
-        if let Some(fmt) = col_override {
-            worksheet
-                .write_number_with_format(row, col, val, fmt)
+        if let Some(fmt) = self.col_override {
+            self.worksheet
+                .write_number_with_format(self.row, self.col, val, fmt)
                 .map_err(xlsx_err)?;
         } else {
-            worksheet.write_number(row, col, val).map_err(xlsx_err)?;
+            self.worksheet
+                .write_number(self.row, self.col, val)
+                .map_err(xlsx_err)?;
         }
-        return Ok(ColType::Int);
+        Ok(())
     }
 
-    if let Ok(dt) = value.cast::<PyDateTime>() {
-        let eff_dt_fmt = col_override.or(datetime_fmt);
-        if let Some(fmt) = eff_dt_fmt {
-            if datetime_cols_set.insert(col) {
-                worksheet.set_column_format(col, fmt).map_err(xlsx_err)?;
-            }
-        }
-        let excel_dt = py_datetime_to_excel(&dt)?;
-        worksheet
-            .write_datetime(row, col, &excel_dt)
+    fn write_datetime(&mut self, dt: &Bound<'_, PyDateTime>) -> PyResult<()> {
+        self.ensure_datetime_format()?;
+        let excel_dt = py_datetime_to_excel(dt)?;
+        self.worksheet
+            .write_datetime(self.row, self.col, &excel_dt)
             .map_err(xlsx_err)?;
-        return Ok(ColType::DateTime);
+        Ok(())
     }
 
-    // Date AFTER DateTime (datetime is a subclass of date)
-    if let Ok(d) = value.cast::<PyDate>() {
-        let eff_dt_fmt = col_override.or(datetime_fmt);
-        if let Some(fmt) = eff_dt_fmt {
-            if datetime_cols_set.insert(col) {
-                worksheet.set_column_format(col, fmt).map_err(xlsx_err)?;
-            }
-        }
-        let excel_dt = py_date_to_excel(&d)?;
-        worksheet
-            .write_datetime(row, col, &excel_dt)
+    fn write_date(&mut self, d: &Bound<'_, PyDate>) -> PyResult<()> {
+        self.ensure_datetime_format()?;
+        let excel_dt = py_date_to_excel(d)?;
+        self.worksheet
+            .write_datetime(self.row, self.col, &excel_dt)
             .map_err(xlsx_err)?;
-        return Ok(ColType::Date);
+        Ok(())
     }
-
-    // numpy scalar fallback: bool before f64 (numpy.bool_ extracts as f64 too)
-    if let Ok(val) = value.extract::<bool>() {
-        worksheet.write_boolean(row, col, val).map_err(xlsx_err)?;
-        return Ok(ColType::Bool);
-    }
-
-    if let Ok(val) = value.extract::<f64>() {
-        let num_fmt = col_override.or(float_fmt);
-        write_num(worksheet, row, col, val, num_fmt)?;
-        return Ok(ColType::Float);
-    }
-
-    worksheet
-        .write_string(row, col, value.to_string())
-        .map_err(xlsx_err)?;
-    Ok(ColType::String)
 }
 
-/// Fast-path dispatch using a cached `ColType`. Returns `true` if the
-/// value matched the cached type and was written; `false` to fall back
-/// to [`write_py_any`].
-///
-/// `col_override` is an explicit per-column `Format` (from `column_formats`).
-/// When `Some`, it wins over `float_fmt` for numeric cells and over
-/// `datetime_fmt` for datetime cells. When `None`, behaviour is identical
-/// to before (byte-for-byte compatible with no-override callers).
-#[allow(clippy::too_many_arguments)]
-fn try_cached_write(
-    worksheet: &mut rust_xlsxwriter::Worksheet,
-    row: u32,
-    col: u16,
-    value: &Bound<PyAny>,
-    cached: ColType,
-    float_fmt: Option<&Format>,
-    datetime_fmt: &Format,
-    datetime_cols_set: &mut HashSet<u16>,
-    col_override: Option<&Format>,
-) -> PyResult<bool> {
-    match cached {
-        ColType::String => {
-            if let Ok(s) = value.cast::<pyo3::types::PyString>() {
-                worksheet
-                    .write_string(row, col, s.to_str()?)
-                    .map_err(xlsx_err)?;
-                return Ok(true);
-            }
-        }
-        ColType::Float => {
-            if let Ok(f) = value.cast::<pyo3::types::PyFloat>() {
-                let num_fmt = col_override.or(float_fmt);
-                write_num(worksheet, row, col, f.value(), num_fmt)?;
-                return Ok(true);
-            }
-        }
-        ColType::Bool => {
-            if let Ok(b) = value.cast::<pyo3::types::PyBool>() {
-                worksheet
-                    .write_boolean(row, col, b.is_true())
-                    .map_err(xlsx_err)?;
-                return Ok(true);
-            }
-        }
-        ColType::Int => {
-            if let Ok(i) = value.cast::<pyo3::types::PyInt>() {
-                let val: f64 = i.extract()?;
-                if let Some(fmt) = col_override {
-                    worksheet
-                        .write_number_with_format(row, col, val, fmt)
-                        .map_err(xlsx_err)?;
-                } else {
-                    worksheet.write_number(row, col, val).map_err(xlsx_err)?;
-                }
-                return Ok(true);
-            }
-        }
-        ColType::DateTime => {
-            if let Ok(dt) = value.cast::<PyDateTime>() {
-                let eff_dt_fmt = col_override.unwrap_or(datetime_fmt);
-                if datetime_cols_set.insert(col) {
-                    worksheet
-                        .set_column_format(col, eff_dt_fmt)
-                        .map_err(xlsx_err)?;
-                }
-                let excel_dt = py_datetime_to_excel(&dt)?;
-                worksheet
-                    .write_datetime(row, col, &excel_dt)
-                    .map_err(xlsx_err)?;
-                return Ok(true);
-            }
-        }
-        ColType::Date => {
-            if let Ok(d) = value.cast::<PyDate>() {
-                let eff_dt_fmt = col_override.unwrap_or(datetime_fmt);
-                if datetime_cols_set.insert(col) {
-                    worksheet
-                        .set_column_format(col, eff_dt_fmt)
-                        .map_err(xlsx_err)?;
-                }
-                let excel_dt = py_date_to_excel(&d)?;
-                worksheet
-                    .write_datetime(row, col, &excel_dt)
-                    .map_err(xlsx_err)?;
-                return Ok(true);
-            }
-        }
-        ColType::Unknown => {}
-    }
-    Ok(false)
-}
-
-/// Polars dtype classification by stringified dtype. Cheaper than
-/// three `call_method0("is_*")` Python round-trips per column.
+/// Per-column scalar classification shared by the Pandas and Polars writers.
+/// Resolved once per column (outside the row loop) to skip per-cell dtype
+/// probing.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum PolarsKind {
+enum ScalarKind {
     Int,
     Float,
     Bool,
@@ -219,21 +121,23 @@ enum PolarsKind {
     Other,
 }
 
-fn polars_kind(dtype_str: &str) -> PolarsKind {
+/// Classify a Polars dtype from its stringified form. Cheaper than three
+/// `call_method0("is_*")` Python round-trips per column.
+fn polars_kind(dtype_str: &str) -> ScalarKind {
     if dtype_str.starts_with("Int") || dtype_str.starts_with("UInt") {
-        PolarsKind::Int
+        ScalarKind::Int
     } else if dtype_str.starts_with("Float") || dtype_str == "Decimal" {
-        PolarsKind::Float
+        ScalarKind::Float
     } else if dtype_str == "Boolean" {
-        PolarsKind::Bool
+        ScalarKind::Bool
     } else if dtype_str.starts_with("Date")
         || dtype_str.starts_with("Datetime")
         || dtype_str.starts_with("Time")
         || dtype_str.starts_with("Duration")
     {
-        PolarsKind::Temporal
+        ScalarKind::Temporal
     } else {
-        PolarsKind::Other
+        ScalarKind::Other
     }
 }
 
@@ -275,17 +179,14 @@ fn write_worksheet_content(
                     .iter()
                     .map(|f| f.name().to_string())
                     .collect();
-                for (col, field) in schema.fields().iter().enumerate() {
-                    write_header(
-                        worksheet,
-                        col as u16,
-                        field.name().as_str(),
-                        bold_headers,
-                        &bold_fmt,
-                        index_columns,
-                        header_format.map(|h| &h.inner),
-                    )?;
-                }
+                write_all_headers(
+                    worksheet,
+                    &final_headers,
+                    bold_headers,
+                    &bold_fmt,
+                    index_columns,
+                    header_format.map(|h| &h.inner),
+                )?;
 
                 let mut current_row: u32 = 1;
                 let mut formats_set = false;
@@ -297,12 +198,7 @@ fn write_worksheet_content(
                     crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
 
                 for batch_result in reader {
-                    let batch = batch_result.map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                            "Failed to read Arrow batch: {}",
-                            e
-                        ))
-                    })?;
+                    let batch = batch_result.map_err(crate::arrow_ffi::batch_read_err)?;
 
                     if !formats_set {
                         // Auto datetime column formats first…
@@ -334,17 +230,14 @@ fn write_worksheet_content(
             if arrow_ok.is_err() {
                 if let Ok(cols) = stream_obj.getattr(py, "columns") {
                     final_headers = cols.extract(py).unwrap_or_default();
-                    for (col, header) in final_headers.iter().enumerate() {
-                        write_header(
-                            worksheet,
-                            col as u16,
-                            header,
-                            bold_headers,
-                            &bold_fmt,
-                            index_columns,
-                            header_format.map(|h| &h.inner),
-                        )?;
-                    }
+                    write_all_headers(
+                        worksheet,
+                        &final_headers,
+                        bold_headers,
+                        &bold_fmt,
+                        index_columns,
+                        header_format.map(|h| &h.inner),
+                    )?;
                 }
             }
         }
@@ -370,17 +263,14 @@ fn write_worksheet_content(
                         for key in row_dict.keys().iter() {
                             headers.push(key.extract::<String>()?);
                         }
-                        for (col, header) in headers.iter().enumerate() {
-                            write_header(
-                                worksheet,
-                                col as u16,
-                                header,
-                                bold_headers,
-                                &bold_fmt,
-                                index_columns,
-                                header_format.map(|h| &h.inner),
-                            )?;
-                        }
+                        write_all_headers(
+                            worksheet,
+                            &headers,
+                            bold_headers,
+                            &bold_fmt,
+                            index_columns,
+                            header_format.map(|h| &h.inner),
+                        )?;
                         col_types.resize(headers.len(), ColType::Unknown);
                         final_headers = headers.clone();
                         // Resolve per-column formats ONCE and keep them for the whole loop.
@@ -400,32 +290,20 @@ fn write_worksheet_content(
                             .unwrap_or(ColType::Unknown);
 
                         // Column format override: wins over float_fmt / datetime_fmt.
-                        let col_override: Option<&rust_xlsxwriter::Format> =
-                            col_formats.get(col).and_then(|o| o.as_ref()).map(|f| &f.inner);
+                        let col_override = crate::format::col_override(&col_formats, col);
 
-                        let written = try_cached_write(
-                            worksheet,
-                            row_u32,
-                            col_u16,
-                            &value,
-                            cached,
-                            float_fmt.as_ref(),
-                            &datetime_fmt,
-                            &mut datetime_cols_set,
+                        let mut sink = ExcelCell {
+                            worksheet: &mut *worksheet,
+                            row: row_u32,
+                            col: col_u16,
+                            float_fmt: float_fmt.as_ref(),
+                            datetime_fmt: &datetime_fmt,
+                            datetime_cols_set: &mut datetime_cols_set,
                             col_override,
-                        )?;
+                        };
 
-                        if !written {
-                            let detected = write_py_any(
-                                worksheet,
-                                row_u32,
-                                col_u16,
-                                &value,
-                                float_fmt.as_ref(),
-                                Some(&datetime_fmt),
-                                &mut datetime_cols_set,
-                                col_override,
-                            )?;
+                        if !try_cached(&value, cached, &mut sink)? {
+                            let detected = classify_and_write(&value, &mut sink)?;
                             if col < col_types.len() && col_types[col] == ColType::Unknown {
                                 col_types[col] = detected;
                             }
@@ -436,119 +314,45 @@ fn write_worksheet_content(
         }
 
         WorksheetData::PandasDataFrame(df) => {
-            let columns = df.getattr(py, "columns")?;
-            let headers: Vec<String> = columns.extract(py)?;
-            final_headers = headers.clone();
-            let dtypes = df.getattr(py, "dtypes")?;
-            let dtypes_list: Vec<Bound<'_, PyAny>> =
-                dtypes.bind(py).try_iter()?.collect::<Result<Vec<_>, _>>()?;
-
-            for (col, header) in headers.iter().enumerate() {
-                write_header(
-                    worksheet,
-                    col as u16,
-                    header,
-                    bold_headers,
-                    &bold_fmt,
-                    index_columns,
-                    header_format.map(|h| &h.inner),
-                )?;
-            }
-
-            let mut col_kinds: Vec<char> = Vec::with_capacity(headers.len());
-            let mut col_lists: Vec<Py<PyAny>> = Vec::with_capacity(headers.len());
-
-            for (col_idx, header) in headers.iter().enumerate() {
-                let kind: String = dtypes_list[col_idx].getattr("kind")?.extract()?;
-                col_kinds.push(kind.chars().next().unwrap_or('O'));
-
-                let col_series = df.call_method1(py, "__getitem__", (header.as_str(),))?;
-                col_lists.push(col_series.call_method0(py, "tolist")?);
-            }
-
-            let nrows: usize = df.call_method0(py, "__len__")?.extract(py)?;
-
-            // Auto datetime column formats first, then explicit column_formats
-            // override (constant memory: BEFORE writing data rows).
-            for (col_idx, kind) in col_kinds.iter().enumerate() {
-                if *kind == 'M' && datetime_cols_set.insert(col_idx as u16) {
-                    worksheet
-                        .set_column_format(col_idx as u16, &datetime_fmt)
-                        .map_err(xlsx_err)?;
-                }
-            }
-            let col_formats: Vec<Option<crate::format::Format>> =
-                crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
-            crate::format::apply_column_formats(worksheet, &col_formats)?;
-
-            write_df_rows(
+            write_dataframe(
                 worksheet,
                 py,
-                nrows,
-                &col_lists,
-                |col_idx| map_pandas_kind(col_kinds[col_idx]),
+                df,
+                &mut final_headers,
+                column_formats,
                 float_fmt.as_ref(),
                 &datetime_fmt,
                 &mut datetime_cols_set,
-                &col_formats,
+                bold_headers,
+                &bold_fmt,
+                index_columns,
+                header_format,
+                "__getitem__",
+                "tolist",
+                |dtype| {
+                    let kind: String = dtype.getattr("kind")?.extract()?;
+                    Ok(map_pandas_kind(kind.chars().next().unwrap_or('O')))
+                },
             )?;
         }
 
         WorksheetData::PolarsDataFrame(df) => {
-            let columns: Vec<String> = df.getattr(py, "columns")?.extract(py)?;
-            final_headers = columns.clone();
-            let dtypes = df.getattr(py, "dtypes")?;
-            let dtypes_list: Vec<Bound<'_, PyAny>> =
-                dtypes.bind(py).try_iter()?.collect::<Result<Vec<_>, _>>()?;
-
-            for (col, header) in columns.iter().enumerate() {
-                write_header(
-                    worksheet,
-                    col as u16,
-                    header,
-                    bold_headers,
-                    &bold_fmt,
-                    index_columns,
-                    header_format.map(|h| &h.inner),
-                )?;
-            }
-
-            let mut col_kinds: Vec<PolarsKind> = Vec::with_capacity(columns.len());
-            let mut col_lists: Vec<Py<PyAny>> = Vec::with_capacity(columns.len());
-
-            for (col_idx, header) in columns.iter().enumerate() {
-                col_kinds.push(polars_kind(&dtypes_list[col_idx].to_string()));
-                let col_series = df.call_method1(py, "get_column", (header.as_str(),))?;
-                col_lists.push(col_series.call_method0(py, "to_list")?);
-            }
-
-            let nrows: usize = df.call_method0(py, "__len__")?.extract(py)?;
-
-            // Auto datetime column formats first, then explicit column_formats
-            // override (constant memory: BEFORE writing data rows).
-            for (col_idx, kind) in col_kinds.iter().enumerate() {
-                if *kind == PolarsKind::Temporal
-                    && datetime_cols_set.insert(col_idx as u16)
-                {
-                    worksheet
-                        .set_column_format(col_idx as u16, &datetime_fmt)
-                        .map_err(xlsx_err)?;
-                }
-            }
-            let col_formats: Vec<Option<crate::format::Format>> =
-                crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
-            crate::format::apply_column_formats(worksheet, &col_formats)?;
-
-            write_df_rows(
+            write_dataframe(
                 worksheet,
                 py,
-                nrows,
-                &col_lists,
-                |col_idx| col_kinds[col_idx],
+                df,
+                &mut final_headers,
+                column_formats,
                 float_fmt.as_ref(),
                 &datetime_fmt,
                 &mut datetime_cols_set,
-                &col_formats,
+                bold_headers,
+                &bold_fmt,
+                index_columns,
+                header_format,
+                "get_column",
+                "to_list",
+                |dtype| Ok(polars_kind(&dtype.to_string())),
             )?;
         }
     }
@@ -577,13 +381,13 @@ fn write_worksheet_content(
     Ok(())
 }
 
-fn map_pandas_kind(kind: char) -> PolarsKind {
+fn map_pandas_kind(kind: char) -> ScalarKind {
     match kind {
-        'i' | 'u' => PolarsKind::Int,
-        'f' => PolarsKind::Float,
-        'b' => PolarsKind::Bool,
-        'M' => PolarsKind::Temporal,
-        _ => PolarsKind::Other,
+        'i' | 'u' => ScalarKind::Int,
+        'f' => ScalarKind::Float,
+        'b' => ScalarKind::Bool,
+        'M' => ScalarKind::Temporal,
+        _ => ScalarKind::Other,
     }
 }
 
@@ -625,7 +429,7 @@ fn write_df_rows<F>(
     col_formats: &[Option<crate::format::Format>],
 ) -> PyResult<()>
 where
-    F: Fn(usize) -> PolarsKind,
+    F: Fn(usize) -> ScalarKind,
 {
     let bound_cols: Vec<ColAccess> = col_lists
         .iter()
@@ -645,8 +449,7 @@ where
             let item = col_list.get(row)?;
 
             // Per-column format override: wins over float_fmt for numeric cols.
-            let col_override: Option<&Format> =
-                col_formats.get(col_idx).and_then(|o| o.as_ref()).map(|f| &f.inner);
+            let col_override = crate::format::col_override(col_formats, col_idx);
 
             if item.is_none() {
                 worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
@@ -654,7 +457,7 @@ where
             }
 
             match kind_at(col_idx) {
-                PolarsKind::Int => {
+                ScalarKind::Int => {
                     let val: f64 = item.extract()?;
                     if let Some(fmt) = col_override {
                         worksheet
@@ -666,17 +469,17 @@ where
                             .map_err(xlsx_err)?;
                     }
                 }
-                PolarsKind::Float => {
+                ScalarKind::Float => {
                     let val: f64 = item.extract()?;
                     write_num(worksheet, row_u32, col_u16, val, col_override.or(float_fmt))?;
                 }
-                PolarsKind::Bool => {
+                ScalarKind::Bool => {
                     let val: bool = item.extract()?;
                     worksheet
                         .write_boolean(row_u32, col_u16, val)
                         .map_err(xlsx_err)?;
                 }
-                PolarsKind::Temporal => {
+                ScalarKind::Temporal => {
                     if let Ok(dt) = item.cast::<PyDateTime>() {
                         let excel_dt = py_datetime_to_excel(&dt)?;
                         worksheet
@@ -693,22 +496,108 @@ where
                             .map_err(xlsx_err)?;
                     }
                 }
-                PolarsKind::Other => {
-                    write_py_any(
-                        worksheet,
-                        row_u32,
-                        col_u16,
-                        &item,
+                ScalarKind::Other => {
+                    let mut sink = ExcelCell {
+                        worksheet: &mut *worksheet,
+                        row: row_u32,
+                        col: col_u16,
                         float_fmt,
-                        Some(datetime_fmt),
-                        datetime_cols_set,
+                        datetime_fmt,
+                        datetime_cols_set: &mut *datetime_cols_set,
                         col_override,
-                    )?;
+                    };
+                    classify_and_write(&item, &mut sink)?;
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Shared Pandas/Polars writer. Both expose `columns`, `dtypes`, `__len__`
+/// and per-column series access; they differ only in the series accessor
+/// method names and how a dtype maps to a [`ScalarKind`]. Those three points
+/// are passed in so the surrounding orchestration lives in one place.
+///
+/// - `get_column_method`: `"__getitem__"` (Pandas) or `"get_column"` (Polars)
+/// - `to_list_method`: `"tolist"` (Pandas) or `"to_list"` (Polars)
+/// - `classify_dtype`: maps one dtype object to a `ScalarKind`
+#[allow(clippy::too_many_arguments)]
+fn write_dataframe<C>(
+    worksheet: &mut rust_xlsxwriter::Worksheet,
+    py: Python,
+    df: &Py<PyAny>,
+    final_headers: &mut Vec<String>,
+    column_formats: Option<&Bound<'_, PyAny>>,
+    float_fmt: Option<&Format>,
+    datetime_fmt: &Format,
+    datetime_cols_set: &mut HashSet<u16>,
+    bold_headers: bool,
+    bold_fmt: &Format,
+    index_columns: Option<&Vec<String>>,
+    header_format: Option<&crate::format::Format>,
+    get_column_method: &str,
+    to_list_method: &str,
+    classify_dtype: C,
+) -> PyResult<()>
+where
+    C: Fn(&Bound<'_, PyAny>) -> PyResult<ScalarKind>,
+{
+    let headers: Vec<String> = df.getattr(py, "columns")?.extract(py)?;
+    *final_headers = headers.clone();
+    let dtypes = df.getattr(py, "dtypes")?;
+    let dtypes_list: Vec<Bound<'_, PyAny>> =
+        dtypes.bind(py).try_iter()?.collect::<Result<Vec<_>, _>>()?;
+
+    write_all_headers(
+        worksheet,
+        &headers,
+        bold_headers,
+        bold_fmt,
+        index_columns,
+        header_format.map(|h| &h.inner),
+    )?;
+
+    let mut col_kinds: Vec<ScalarKind> = Vec::with_capacity(headers.len());
+    let mut col_lists: Vec<Py<PyAny>> = Vec::with_capacity(headers.len());
+
+    // NOTE: `to_list`/`tolist` materializes each column as a full Python list,
+    // so peak memory here is O(rows) per column — this path is NOT constant
+    // memory. It is only reached when the Arrow zero-copy path is unavailable
+    // (old pandas without `__arrow_c_stream__`, or exotic dtypes). Modern
+    // pandas ≥2 and Polars hit the Arrow path in `data_types.rs` instead.
+    for (col_idx, header) in headers.iter().enumerate() {
+        col_kinds.push(classify_dtype(&dtypes_list[col_idx])?);
+        let col_series = df.call_method1(py, get_column_method, (header.as_str(),))?;
+        col_lists.push(col_series.call_method0(py, to_list_method)?);
+    }
+
+    let nrows: usize = df.call_method0(py, "__len__")?.extract(py)?;
+
+    // Auto datetime column formats first, then explicit column_formats
+    // override (constant memory: BEFORE writing data rows).
+    for (col_idx, kind) in col_kinds.iter().enumerate() {
+        if *kind == ScalarKind::Temporal && datetime_cols_set.insert(col_idx as u16) {
+            worksheet
+                .set_column_format(col_idx as u16, datetime_fmt)
+                .map_err(xlsx_err)?;
+        }
+    }
+    let col_formats: Vec<Option<crate::format::Format>> =
+        crate::format::resolve_column_formats(column_formats, final_headers, py)?;
+    crate::format::apply_column_formats(worksheet, &col_formats)?;
+
+    write_df_rows(
+        worksheet,
+        py,
+        nrows,
+        &col_lists,
+        |col_idx| col_kinds[col_idx],
+        float_fmt,
+        datetime_fmt,
+        datetime_cols_set,
+        &col_formats,
+    )
 }
 
 /// Resolve a per-sheet value from a dict keyed by sheet name, falling back

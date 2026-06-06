@@ -8,6 +8,12 @@ use arrow_schema::ArrowError;
 use pyo3::prelude::*;
 use pyo3::Py;
 
+/// Error for a failed Arrow `RecordBatch` read, shared by the Excel and CSV
+/// Arrow paths.
+pub fn batch_read_err(e: impl std::fmt::Display) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to read Arrow batch: {}", e))
+}
+
 /// Call `obj.__arrow_c_stream__()` and consume the returned PyCapsule
 /// to produce a `Box<dyn RecordBatchReader + Send>`.
 pub fn stream_to_reader(
