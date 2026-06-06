@@ -3,19 +3,26 @@
 use std::io::Write;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyTimeAccess};
+use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyInt, PyTimeAccess};
 use pyo3::Py;
 
-use crate::helpers::{write_bytes_to_target, write_csv_escaped, ColType};
+use crate::cell::{classify_and_write, try_cached, CellWriter};
+use crate::helpers::{write_bytes_to_target, write_csv_escaped_guarded, ColType};
 
 /// Write data to CSV (file path or buffer).
+///
+/// When `sanitize_formulas` is `true`, string fields that begin with
+/// `= + - @` are prefixed with a single quote so spreadsheet apps treat them
+/// as text rather than executable formulas (CSV-injection mitigation). It is
+/// off by default to keep output byte-identical for existing callers.
 #[pyfunction]
-#[pyo3(signature = (records, file_name, delimiter = None))]
+#[pyo3(signature = (records, file_name, delimiter = None, sanitize_formulas = false))]
 pub fn write_csv(
     py: Python,
     records: Py<PyAny>,
     file_name: Py<PyAny>,
     delimiter: Option<String>,
+    sanitize_formulas: bool,
 ) -> PyResult<()> {
     let delim = delimiter.unwrap_or_else(|| ",".to_string());
     let delim_bytes = delim.as_bytes();
@@ -34,7 +41,7 @@ pub fn write_csv(
     // (Pandas ≥2.0, Polars). Falls back to the per-object paths below on
     // failure (e.g. empty Null-typed columns).
     if bound.hasattr("__arrow_c_stream__")? {
-        if write_csv_via_arrow(&records, py, &mut output, delim_byte).is_ok() {
+        if write_csv_via_arrow(&records, py, &mut output, delim_byte, sanitize_formulas).is_ok() {
             return write_bytes_to_target(py, &output, file_name);
         }
         output.clear();
@@ -42,7 +49,7 @@ pub fn write_csv(
 
     if bound.hasattr("columns")? {
         let columns: Vec<String> = bound.getattr("columns")?.extract()?;
-        write_csv_row_strings(&mut output, &columns, delim_byte);
+        write_csv_row_strings(&mut output, &columns, delim_byte, sanitize_formulas);
 
         if bound.hasattr("get_column")? {
             // Polars
@@ -63,7 +70,8 @@ pub fn write_csv(
                         output.push(delim_byte);
                     }
                     let item = col_list.get_item(row)?;
-                    write_csv_value(&mut output, &item)?;
+                    let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                    classify_and_write(&item, &mut sink)?;
                 }
                 output.push(b'\n');
             }
@@ -81,7 +89,8 @@ pub fn write_csv(
                                 output.push(delim_byte);
                             }
                             first = false;
-                            write_csv_value(&mut output, &item)?;
+                            let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                            classify_and_write(&item, &mut sink)?;
                         }
                         output.push(b'\n');
                     }
@@ -109,7 +118,7 @@ pub fn write_csv(
                     for key in row_dict.keys().iter() {
                         headers.push(key.extract::<String>()?);
                     }
-                    write_csv_row_strings(&mut output, &headers, delim_byte);
+                    write_csv_row_strings(&mut output, &headers, delim_byte, sanitize_formulas);
                     col_types.resize(headers.len(), ColType::Unknown);
                     headers_written = true;
                 }
@@ -119,9 +128,9 @@ pub fn write_csv(
                         output.push(delim_byte);
                     }
                     let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
-                    let hit = try_cached_csv_value(&mut output, &value, cached)?;
-                    if !hit {
-                        let detected = write_csv_value(&mut output, &value)?;
+                    let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                    if !try_cached(&value, cached, &mut sink)? {
+                        let detected = classify_and_write(&value, &mut sink)?;
                         if col < col_types.len() && col_types[col] == ColType::Unknown {
                             col_types[col] = detected;
                         }
@@ -140,6 +149,7 @@ fn write_csv_via_arrow(
     py: Python,
     output: &mut Vec<u8>,
     delim: u8,
+    sanitize: bool,
 ) -> PyResult<()> {
     let reader = crate::arrow_ffi::stream_to_reader(records, py)?;
     let schema = reader.schema();
@@ -148,48 +158,23 @@ fn write_csv_via_arrow(
         .iter()
         .map(|f| f.name().clone())
         .collect();
-    write_csv_row_strings(output, &headers, delim);
+    write_csv_row_strings(output, &headers, delim, sanitize);
 
     for batch_result in reader {
-        let batch = batch_result.map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to read Arrow batch: {}",
-                e
-            ))
-        })?;
-        crate::arrow_writer::write_arrow_batch_csv(output, &batch, delim)?;
+        let batch = batch_result.map_err(crate::arrow_ffi::batch_read_err)?;
+        crate::arrow_writer::write_arrow_batch_csv(output, &batch, delim, sanitize)?;
     }
     Ok(())
 }
 
-fn write_csv_row_strings(output: &mut Vec<u8>, values: &[String], delim: u8) {
+fn write_csv_row_strings(output: &mut Vec<u8>, values: &[String], delim: u8, sanitize: bool) {
     for (i, val) in values.iter().enumerate() {
         if i > 0 {
             output.push(delim);
         }
-        write_csv_escaped(output, val);
+        write_csv_escaped_guarded(output, val, sanitize);
     }
     output.push(b'\n');
-}
-
-fn emit_string(output: &mut Vec<u8>, s: &str) {
-    write_csv_escaped(output, s);
-}
-
-fn emit_bool(output: &mut Vec<u8>, b: bool) {
-    output.extend_from_slice(if b { b"true" } else { b"false" });
-}
-
-fn emit_float(output: &mut Vec<u8>, val: f64) {
-    if !val.is_nan() && !val.is_infinite() {
-        let mut buf = ryu::Buffer::new();
-        output.extend_from_slice(buf.format(val).as_bytes());
-    }
-}
-
-fn emit_int(output: &mut Vec<u8>, val: i64) {
-    let mut buf = itoa::Buffer::new();
-    output.extend_from_slice(buf.format(val).as_bytes());
 }
 
 fn emit_datetime(output: &mut Vec<u8>, dt: &Bound<PyDateTime>) {
@@ -215,113 +200,60 @@ fn emit_date(output: &mut Vec<u8>, d: &Bound<PyDate>) {
     );
 }
 
-/// Try the cached column type. Returns `true` if the value matched and was
-/// written; `false` if the cache was empty or the value's type didn't match
-/// (caller then falls back to the full cascade).
-fn try_cached_csv_value(
-    output: &mut Vec<u8>,
-    value: &Bound<PyAny>,
-    cached: ColType,
-) -> PyResult<bool> {
-    if value.is_none() {
-        return Ok(true);
-    }
-    match cached {
-        ColType::String => {
-            if let Ok(s) = value.cast::<pyo3::types::PyString>() {
-                emit_string(output, s.to_str()?);
-                return Ok(true);
-            }
-        }
-        ColType::Bool => {
-            if let Ok(b) = value.cast::<pyo3::types::PyBool>() {
-                emit_bool(output, b.is_true());
-                return Ok(true);
-            }
-        }
-        ColType::Float => {
-            if let Ok(f) = value.cast::<pyo3::types::PyFloat>() {
-                emit_float(output, f.value());
-                return Ok(true);
-            }
-        }
-        ColType::Int => {
-            // Python bool is a subclass of int and casts to PyInt, so a bool
-            // landing in an Int-cached column must miss here and fall back to
-            // the cascade (which checks Bool first) — else `True` → `1`.
-            if value.cast::<pyo3::types::PyBool>().is_err() {
-                if let Ok(i) = value.cast::<pyo3::types::PyInt>() {
-                    emit_int(output, i.extract()?);
-                    return Ok(true);
-                }
-            }
-        }
-        ColType::DateTime => {
-            if let Ok(dt) = value.cast::<PyDateTime>() {
-                emit_datetime(output, &dt);
-                return Ok(true);
-            }
-        }
-        ColType::Date => {
-            if let Ok(d) = value.cast::<PyDate>() {
-                emit_date(output, &d);
-                return Ok(true);
-            }
-        }
-        ColType::Unknown => {}
-    }
-    Ok(false)
+/// [`CellWriter`] sink that appends one Python scalar to a CSV byte buffer.
+/// The type-detection order lives in [`crate::cell`]; this only encodes the
+/// per-type CSV serialization (and the optional formula-injection guard for
+/// strings).
+struct CsvCell<'a> {
+    output: &'a mut Vec<u8>,
+    sanitize: bool,
 }
 
-fn write_csv_value(output: &mut Vec<u8>, value: &Bound<PyAny>) -> PyResult<ColType> {
-    if value.is_none() {
-        return Ok(ColType::Unknown);
+impl<'a> CsvCell<'a> {
+    fn new(output: &'a mut Vec<u8>, sanitize: bool) -> Self {
+        CsvCell { output, sanitize }
     }
-
-    if let Ok(s) = value.cast::<pyo3::types::PyString>() {
-        emit_string(output, s.to_str()?);
-        return Ok(ColType::String);
-    }
-
-    // Bool BEFORE Int (Python bool is subclass of int)
-    if let Ok(b) = value.cast::<pyo3::types::PyBool>() {
-        emit_bool(output, b.is_true());
-        return Ok(ColType::Bool);
-    }
-
-    if let Ok(f) = value.cast::<pyo3::types::PyFloat>() {
-        emit_float(output, f.value());
-        return Ok(ColType::Float);
-    }
-
-    if let Ok(i) = value.cast::<pyo3::types::PyInt>() {
-        emit_int(output, i.extract()?);
-        return Ok(ColType::Int);
-    }
-
-    if let Ok(dt) = value.cast::<PyDateTime>() {
-        emit_datetime(output, &dt);
-        return Ok(ColType::DateTime);
-    }
-
-    // Date AFTER DateTime (datetime is subclass of date)
-    if let Ok(d) = value.cast::<PyDate>() {
-        emit_date(output, &d);
-        return Ok(ColType::Date);
-    }
-
-    // numpy scalar fallback: bool before f64
-    if let Ok(val) = value.extract::<bool>() {
-        emit_bool(output, val);
-        return Ok(ColType::Bool);
-    }
-
-    if let Ok(val) = value.extract::<f64>() {
-        emit_float(output, val);
-        return Ok(ColType::Float);
-    }
-
-    emit_string(output, &value.to_string());
-    Ok(ColType::String)
 }
 
+impl CellWriter for CsvCell<'_> {
+    fn write_none(&mut self) -> PyResult<()> {
+        // CSV: a null is an empty field — emit nothing.
+        Ok(())
+    }
+
+    fn write_str(&mut self, s: &str) -> PyResult<()> {
+        write_csv_escaped_guarded(self.output, s, self.sanitize);
+        Ok(())
+    }
+
+    fn write_bool(&mut self, b: bool) -> PyResult<()> {
+        self.output
+            .extend_from_slice(if b { b"true" } else { b"false" });
+        Ok(())
+    }
+
+    fn write_float(&mut self, f: f64) -> PyResult<()> {
+        if !f.is_nan() && !f.is_infinite() {
+            let mut buf = ryu::Buffer::new();
+            self.output.extend_from_slice(buf.format(f).as_bytes());
+        }
+        Ok(())
+    }
+
+    fn write_int(&mut self, i: &Bound<'_, PyInt>) -> PyResult<()> {
+        let val: i64 = i.extract()?;
+        let mut buf = itoa::Buffer::new();
+        self.output.extend_from_slice(buf.format(val).as_bytes());
+        Ok(())
+    }
+
+    fn write_datetime(&mut self, dt: &Bound<'_, PyDateTime>) -> PyResult<()> {
+        emit_datetime(self.output, dt);
+        Ok(())
+    }
+
+    fn write_date(&mut self, d: &Bound<'_, PyDate>) -> PyResult<()> {
+        emit_date(self.output, d);
+        Ok(())
+    }
+}

@@ -36,11 +36,13 @@ python benchmark.py
 src/
 ├── lib.rs              # PyO3 module entry point
 ├── worksheet.rs        # Core Excel write logic (Records, Pandas, Polars, Arrow)
+├── cell.rs             # Shared Python-value type cascade (CellWriter trait)
 ├── csv_writer.rs       # Fast CSV/TSV writer
+├── format.rs           # Format pyclass (macro-generated setters) + column formats
 ├── arrow_ffi.rs        # Arrow C Data Interface bridge (manual, no pyo3-arrow)
-├── arrow_writer.rs     # Arrow RecordBatch → Excel writer
+├── arrow_writer.rs     # Arrow RecordBatch → Excel + CSV writer
 ├── data_types.rs       # WorksheetData enum (ArrowStream, Records, Pandas, Polars)
-├── metadata.rs         # Package metadata functions
+├── helpers.rs          # Date conv, headers, CSV escape, save/buffer, widths
 └── utils.rs            # Sheet name validation
 
 rustpy_xlsxwriter/
@@ -88,7 +90,7 @@ tests/
 - Check `PyBool` before `PyInt` (Python bool is subclass of int)
 - Use `value.cast::<T>()` for Python native types, `value.extract::<T>()` for numpy scalar fallback
 - Use `chars().count()` not `len()` for Unicode string length validation
-- Keep `write_py_any_bound` and `write_py_any_bound_detect` in sync — they share the same type cascade logic
+- The Python-value type cascade lives ONCE in `cell.rs` (`classify_and_write` / `try_cached` over the `CellWriter` trait); Excel and CSV each implement a sink (`ExcelCell`, `CsvCell`). Change detection order there, not per-path.
 - Tests must verify actual cell content via `openpyxl`, not just file existence
 - CSV tests verify raw file content via string comparison
 

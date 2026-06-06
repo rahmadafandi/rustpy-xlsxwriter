@@ -177,6 +177,7 @@ class FastExcel:
         *,
         password: Optional[str] = None,
         autofit: bool = True,
+        sanitize_formulas: bool = False,
     ) -> None:
         """Create a new writer.
 
@@ -184,15 +185,26 @@ class FastExcel:
             target: File path (``str`` or :class:`os.PathLike`, e.g.
                 ``pathlib.Path``) or writable binary buffer
                 (e.g. ``io.BytesIO``).
-            password: Optional password to protect the workbook.
+            password: Optional worksheet-protection password. NOTE: this sets
+                Excel's *sheet protection* flag only — it does **not** encrypt
+                the file. The cell data is stored in plaintext and the
+                protection is trivially removed; do not rely on it to keep
+                data confidential.
             autofit: Automatically adjust column widths (default ``True``).
                 Under constant-memory mode (used by this library for all
                 Excel paths) autofit sizing is approximate. Set to
                 ``False`` for large datasets to improve performance.
+            sanitize_formulas: CSV/TSV only. When ``True``, string fields that
+                begin with ``= + - @`` are prefixed with a single quote so
+                spreadsheet apps open them as text instead of executing them as
+                formulas (CSV-injection mitigation). Off by default to keep
+                output byte-identical. Has no effect on ``.xlsx`` output, where
+                values are already written as text cells.
         """
         self._target = _coerce_target(target)
         self._password = password
         self._autofit = autofit
+        self._sanitize_formulas = sanitize_formulas
         self._sheets: List[Tuple[str, Any]] = []
         self._float_format: Optional[str] = None
         self._datetime_format: Optional[str] = None
@@ -333,7 +345,12 @@ class FastExcel:
                     )
                 delimiter = "\t" if lower.endswith(".tsv") else ","
                 _, data = self._sheets[0]
-                write_csv(data, self._target, delimiter=delimiter)
+                write_csv(
+                    data,
+                    self._target,
+                    delimiter=delimiter,
+                    sanitize_formulas=self._sanitize_formulas,
+                )
                 return
 
         if len(self._sheets) == 1:

@@ -268,3 +268,40 @@ class TestWriteCSVFunction:
         content = open(path).read()
         assert "A;B" in content
         assert "1;2" in content
+
+
+class TestCSVFormulaSanitization:
+    """Opt-in CSV-injection guard (`sanitize_formulas`)."""
+
+    def test_off_by_default(self, tmp_path):
+        path = str(tmp_path / "raw.csv")
+        records = [{"a": "=1+2", "b": "@cmd"}, {"a": "-5", "b": "safe"}]
+        FastExcel(path).sheet("S", records).save()
+        content = open(path, encoding="utf-8").read()
+        # No guard quote prefixed.
+        assert content == "a,b\n=1+2,@cmd\n-5,safe\n"
+
+    def test_records_sanitized(self, tmp_path):
+        path = str(tmp_path / "safe.csv")
+        records = [{"a": "=1+2", "b": "@cmd"}, {"a": "-5", "b": "safe"}]
+        FastExcel(path, sanitize_formulas=True).sheet("S", records).save()
+        content = open(path, encoding="utf-8").read()
+        assert content == "a,b\n'=1+2,'@cmd\n'-5,safe\n"
+
+    def test_functional_api_kwarg(self, tmp_path):
+        path = str(tmp_path / "fn.csv")
+        write_csv([{"a": "=BAD"}], path, sanitize_formulas=True)
+        assert open(path, encoding="utf-8").read() == "a\n'=BAD\n"
+
+    def test_polars_sanitized(self, tmp_path):
+        path = str(tmp_path / "pl.csv")
+        df = pl.DataFrame({"a": ["=1+2", "ok"]})
+        FastExcel(path, sanitize_formulas=True).sheet("S", df).save()
+        content = open(path, encoding="utf-8").read()
+        assert content == "a\n'=1+2\nok\n"
+
+    def test_sanitized_header(self, tmp_path):
+        path = str(tmp_path / "hdr.csv")
+        FastExcel(path, sanitize_formulas=True).sheet("S", [{"=col": 1}]).save()
+        content = open(path, encoding="utf-8").read()
+        assert content == "'=col\n1\n"

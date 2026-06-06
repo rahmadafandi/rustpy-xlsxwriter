@@ -5,7 +5,7 @@ use arrow_schema::{DataType, TimeUnit};
 use pyo3::prelude::*;
 use rust_xlsxwriter::{ExcelDateTime, Format, Worksheet};
 
-use crate::helpers::write_csv_escaped;
+use crate::helpers::{write_csv_escaped_guarded, write_num};
 use crate::worksheet::xlsx_err;
 
 /// Column type classification done once (outside the row loop) to avoid
@@ -57,25 +57,6 @@ fn classify(dt: &DataType) -> ColKind {
     }
 }
 
-fn write_float(
-    worksheet: &mut Worksheet,
-    row: u32,
-    col: u16,
-    val: f64,
-    float_fmt: Option<&Format>,
-) -> PyResult<()> {
-    if val.is_nan() || val.is_infinite() {
-        worksheet.write_string(row, col, "").map_err(xlsx_err)?;
-    } else if let Some(fmt) = float_fmt {
-        worksheet
-            .write_number_with_format(row, col, val, fmt)
-            .map_err(xlsx_err)?;
-    } else {
-        worksheet.write_number(row, col, val).map_err(xlsx_err)?;
-    }
-    Ok(())
-}
-
 /// Write an Arrow `RecordBatch` starting at `start_row`.
 /// Column types are classified once; each cell dispatches on the cached kind.
 ///
@@ -103,8 +84,7 @@ pub fn write_arrow_batch(
             let column = &columns[col_idx];
 
             // Per-column format override: wins over float_fmt for numeric cols.
-            let col_override: Option<&Format> =
-                col_formats.get(col_idx).and_then(|o| o.as_ref()).map(|f| &f.inner);
+            let col_override = crate::format::col_override(col_formats, col_idx);
 
             if column.is_null(row) {
                 worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
@@ -141,11 +121,11 @@ pub fn write_arrow_batch(
                 }
                 ColKind::Float32 => {
                     let val = column.as_primitive::<Float32Type>().value(row) as f64;
-                    write_float(worksheet, row_u32, col_u16, val, col_override.or(float_fmt))?;
+                    write_num(worksheet, row_u32, col_u16, val, col_override.or(float_fmt))?;
                 }
                 ColKind::Float64 => {
                     let val = column.as_primitive::<Float64Type>().value(row);
-                    write_float(worksheet, row_u32, col_u16, val, col_override.or(float_fmt))?;
+                    write_num(worksheet, row_u32, col_u16, val, col_override.or(float_fmt))?;
                 }
                 ColKind::Bool => {
                     let arr = column
@@ -243,6 +223,7 @@ pub fn write_arrow_batch_csv(
     output: &mut Vec<u8>,
     batch: &RecordBatch,
     delim: u8,
+    sanitize: bool,
 ) -> PyResult<()> {
     let num_cols = batch.num_columns();
     let num_rows = batch.num_rows();
@@ -259,14 +240,20 @@ pub fn write_arrow_batch_csv(
             if column.is_null(row) {
                 continue;
             }
-            emit_arrow_cell_csv(output, column, kinds[col_idx], row);
+            emit_arrow_cell_csv(output, column, kinds[col_idx], row, sanitize);
         }
         output.push(b'\n');
     }
     Ok(())
 }
 
-fn emit_arrow_cell_csv(output: &mut Vec<u8>, column: &ArrayRef, kind: ColKind, row: usize) {
+fn emit_arrow_cell_csv(
+    output: &mut Vec<u8>,
+    column: &ArrayRef,
+    kind: ColKind,
+    row: usize,
+    sanitize: bool,
+) {
     use std::io::Write;
 
     macro_rules! emit_int {
@@ -309,9 +296,15 @@ fn emit_arrow_cell_csv(output: &mut Vec<u8>, column: &ArrayRef, kind: ColKind, r
                 .expect("Boolean dtype guarantees downcast");
             output.extend_from_slice(if arr.value(row) { b"true" } else { b"false" });
         }
-        ColKind::Utf8 => write_csv_escaped(output, column.as_string::<i32>().value(row)),
-        ColKind::LargeUtf8 => write_csv_escaped(output, column.as_string::<i64>().value(row)),
-        ColKind::Utf8View => write_csv_escaped(output, column.as_string_view().value(row)),
+        ColKind::Utf8 => {
+            write_csv_escaped_guarded(output, column.as_string::<i32>().value(row), sanitize)
+        }
+        ColKind::LargeUtf8 => {
+            write_csv_escaped_guarded(output, column.as_string::<i64>().value(row), sanitize)
+        }
+        ColKind::Utf8View => {
+            write_csv_escaped_guarded(output, column.as_string_view().value(row), sanitize)
+        }
         ColKind::Date32 => {
             let days = column.as_primitive::<Date32Type>().value(row);
             if let Some((y, m, d)) = chrono_from_days(days as i64) {

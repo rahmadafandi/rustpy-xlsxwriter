@@ -188,314 +188,132 @@ pub struct Format {
     pub inner: XlsxFormat,
 }
 
-#[pymethods]
-impl Format {
-    #[new]
-    fn new() -> Self {
-        Format {
-            inner: XlsxFormat::new(),
+/// Generate the chainable `#[pymethods]` for [`Format`]. Every setter has one
+/// of four identical shapes, so they are produced from compact lists instead of
+/// ~40 hand-written near-duplicate methods. (The whole `#[pymethods] impl` is
+/// emitted by this macro because the pyo3 attribute macro must see literal
+/// method items — it cannot see through an inner declarative macro.)
+///
+/// - `flags`: no-arg toggles → `self.inner.set_x()`
+/// - `values`: one primitive arg passed straight through
+/// - `strs`: one `&str` arg passed straight through
+/// - `parsed`: one `&str` arg validated through a `parse_*` fn first
+macro_rules! format_methods {
+    (
+        flags: [$($flag:ident),* $(,)?],
+        values: [$(($vname:ident, $vty:ty)),* $(,)?],
+        strs: [$($sname:ident),* $(,)?],
+        parsed: [$(($pname:ident, $pparse:ident)),* $(,)?],
+    ) => {
+        #[pymethods]
+        impl Format {
+            #[new]
+            fn new() -> Self {
+                Format { inner: XlsxFormat::new() }
+            }
+
+            $(
+                fn $flag(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+                    slf.inner = std::mem::take(&mut slf.inner).$flag();
+                    slf
+                }
+            )*
+
+            $(
+                fn $vname(mut slf: PyRefMut<'_, Self>, value: $vty) -> PyRefMut<'_, Self> {
+                    slf.inner = std::mem::take(&mut slf.inner).$vname(value);
+                    slf
+                }
+            )*
+
+            $(
+                fn $sname<'p>(mut slf: PyRefMut<'p, Self>, value: &str) -> PyRefMut<'p, Self> {
+                    slf.inner = std::mem::take(&mut slf.inner).$sname(value);
+                    slf
+                }
+            )*
+
+            $(
+                fn $pname<'p>(
+                    mut slf: PyRefMut<'p, Self>,
+                    value: &str,
+                ) -> PyResult<PyRefMut<'p, Self>> {
+                    let parsed = $pparse(value)?;
+                    slf.inner = std::mem::take(&mut slf.inner).$pname(parsed);
+                    Ok(slf)
+                }
+            )*
+
+            // Only setter with a defaulted argument, kept explicit.
+            #[pyo3(signature = (style = "single"))]
+            fn set_underline<'p>(
+                mut slf: PyRefMut<'p, Self>,
+                style: &str,
+            ) -> PyResult<PyRefMut<'p, Self>> {
+                let u = parse_underline(style)?;
+                slf.inner = std::mem::take(&mut slf.inner).set_underline(u);
+                Ok(slf)
+            }
         }
-    }
+    };
+}
 
-    fn set_bold(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_bold();
-        slf
-    }
+format_methods! {
+    flags: [
+        set_bold,
+        set_italic,
+        set_text_wrap,
+        set_shrink,
+        set_font_strikethrough,
+        set_locked,
+        set_unlocked,
+        set_hidden,
+        set_quote_prefix,
+        set_checkbox,
+        set_hyperlink,
+    ],
+    values: [
+        (set_font_size, f64),
+        (set_font_family, u8),
+        (set_font_charset, u8),
+        (set_rotation, i16),
+        (set_indent, u8),
+        (set_reading_direction, u8),
+        (set_num_format_index, u8),
+    ],
+    strs: [
+        set_num_format,
+        set_font_name,
+    ],
+    parsed: [
+        (set_font_color, parse_color),
+        (set_background_color, parse_color),
+        (set_foreground_color, parse_color),
+        (set_border_color, parse_color),
+        (set_border_top_color, parse_color),
+        (set_border_bottom_color, parse_color),
+        (set_border_left_color, parse_color),
+        (set_border_right_color, parse_color),
+        (set_border_diagonal_color, parse_color),
+        (set_align, parse_align),
+        (set_border, parse_border),
+        (set_border_top, parse_border),
+        (set_border_bottom, parse_border),
+        (set_border_left, parse_border),
+        (set_border_right, parse_border),
+        (set_border_diagonal, parse_border),
+        (set_pattern, parse_pattern),
+        (set_font_scheme, parse_font_scheme),
+        (set_font_script, parse_script),
+        (set_border_diagonal_type, parse_diagonal_type),
+    ],
+}
 
-    fn set_italic(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_italic();
-        slf
-    }
-
-    fn set_font_color<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        color: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let c = parse_color(color)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_font_color(c);
-        Ok(slf)
-    }
-
-    fn set_background_color<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        color: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let c = parse_color(color)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_background_color(c);
-        Ok(slf)
-    }
-
-    fn set_num_format<'p>(mut slf: PyRefMut<'p, Self>, format: &str) -> PyRefMut<'p, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_num_format(format);
-        slf
-    }
-
-    fn set_align<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        align: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let a = parse_align(align)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_align(a);
-        Ok(slf)
-    }
-
-    fn set_border<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        style: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let b = parse_border(style)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border(b);
-        Ok(slf)
-    }
-
-    // ── No-arg bool (infallible) ──────────────────────────────────────────────
-
-    fn set_text_wrap(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_text_wrap();
-        slf
-    }
-
-    fn set_shrink(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_shrink();
-        slf
-    }
-
-    fn set_font_strikethrough(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_font_strikethrough();
-        slf
-    }
-
-    fn set_locked(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_locked();
-        slf
-    }
-
-    fn set_unlocked(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_unlocked();
-        slf
-    }
-
-    fn set_hidden(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_hidden();
-        slf
-    }
-
-    fn set_quote_prefix(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_quote_prefix();
-        slf
-    }
-
-    fn set_checkbox(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_checkbox();
-        slf
-    }
-
-    fn set_hyperlink(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_hyperlink();
-        slf
-    }
-
-    // ── Numeric arg (infallible) ──────────────────────────────────────────────
-
-    fn set_font_size(mut slf: PyRefMut<'_, Self>, size: f64) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_font_size(size);
-        slf
-    }
-
-    fn set_font_family(mut slf: PyRefMut<'_, Self>, n: u8) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_font_family(n);
-        slf
-    }
-
-    fn set_font_charset(mut slf: PyRefMut<'_, Self>, n: u8) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_font_charset(n);
-        slf
-    }
-
-    fn set_rotation(mut slf: PyRefMut<'_, Self>, degrees: i16) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_rotation(degrees);
-        slf
-    }
-
-    fn set_indent(mut slf: PyRefMut<'_, Self>, n: u8) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_indent(n);
-        slf
-    }
-
-    fn set_reading_direction(mut slf: PyRefMut<'_, Self>, n: u8) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_reading_direction(n);
-        slf
-    }
-
-    fn set_num_format_index(mut slf: PyRefMut<'_, Self>, i: u8) -> PyRefMut<'_, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_num_format_index(i);
-        slf
-    }
-
-    // ── String passthrough (infallible) ──────────────────────────────────────
-
-    fn set_font_name<'p>(mut slf: PyRefMut<'p, Self>, name: &str) -> PyRefMut<'p, Self> {
-        slf.inner = std::mem::take(&mut slf.inner).set_font_name(name);
-        slf
-    }
-
-    fn set_font_scheme<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        scheme: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let s = parse_font_scheme(scheme)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_font_scheme(s);
-        Ok(slf)
-    }
-
-    // ── Color arg (fallible) ──────────────────────────────────────────────────
-
-    fn set_foreground_color<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        color: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let c = parse_color(color)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_foreground_color(c);
-        Ok(slf)
-    }
-
-    fn set_border_color<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        color: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let c = parse_color(color)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_color(c);
-        Ok(slf)
-    }
-
-    fn set_border_top_color<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        color: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let c = parse_color(color)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_top_color(c);
-        Ok(slf)
-    }
-
-    fn set_border_bottom_color<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        color: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let c = parse_color(color)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_bottom_color(c);
-        Ok(slf)
-    }
-
-    fn set_border_left_color<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        color: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let c = parse_color(color)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_left_color(c);
-        Ok(slf)
-    }
-
-    fn set_border_right_color<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        color: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let c = parse_color(color)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_right_color(c);
-        Ok(slf)
-    }
-
-    fn set_border_diagonal_color<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        color: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let c = parse_color(color)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_diagonal_color(c);
-        Ok(slf)
-    }
-
-    // ── Enum arg (fallible) ───────────────────────────────────────────────────
-
-    #[pyo3(signature = (style = "single"))]
-    fn set_underline<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        style: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let u = parse_underline(style)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_underline(u);
-        Ok(slf)
-    }
-
-    fn set_font_script<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        script: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let s = parse_script(script)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_font_script(s);
-        Ok(slf)
-    }
-
-    fn set_pattern<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        pattern: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let p = parse_pattern(pattern)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_pattern(p);
-        Ok(slf)
-    }
-
-    fn set_border_top<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        style: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let b = parse_border(style)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_top(b);
-        Ok(slf)
-    }
-
-    fn set_border_bottom<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        style: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let b = parse_border(style)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_bottom(b);
-        Ok(slf)
-    }
-
-    fn set_border_left<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        style: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let b = parse_border(style)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_left(b);
-        Ok(slf)
-    }
-
-    fn set_border_right<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        style: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let b = parse_border(style)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_right(b);
-        Ok(slf)
-    }
-
-    fn set_border_diagonal<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        style: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let b = parse_border(style)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_diagonal(b);
-        Ok(slf)
-    }
-
-    fn set_border_diagonal_type<'p>(
-        mut slf: PyRefMut<'p, Self>,
-        dtype: &str,
-    ) -> PyResult<PyRefMut<'p, Self>> {
-        let d = parse_diagonal_type(dtype)?;
-        slf.inner = std::mem::take(&mut slf.inner).set_border_diagonal_type(d);
-        Ok(slf)
-    }
+/// Borrow the inner `rust_xlsxwriter::Format` for column `idx`, if one was
+/// resolved. Used per-cell to let an explicit column format win over the
+/// sheet-wide float/datetime format.
+pub fn col_override(col_formats: &[Option<Format>], idx: usize) -> Option<&XlsxFormat> {
+    col_formats.get(idx).and_then(|o| o.as_ref()).map(|f| &f.inner)
 }
 
 /// Apply resolved per-column formats to the worksheet via `set_column_format`.
