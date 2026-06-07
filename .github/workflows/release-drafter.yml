@@ -1,10 +1,11 @@
 name: Release Drafter
 
+# Runs only on master: release-drafter reads its config from the default
+# branch, so a PR-triggered run (before the config is merged) always fails.
 on:
   push:
     branches: [master]
-  pull_request:
-    types: [opened, reopened, synchronize]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,7 +14,6 @@ jobs:
   update_release_draft:
     permissions:
       contents: write # create/update the draft release
-      pull-requests: write # label autolabeler (categories)
     runs-on: ubuntu-latest
     steps:
       - uses: release-drafter/release-drafter@v6
