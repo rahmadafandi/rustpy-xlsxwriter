@@ -1,0 +1,3 @@
+# Shows a "Sponsor" button on the repo linking to the URLs below.
+# Saweria isn't a built-in platform key, so it goes under `custom`.
+custom: ["https://saweria.co/rahmadafandi"]
