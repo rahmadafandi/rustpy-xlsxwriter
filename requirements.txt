@@ -25,7 +25,7 @@ pycparser==3.0
 pyflakes==3.4.0
 Pygments==2.20.0
 pytest==9.0.2
-pytest-codspeed==4.2.0
+pytest-codspeed==5.0.3
 python-dateutil==2.9.0.post0
 pytokens==0.4.1
 rich==14.3.2
