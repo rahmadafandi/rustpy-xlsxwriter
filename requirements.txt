@@ -20,7 +20,7 @@ pluggy==1.6.0
 polars==1.39.0
 polars-runtime-32==1.39.0
 pyarrow==23.0.1
-pyclean==3.5.0
+pyclean==3.7.0
 pycparser==3.0
 pyflakes==3.4.0
 Pygments==2.19.2
