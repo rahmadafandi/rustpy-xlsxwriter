@@ -1,0 +1,34 @@
+name-template: "$RESOLVED_VERSION"
+tag-template: "$RESOLVED_VERSION"
+
+categories:
+  - title: "🚀 Features"
+    labels: [feature, enhancement]
+  - title: "🐛 Fixes"
+    labels: [fix, bug]
+  - title: "⚡ Performance"
+    labels: [performance, perf]
+  - title: "🧹 Refactor & Maintenance"
+    labels: [refactor, chore, dependencies]
+  - title: "📝 Docs"
+    labels: [docs, documentation]
+
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+change-title-escapes: '\<*_&'
+
+# Bare version scheme (no leading 'v'), matching existing tags (0.5.2, ...).
+version-resolver:
+  major:
+    labels: [major, breaking]
+  minor:
+    labels: [minor, feature, enhancement]
+  patch:
+    labels: [patch, fix, bug, perf, performance, refactor, chore, docs, dependencies]
+  default: patch
+
+template: |
+  ## Changes
+
+  $CHANGES
+
+  **Full changelog:** $PREVIOUS_TAG...$RESOLVED_VERSION
