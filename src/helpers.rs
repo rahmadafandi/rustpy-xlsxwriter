@@ -141,6 +141,44 @@ pub fn write_num(
     Ok(())
 }
 
+/// Write a numeric cell, with an optional explicit format. Unlike [`write_num`]
+/// this does NOT guard NaN/Inf — callers use it for integer values (and Arrow
+/// integral/float16 columns) that can never be NaN/Inf.
+pub fn write_number_opt(
+    worksheet: &mut Worksheet,
+    row: u32,
+    col: u16,
+    val: f64,
+    fmt: Option<&Format>,
+) -> PyResult<()> {
+    if let Some(fmt) = fmt {
+        worksheet
+            .write_number_with_format(row, col, val, fmt)
+            .map_err(xlsx_err)?;
+    } else {
+        worksheet.write_number(row, col, val).map_err(xlsx_err)?;
+    }
+    Ok(())
+}
+
+/// Write a string cell, with an optional explicit format.
+pub fn write_string_opt(
+    worksheet: &mut Worksheet,
+    row: u32,
+    col: u16,
+    val: &str,
+    fmt: Option<&Format>,
+) -> PyResult<()> {
+    if let Some(fmt) = fmt {
+        worksheet
+            .write_string_with_format(row, col, val, fmt)
+            .map_err(xlsx_err)?;
+    } else {
+        worksheet.write_string(row, col, val).map_err(xlsx_err)?;
+    }
+    Ok(())
+}
+
 /// `true` if `val` begins with a character a spreadsheet may interpret as a
 /// formula (`=`, `+`, `-`, `@`) — the classic CSV-injection vector.
 fn needs_formula_guard(val: &str) -> bool {
@@ -190,7 +228,9 @@ pub fn save_workbook(
     }
 
     let buffer = workbook.save_to_buffer().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+        // Match the file-save path (PyIOError) so a save failure surfaces as
+        // OSError regardless of whether the target is a path or a buffer.
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
             "Failed to save workbook to buffer: {}",
             e
         ))

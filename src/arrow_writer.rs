@@ -5,7 +5,7 @@ use arrow_schema::{DataType, TimeUnit};
 use pyo3::prelude::*;
 use rust_xlsxwriter::{ExcelDateTime, Format, Worksheet};
 
-use crate::helpers::{write_csv_escaped_guarded, write_num};
+use crate::helpers::{write_csv_escaped_guarded, write_num, write_number_opt, write_string_opt};
 use crate::worksheet::xlsx_err;
 
 /// Column type classification done once (outside the row loop) to avoid
@@ -76,15 +76,17 @@ pub fn write_arrow_batch(
 
     let columns: Vec<ArrayRef> = (0..num_cols).map(|c| batch.column(c).clone()).collect();
     let kinds: Vec<ColKind> = columns.iter().map(|c| classify(c.data_type())).collect();
+    // Per-column format override is fixed for the whole column — resolve once
+    // instead of once per cell in the row×col loop below.
+    let col_overrides: Vec<Option<&Format>> =
+        (0..num_cols).map(|c| crate::format::col_override(col_formats, c)).collect();
 
     for row in 0..num_rows {
         let row_u32 = start_row + row as u32;
         for col_idx in 0..num_cols {
             let col_u16 = col_idx as u16;
             let column = &columns[col_idx];
-
-            // Per-column format override: wins over float_fmt for numeric cols.
-            let col_override = crate::format::col_override(col_formats, col_idx);
+            let col_override = col_overrides[col_idx];
 
             if column.is_null(row) {
                 worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
@@ -94,12 +96,13 @@ pub fn write_arrow_batch(
             macro_rules! write_int {
                 ($ty:ty) => {{
                     let val = column.as_primitive::<$ty>().value(row) as f64;
-                    if let Some(fmt) = col_override {
-                        worksheet.write_number_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
-                    } else {
-                        worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
-                    }
+                    write_number_opt(worksheet, row_u32, col_u16, val, col_override)?;
                 }};
+            }
+            macro_rules! write_str {
+                ($val:expr) => {
+                    write_string_opt(worksheet, row_u32, col_u16, $val, col_override)?
+                };
             }
 
             match kinds[col_idx] {
@@ -113,11 +116,7 @@ pub fn write_arrow_batch(
                 ColKind::UInt64 => write_int!(UInt64Type),
                 ColKind::Float16 => {
                     let val = column.as_primitive::<Float16Type>().value(row).to_f64();
-                    if let Some(fmt) = col_override {
-                        worksheet.write_number_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
-                    } else {
-                        worksheet.write_number(row_u32, col_u16, val).map_err(xlsx_err)?;
-                    }
+                    write_number_opt(worksheet, row_u32, col_u16, val, col_override)?;
                 }
                 ColKind::Float32 => {
                     let val = column.as_primitive::<Float32Type>().value(row) as f64;
@@ -136,30 +135,9 @@ pub fn write_arrow_batch(
                         .write_boolean(row_u32, col_u16, arr.value(row))
                         .map_err(xlsx_err)?;
                 }
-                ColKind::Utf8 => {
-                    let val = column.as_string::<i32>().value(row);
-                    if let Some(fmt) = col_override {
-                        worksheet.write_string_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
-                    } else {
-                        worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
-                    }
-                }
-                ColKind::LargeUtf8 => {
-                    let val = column.as_string::<i64>().value(row);
-                    if let Some(fmt) = col_override {
-                        worksheet.write_string_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
-                    } else {
-                        worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
-                    }
-                }
-                ColKind::Utf8View => {
-                    let val = column.as_string_view().value(row);
-                    if let Some(fmt) = col_override {
-                        worksheet.write_string_with_format(row_u32, col_u16, val, fmt).map_err(xlsx_err)?;
-                    } else {
-                        worksheet.write_string(row_u32, col_u16, val).map_err(xlsx_err)?;
-                    }
-                }
+                ColKind::Utf8 => write_str!(column.as_string::<i32>().value(row)),
+                ColKind::LargeUtf8 => write_str!(column.as_string::<i64>().value(row)),
+                ColKind::Utf8View => write_str!(column.as_string_view().value(row)),
                 ColKind::Date32 => {
                     let days = column.as_primitive::<Date32Type>().value(row);
                     match days_to_excel_date(days as i64) {
@@ -183,20 +161,7 @@ pub fn write_arrow_batch(
                     };
                 }
                 ColKind::Timestamp(unit) => {
-                    let micros = match unit {
-                        TimeUnit::Second => {
-                            column.as_primitive::<TimestampSecondType>().value(row) * 1_000_000
-                        }
-                        TimeUnit::Millisecond => {
-                            column.as_primitive::<TimestampMillisecondType>().value(row) * 1_000
-                        }
-                        TimeUnit::Microsecond => {
-                            column.as_primitive::<TimestampMicrosecondType>().value(row)
-                        }
-                        TimeUnit::Nanosecond => {
-                            column.as_primitive::<TimestampNanosecondType>().value(row) / 1_000
-                        }
-                    };
+                    let micros = timestamp_to_micros(column, unit, row);
                     match micros_to_excel_datetime(micros) {
                         Some(dt) => worksheet
                             .write_datetime(row_u32, col_u16, &dt)
@@ -316,37 +281,41 @@ fn emit_arrow_cell_csv(
             emit_timestamp_csv(output, ms * 1000);
         }
         ColKind::Timestamp(unit) => {
-            let micros = match unit {
-                TimeUnit::Second => {
-                    column.as_primitive::<TimestampSecondType>().value(row) * 1_000_000
-                }
-                TimeUnit::Millisecond => {
-                    column.as_primitive::<TimestampMillisecondType>().value(row) * 1_000
-                }
-                TimeUnit::Microsecond => {
-                    column.as_primitive::<TimestampMicrosecondType>().value(row)
-                }
-                TimeUnit::Nanosecond => {
-                    column.as_primitive::<TimestampNanosecondType>().value(row) / 1_000
-                }
-            };
-            emit_timestamp_csv(output, micros);
+            emit_timestamp_csv(output, timestamp_to_micros(column, unit, row));
         }
         ColKind::Unsupported => {}
     }
 }
 
-fn emit_timestamp_csv(output: &mut Vec<u8>, micros: i64) {
-    use std::io::Write;
+/// Scale an Arrow timestamp column value at `row` to microseconds since epoch,
+/// regardless of its stored `TimeUnit`.
+fn timestamp_to_micros(column: &ArrayRef, unit: TimeUnit, row: usize) -> i64 {
+    match unit {
+        TimeUnit::Second => column.as_primitive::<TimestampSecondType>().value(row) * 1_000_000,
+        TimeUnit::Millisecond => column.as_primitive::<TimestampMillisecondType>().value(row) * 1_000,
+        TimeUnit::Microsecond => column.as_primitive::<TimestampMicrosecondType>().value(row),
+        TimeUnit::Nanosecond => column.as_primitive::<TimestampNanosecondType>().value(row) / 1_000,
+    }
+}
+
+/// Decompose micros-since-epoch into civil `(year, month, day, hour, minute,
+/// second)`. Returns `None` if the date is out of Excel's 0..=9999 range.
+fn micros_to_ymdhms(micros: i64) -> Option<(u16, u8, u8, u16, u8, u8)> {
     let total_secs = micros / 1_000_000;
     let days = total_secs / 86400;
     let day_secs = (total_secs % 86400).unsigned_abs();
-    let Some((y, m, d)) = chrono_from_days(days) else {
+    let (year, month, day) = chrono_from_days(days)?;
+    let hour = (day_secs / 3600) as u16;
+    let minute = ((day_secs % 3600) / 60) as u8;
+    let second = (day_secs % 60) as u8;
+    Some((year, month, day, hour, minute, second))
+}
+
+fn emit_timestamp_csv(output: &mut Vec<u8>, micros: i64) {
+    use std::io::Write;
+    let Some((y, m, d, hour, minute, second)) = micros_to_ymdhms(micros) else {
         return;
     };
-    let hour = day_secs / 3600;
-    let minute = (day_secs % 3600) / 60;
-    let second = day_secs % 60;
     let _ = write!(
         output,
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
@@ -382,15 +351,7 @@ fn millis_to_excel_datetime(ms: i64) -> Option<ExcelDateTime> {
 }
 
 fn micros_to_excel_datetime(micros: i64) -> Option<ExcelDateTime> {
-    let total_secs = micros / 1_000_000;
-    let days = total_secs / 86400;
-    let day_secs = (total_secs % 86400).unsigned_abs();
-
-    let (year, month, day) = chrono_from_days(days)?;
-    let hour = (day_secs / 3600) as u16;
-    let minute = ((day_secs % 3600) / 60) as u8;
-    let second = (day_secs % 60) as u8;
-
+    let (year, month, day, hour, minute, second) = micros_to_ymdhms(micros)?;
     ExcelDateTime::from_ymd(year, month, day)
         .ok()?
         .and_hms(hour, minute, second)

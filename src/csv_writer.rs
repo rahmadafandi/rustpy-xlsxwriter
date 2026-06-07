@@ -123,7 +123,9 @@ pub fn write_csv(
                     headers_written = true;
                 }
 
-                for (col, value) in row_dict.values().iter().enumerate() {
+                // Iterate the dict directly (insertion order == header order)
+                // to avoid allocating a fresh `values()` list per row.
+                for (col, (_key, value)) in row_dict.iter().enumerate() {
                     if col > 0 {
                         output.push(delim_byte);
                     }
