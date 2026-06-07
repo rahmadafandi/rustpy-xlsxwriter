@@ -31,7 +31,7 @@ pytokens==0.4.1
 rich==14.3.2
 -e git+ssh://git@github.com/rahmadafandi/rustpy-xlsxwriter.git@c42b28d5ad71d34ca02485693e1613dc48494f60#egg=rustpy_xlsxwriter
 semantic-version==2.10.0
-setuptools==81.0.0
+setuptools==82.0.1
 setuptools-rust==1.12.0
 six==1.17.0
 tzdata==2025.3
