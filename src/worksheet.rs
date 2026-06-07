@@ -7,7 +7,8 @@ use std::collections::HashSet;
 use crate::cell::{classify_and_write, try_cached, CellWriter};
 use crate::data_types::{FreezePanesConfig, WorksheetData};
 use crate::helpers::{
-    py_date_to_excel, py_datetime_to_excel, save_workbook, write_all_headers, write_num, ColType,
+    py_date_to_excel, py_datetime_to_excel, save_workbook, write_all_headers, write_num,
+    write_number_opt, ColType,
 };
 use crate::utils::ensure_valid_sheet_name;
 
@@ -78,16 +79,7 @@ impl CellWriter for ExcelCell<'_> {
 
     fn write_int(&mut self, i: &Bound<'_, PyInt>) -> PyResult<()> {
         let val: f64 = i.extract()?;
-        if let Some(fmt) = self.col_override {
-            self.worksheet
-                .write_number_with_format(self.row, self.col, val, fmt)
-                .map_err(xlsx_err)?;
-        } else {
-            self.worksheet
-                .write_number(self.row, self.col, val)
-                .map_err(xlsx_err)?;
-        }
-        Ok(())
+        write_number_opt(self.worksheet, self.row, self.col, val, self.col_override)
     }
 
     fn write_datetime(&mut self, dt: &Bound<'_, PyDateTime>) -> PyResult<()> {
@@ -282,7 +274,9 @@ fn write_worksheet_content(
                     }
 
                     let row_u32 = (row_idx + 1) as u32;
-                    for (col, value) in row_dict.values().iter().enumerate() {
+                    // Iterate the dict directly (insertion order == header order)
+                    // to avoid allocating a fresh `values()` list per row.
+                    for (col, (_key, value)) in row_dict.iter().enumerate() {
                         let col_u16 = col as u16;
                         let cached = col_types
                             .get(col)
@@ -442,14 +436,18 @@ where
         })
         .collect();
 
+    // Per-column format override is fixed for the whole column — resolve once
+    // instead of per cell.
+    let col_overrides: Vec<Option<&Format>> = (0..bound_cols.len())
+        .map(|c| crate::format::col_override(col_formats, c))
+        .collect();
+
     for row in 0..nrows {
         let row_u32 = (row + 1) as u32;
         for (col_idx, col_list) in bound_cols.iter().enumerate() {
             let col_u16 = col_idx as u16;
             let item = col_list.get(row)?;
-
-            // Per-column format override: wins over float_fmt for numeric cols.
-            let col_override = crate::format::col_override(col_formats, col_idx);
+            let col_override = col_overrides[col_idx];
 
             if item.is_none() {
                 worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
@@ -459,15 +457,7 @@ where
             match kind_at(col_idx) {
                 ScalarKind::Int => {
                     let val: f64 = item.extract()?;
-                    if let Some(fmt) = col_override {
-                        worksheet
-                            .write_number_with_format(row_u32, col_u16, val, fmt)
-                            .map_err(xlsx_err)?;
-                    } else {
-                        worksheet
-                            .write_number(row_u32, col_u16, val)
-                            .map_err(xlsx_err)?;
-                    }
+                    write_number_opt(worksheet, row_u32, col_u16, val, col_override)?;
                 }
                 ScalarKind::Float => {
                     let val: f64 = item.extract()?;
@@ -644,11 +634,9 @@ pub fn write_worksheets(
             .map(|c| c.resolve(&sheet_name))
             .unwrap_or_default();
 
-        let sheet_uniform: Option<f64> =
-            match keyed_get(column_width.as_ref(), &sheet_name)? {
-                Some(v) => Some(v.extract()?),
-                None => None,
-            };
+        let sheet_uniform: Option<f64> = keyed_get(column_width.as_ref(), &sheet_name)?
+            .map(|v| v.extract())
+            .transpose()?;
         let sheet_spec: Option<Bound<'_, PyAny>> =
             keyed_get(column_widths.as_ref(), &sheet_name)?;
 
