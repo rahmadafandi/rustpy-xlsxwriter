@@ -12,18 +12,25 @@ updates:
       cargo-minor-patch:
         update-types: ["minor", "patch"]
 
-  # GitHub Actions used in workflows
+  # GitHub Actions used in workflows — batch all updates into one PR/week.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
     commit-message:
       prefix: "chore(ci)"
+    groups:
+      github-actions:
+        patterns: ["*"]
 
-  # Python deps declared in pyproject.toml (test extras)
+  # Python deps (requirements.txt + pyproject test extras) — batch minor+patch.
   - package-ecosystem: pip
     directory: "/"
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]

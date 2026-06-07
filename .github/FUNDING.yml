@@ -1,0 +1,3 @@
+# Shows a "Sponsor" button on the repo if GitHub Sponsors is enabled for the
+# account. Add other platforms (ko_fi, buy_me_a_coffee, custom) as needed.
+github: [rahmadafandi]
