@@ -6,6 +6,7 @@
 [![Downloads](https://pepy.tech/badge/rustpy-xlsxwriter)](https://pepy.tech/project/rustpy-xlsxwriter)
 [![CI](https://github.com/rahmadafandi/rustpy-xlsxwriter/actions/workflows/CI.yml/badge.svg)](https://github.com/rahmadafandi/rustpy-xlsxwriter/actions/workflows/CI.yml)
 [![Docs](https://img.shields.io/badge/docs-API%20reference-blue)](https://rahmadafandi.github.io/rustpy-xlsxwriter/)
+[![Donate](https://img.shields.io/badge/donate-Saweria-orange)](https://saweria.co/rahmadafandi)
 
 High-performance Excel and CSV file generation for Python, powered by Rust. **~7x-9x faster** than [XlsxWriter](https://github.com/jmcnamara/XlsxWriter), **~5x faster** CSV (records) than Python's `csv` module, and **~12x faster** Pandas DataFrame → CSV than `pandas.to_csv` via zero-copy Arrow.
 
@@ -335,6 +336,10 @@ python benchmark.py
 ## Contributing
 
 Contributions are welcome! Please submit issues or pull requests on the [GitHub repository](https://github.com/rahmadafandi/rustpy-xlsxwriter).
+
+## Support
+
+If this project saves you time, consider supporting its development via [Saweria](https://saweria.co/rahmadafandi) ☕ — or use the **Sponsor** button at the top of the repository.
 
 ## License
 
