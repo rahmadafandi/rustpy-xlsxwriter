@@ -19,7 +19,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 arrow-array = { version = "58.3.0", features = ["ffi"] }
-arrow-schema = { version = "58.3.0", features = ["ffi"] }
+arrow-schema = { version = "59.0.0", features = ["ffi"] }
 indexmap = "2.14.0"
 pyo3 = { version = "0.28.3", features = ["extension-module", "indexmap"] }
 rust_xlsxwriter = { version = "0.95.0", features = ["constant_memory", "zmij", "zlib"] }
