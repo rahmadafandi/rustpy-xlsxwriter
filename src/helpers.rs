@@ -63,11 +63,172 @@ pub fn py_date_to_excel(d: &Bound<PyDate>) -> PyResult<ExcelDateTime> {
     })
 }
 
-/// Write a header cell at row 0, optionally bold, and mark the column
+/// Row-level layout for one sheet, resolved from Python before any cell is
+/// written.
+///
+/// Constant-memory mode flushes each row as soon as the next one starts and
+/// cannot revisit it — a `merge_range` or `set_row_height` aimed at a row that
+/// has already gone out is *silently* dropped (`rust_xlsxwriter` prints to
+/// stderr and carries on). So every one of these is applied up front, in
+/// [`SheetLayout::apply`], before the first data cell.
+#[derive(Default)]
+pub struct SheetLayout {
+    /// Row index the header is written on. Data starts at `header_row + 1`.
+    pub header_row: u32,
+    /// `(first_row, first_col, last_row, last_col, value, format)`.
+    pub merges: Vec<(u32, u16, u32, u16, String, Option<Format>)>,
+    pub row_heights: Vec<(u32, f64)>,
+    pub row_formats: Vec<(u32, Format)>,
+    /// Background colour for alternating data rows, as given by the caller.
+    pub band_color: Option<String>,
+}
+
+impl SheetLayout {
+    /// First data row.
+    pub fn first_data_row(&self) -> u32 {
+        self.header_row + 1
+    }
+
+    /// True when `row` (an absolute sheet row) is a shaded band row. The first
+    /// data row is left unshaded so banding starts on the second one.
+    pub fn is_banded(&self, row: u32) -> bool {
+        self.band_color.is_some() && (row - self.first_data_row()) % 2 == 1
+    }
+
+    /// Emit merges, row heights and row formats. Must run before data rows.
+    pub fn apply(&self, worksheet: &mut Worksheet) -> PyResult<()> {
+        for (r1, c1, r2, c2, value, fmt) in &self.merges {
+            let blank = Format::new();
+            worksheet
+                .merge_range(*r1, *c1, *r2, *c2, value, fmt.as_ref().unwrap_or(&blank))
+                .map_err(xlsx_err)?;
+        }
+        // Height before format: `set_row_format` on a row with no stored
+        // options would otherwise reset the height back to the default.
+        for (row, height) in &self.row_heights {
+            worksheet.set_row_height(*row, *height).map_err(xlsx_err)?;
+        }
+        for (row, fmt) in &self.row_formats {
+            worksheet.set_row_format(*row, fmt).map_err(xlsx_err)?;
+        }
+        Ok(())
+    }
+}
+
+fn value_err(msg: String) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
+}
+
+/// Read a `{row_index: value}` mapping into a sorted `Vec<(u32, T)>`.
+fn row_keyed<T>(
+    spec: Option<&Bound<'_, PyAny>>,
+    what: &str,
+    mut convert: impl FnMut(&Bound<'_, PyAny>) -> PyResult<T>,
+) -> PyResult<Vec<(u32, T)>> {
+    let Some(spec) = spec else { return Ok(Vec::new()) };
+    let dict = spec.cast::<PyDict>().map_err(|_| {
+        value_err(format!("{what} must be a dict keyed by row index"))
+    })?;
+    let mut out = Vec::with_capacity(dict.len());
+    for (key, val) in dict.iter() {
+        let row: u32 = key.extract().map_err(|_| {
+            value_err(format!("{what}: row index must be a non-negative int"))
+        })?;
+        out.push((row, convert(&val)?));
+    }
+    out.sort_by_key(|(row, _)| *row);
+    Ok(out)
+}
+
+/// Build a [`SheetLayout`] from the Python-side arguments, rejecting anything
+/// constant-memory mode would otherwise drop without raising.
+pub fn resolve_layout(
+    header_row: u32,
+    merge_ranges: Option<&Bound<'_, PyAny>>,
+    row_heights: Option<&Bound<'_, PyAny>>,
+    row_formats: Option<&Bound<'_, PyAny>>,
+    banded_rows: Option<String>,
+) -> PyResult<SheetLayout> {
+    let mut merges = Vec::new();
+    if let Some(spec) = merge_ranges {
+        let list = spec.cast::<PyList>().map_err(|_| {
+            value_err("merge_ranges must be a list of (first_row, first_col, last_row, last_col, value[, format]) tuples".into())
+        })?;
+        for item in list.iter() {
+            let parts: Vec<Bound<'_, PyAny>> = item.extract().map_err(|_| {
+                value_err("each merge range must be a tuple/list of 5 or 6 items".into())
+            })?;
+            if parts.len() < 5 || parts.len() > 6 {
+                return Err(value_err(format!(
+                    "each merge range needs 5 or 6 items (first_row, first_col, last_row, last_col, value[, format]), got {}",
+                    parts.len()
+                )));
+            }
+            let r1: u32 = parts[0].extract()?;
+            let c1: u16 = parts[1].extract()?;
+            let r2: u32 = parts[2].extract()?;
+            let c2: u16 = parts[3].extract()?;
+            if r2 < r1 || c2 < c1 {
+                return Err(value_err(format!(
+                    "merge range ({r1}, {c1}, {r2}, {c2}) is inverted: last_row/last_col must not precede first_row/first_col"
+                )));
+            }
+            // A merge can only be written before the rows it covers are
+            // flushed, and headers/data start at `header_row`.
+            if r2 >= header_row {
+                return Err(value_err(format!(
+                    "merge range ({r1}, {c1}, {r2}, {c2}) reaches row {r2}, but the header row is {header_row} and data follows it. \
+Merged ranges must sit strictly above the header row — raise header_row to at least {} to make room.",
+                    r2 + 1
+                )));
+            }
+            let value = parts[4].str()?.to_string();
+            let fmt = match parts.get(5) {
+                Some(f) if !f.is_none() => Some(
+                    f.extract::<crate::format::Format>()
+                        .map_err(|_| {
+                            value_err("merge range format must be a Format object".into())
+                        })?
+                        .inner,
+                ),
+                _ => None,
+            };
+            merges.push((r1, c1, r2, c2, value, fmt));
+        }
+    }
+
+    let heights = row_keyed(row_heights, "row_heights", |v| {
+        let h: f64 = v.extract().map_err(|_| {
+            value_err("row_heights values must be numbers".into())
+        })?;
+        if h < 0.0 {
+            return Err(value_err("row_heights values must not be negative".into()));
+        }
+        Ok(h)
+    })?;
+
+    let formats = row_keyed(row_formats, "row_formats", |v| {
+        Ok(v.extract::<crate::format::Format>()
+            .map_err(|_| value_err("row_formats values must be Format objects".into()))?
+            .inner)
+    })?;
+
+    Ok(SheetLayout {
+        header_row,
+        merges,
+        row_heights: heights,
+        row_formats: formats,
+        band_color: banded_rows,
+    })
+}
+
+/// Write a header cell on `row`, optionally bold, and mark the column
 /// as an index (bold) column if listed in `index_columns`.
 /// When `header_fmt` is `Some`, it wins over `bold_headers` for the cell itself.
+#[allow(clippy::too_many_arguments)]
 pub fn write_header(
     worksheet: &mut Worksheet,
+    row: u32,
     col: u16,
     header: &str,
     bold_headers: bool,
@@ -77,17 +238,17 @@ pub fn write_header(
 ) -> PyResult<()> {
     if let Some(fmt) = header_fmt {
         worksheet
-            .write_string_with_format(0, col, header, fmt)
+            .write_string_with_format(row, col, header, fmt)
             .map_err(xlsx_err)?;
         return Ok(());
     }
     if bold_headers {
         worksheet
-            .write_string_with_format(0, col, header, bold_fmt)
+            .write_string_with_format(row, col, header, bold_fmt)
             .map_err(xlsx_err)?;
     } else {
         worksheet
-            .write_string(0, col, header)
+            .write_string(row, col, header)
             .map_err(xlsx_err)?;
     }
     if let Some(cols) = index_columns {
@@ -98,9 +259,11 @@ pub fn write_header(
     Ok(())
 }
 
-/// Write every header cell for a sheet (row 0) via [`write_header`].
+/// Write every header cell for a sheet on `row` via [`write_header`].
+#[allow(clippy::too_many_arguments)]
 pub fn write_all_headers(
     worksheet: &mut Worksheet,
+    row: u32,
     headers: &[String],
     bold_headers: bool,
     bold_fmt: &Format,
@@ -110,6 +273,7 @@ pub fn write_all_headers(
     for (col, header) in headers.iter().enumerate() {
         write_header(
             worksheet,
+            row,
             col as u16,
             header,
             bold_headers,
@@ -130,7 +294,8 @@ pub fn write_num(
     float_fmt: Option<&Format>,
 ) -> PyResult<()> {
     if val.is_nan() || val.is_infinite() {
-        worksheet.write_string(row, col, "").map_err(xlsx_err)?;
+        // Keep the format on the blank so a banded row has no unshaded hole.
+        write_string_opt(worksheet, row, col, "", float_fmt)?;
     } else if let Some(fmt) = float_fmt {
         worksheet
             .write_number_with_format(row, col, val, fmt)
@@ -175,6 +340,43 @@ pub fn write_string_opt(
             .map_err(xlsx_err)?;
     } else {
         worksheet.write_string(row, col, val).map_err(xlsx_err)?;
+    }
+    Ok(())
+}
+
+/// Write a boolean cell, with an optional explicit format.
+pub fn write_bool_opt(
+    worksheet: &mut Worksheet,
+    row: u32,
+    col: u16,
+    val: bool,
+    fmt: Option<&Format>,
+) -> PyResult<()> {
+    if let Some(fmt) = fmt {
+        worksheet
+            .write_boolean_with_format(row, col, val, fmt)
+            .map_err(xlsx_err)?;
+    } else {
+        worksheet.write_boolean(row, col, val).map_err(xlsx_err)?;
+    }
+    Ok(())
+}
+
+/// Write a datetime cell, with an optional explicit format. `None` relies on
+/// the column format having been set already.
+pub fn write_datetime_opt(
+    worksheet: &mut Worksheet,
+    row: u32,
+    col: u16,
+    val: &ExcelDateTime,
+    fmt: Option<&Format>,
+) -> PyResult<()> {
+    if let Some(fmt) = fmt {
+        worksheet
+            .write_datetime_with_format(row, col, val, fmt)
+            .map_err(xlsx_err)?;
+    } else {
+        worksheet.write_datetime(row, col, val).map_err(xlsx_err)?;
     }
     Ok(())
 }
