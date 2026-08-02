@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # Rust crates (Cargo.toml / Cargo.lock)
+  # Rust crates (Cargo.toml / Cargo.lock) — batch everything into one PR/week.
   - package-ecosystem: cargo
     directory: "/"
     schedule:
@@ -9,8 +9,8 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
-      cargo-minor-patch:
-        update-types: ["minor", "patch"]
+      cargo:
+        patterns: ["*"]
 
   # GitHub Actions used in workflows — batch all updates into one PR/week.
   - package-ecosystem: github-actions
@@ -23,7 +23,7 @@ updates:
       github-actions:
         patterns: ["*"]
 
-  # Python deps (requirements.txt + pyproject test extras) — batch minor+patch.
+  # Python deps (requirements.txt + pyproject test extras) — batch everything.
   - package-ecosystem: pip
     directory: "/"
     schedule:
@@ -32,5 +32,5 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
-      python-minor-patch:
-        update-types: ["minor", "patch"]
+      python:
+        patterns: ["*"]
