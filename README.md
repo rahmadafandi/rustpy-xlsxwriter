@@ -189,6 +189,56 @@ accept `"#RRGGBB"` or names (`"red"`); enum-valued setters take lowercase string
 > show the raw Excel serial number — chain `.set_num_format("yyyy-mm-dd")` (or
 > similar) to keep a date display.
 
+### Row Layout: Merged Headers, Borders, Banding
+
+Crosstab and summary reports need structure above and across the data rows.
+Everything here is declared up front, per sheet:
+
+```python
+from rustpy_xlsxwriter import FastExcel, Format
+
+banner = Format().set_bold().set_align("center").set_background_color("#1F4E78")
+under_header = Format().set_border_bottom("thin")
+
+(
+    FastExcel("crosstab.xlsx")
+    .sheet(
+        "Survey",
+        rows,
+        header_row=1,                                    # leave row 0 for banners
+        merge_ranges=[(0, 1, 0, 2, "Gender", banner)],   # "Gender" spans B:C
+        row_heights={0: 28, 1: 22},
+        row_formats={1: under_header},                   # rule under the header
+        banded_rows="#F2F2F2",                           # alternating fill
+    )
+    .save()
+)
+```
+
+| Option | Effect |
+|---|---|
+| `header_row` | 0-based row for headers; data starts on the next row |
+| `merge_ranges` | `(first_row, first_col, last_row, last_col, value[, format])` |
+| `row_heights` | `{row_index: height}` in points |
+| `row_formats` | `{row_index: Format}` — borders under headers, above totals |
+| `banded_rows` | Background colour for every other data row |
+
+**Ordering is enforced, not assumed.** Sheets are written row by row and a row
+that has been flushed cannot be revisited — `rust_xlsxwriter` would drop a late
+`merge_range` with only a message on stderr. So a merge range that reaches
+`header_row` or below raises `ValueError` telling you what to raise
+`header_row` to, rather than silently losing the banner.
+
+**Banding is applied per cell, not per row.** A cell carrying its own format
+ignores the row's, so shading a row with `set_row_format` leaves holes in
+exactly the columns that have a number format. `banded_rows` instead shades
+each cell, so float, integer, boolean, datetime and explicitly-formatted
+columns all stay banded. That costs roughly 20% write time; leave it off when
+you don't need it.
+
+For `write_worksheets`, every one of these takes a dict keyed by sheet name
+(with a `"general"` fallback key).
+
 ### String Deduplication
 
 By default every sheet is written in constant-memory mode: strings go inline
