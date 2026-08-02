@@ -5,7 +5,9 @@ use arrow_schema::{DataType, TimeUnit};
 use pyo3::prelude::*;
 use rust_xlsxwriter::{ExcelDateTime, Format, Worksheet};
 
-use crate::helpers::{write_csv_escaped_guarded, write_num, write_number_opt, write_string_opt};
+use crate::helpers::{
+    write_bool_opt, write_csv_escaped_guarded, write_num, write_number_opt, write_string_opt,
+};
 use crate::worksheet::xlsx_err;
 
 /// Column type classification done once (outside the row loop) to avoid
@@ -64,32 +66,74 @@ fn classify(dt: &DataType) -> ColKind {
 /// `column_formats`. When a column has an explicit format, it wins over
 /// `float_fmt` for numeric columns. Pass an empty slice when no overrides
 /// are needed (byte-identical behaviour).
+/// Write one temporal cell, falling back to a blank when the value is out of
+/// Excel's range. `dt_fmt` is only attached when banding is on — otherwise the
+/// column format set before the first row already carries the number format.
+#[allow(clippy::too_many_arguments)]
+fn write_temporal(
+    worksheet: &mut Worksheet,
+    row: u32,
+    col: u16,
+    value: Option<rust_xlsxwriter::ExcelDateTime>,
+    banding: bool,
+    dt_fmt: &Format,
+    text_fmt: Option<&Format>,
+) -> PyResult<()> {
+    match value {
+        Some(dt) => crate::helpers::write_datetime_opt(
+            worksheet,
+            row,
+            col,
+            &dt,
+            banding.then_some(dt_fmt),
+        ),
+        None => write_string_opt(worksheet, row, col, "", text_fmt),
+    }
+}
+
 pub fn write_arrow_batch(
     worksheet: &mut Worksheet,
     batch: &RecordBatch,
     start_row: u32,
-    float_fmt: Option<&Format>,
-    col_formats: &[Option<crate::format::Format>],
+    plain: &crate::format::RowPalette,
+    banded: Option<&crate::format::RowPalette>,
+    layout: &crate::helpers::SheetLayout,
 ) -> PyResult<()> {
     let num_cols = batch.num_columns();
     let num_rows = batch.num_rows();
 
     let columns: Vec<ArrayRef> = (0..num_cols).map(|c| batch.column(c).clone()).collect();
     let kinds: Vec<ColKind> = columns.iter().map(|c| classify(c.data_type())).collect();
-    // Per-column format override is fixed for the whole column — resolve once
-    // instead of once per cell in the row×col loop below.
-    let col_overrides: Vec<Option<&Format>> =
-        (0..num_cols).map(|c| crate::format::col_override(col_formats, c)).collect();
+    // Per-column format override is fixed for the whole column *within a
+    // palette* — resolve both variants once instead of per cell in the row×col
+    // loop below.
+    let plain_cols: Vec<Option<&Format>> = (0..num_cols).map(|c| plain.col(c)).collect();
+    let banded_cols: Vec<Option<&Format>> = match banded {
+        Some(b) => (0..num_cols).map(|c| b.col(c)).collect(),
+        None => Vec::new(),
+    };
+    let banding = layout.band_color.is_some();
 
     for row in 0..num_rows {
         let row_u32 = start_row + row as u32;
+        let use_band = layout.is_banded(row_u32);
+        let pal = if use_band { banded.unwrap_or(plain) } else { plain };
+        let overrides = if use_band && banded.is_some() {
+            &banded_cols
+        } else {
+            &plain_cols
+        };
+        // On a band row this carries the fill for cells that would otherwise
+        // be written unformatted.
+        let text_fmt = pal.text.as_ref();
+
         for col_idx in 0..num_cols {
             let col_u16 = col_idx as u16;
             let column = &columns[col_idx];
-            let col_override = col_overrides[col_idx];
+            let col_override = overrides[col_idx].or(text_fmt);
 
             if column.is_null(row) {
-                worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
+                write_string_opt(worksheet, row_u32, col_u16, "", text_fmt)?;
                 continue;
             }
 
@@ -120,59 +164,74 @@ pub fn write_arrow_batch(
                 }
                 ColKind::Float32 => {
                     let val = column.as_primitive::<Float32Type>().value(row) as f64;
-                    write_num(worksheet, row_u32, col_u16, val, col_override.or(float_fmt))?;
+                    write_num(
+                        worksheet,
+                        row_u32,
+                        col_u16,
+                        val,
+                        overrides[col_idx].or(pal.float.as_ref()),
+                    )?;
                 }
                 ColKind::Float64 => {
                     let val = column.as_primitive::<Float64Type>().value(row);
-                    write_num(worksheet, row_u32, col_u16, val, col_override.or(float_fmt))?;
+                    write_num(
+                        worksheet,
+                        row_u32,
+                        col_u16,
+                        val,
+                        overrides[col_idx].or(pal.float.as_ref()),
+                    )?;
                 }
                 ColKind::Bool => {
                     let arr = column
                         .as_any()
                         .downcast_ref::<BooleanArray>()
                         .expect("Boolean dtype guarantees downcast");
-                    worksheet
-                        .write_boolean(row_u32, col_u16, arr.value(row))
-                        .map_err(xlsx_err)?;
+                    write_bool_opt(worksheet, row_u32, col_u16, arr.value(row), text_fmt)?;
                 }
                 ColKind::Utf8 => write_str!(column.as_string::<i32>().value(row)),
                 ColKind::LargeUtf8 => write_str!(column.as_string::<i64>().value(row)),
                 ColKind::Utf8View => write_str!(column.as_string_view().value(row)),
+                // With banding the shade has to ride on the cell: the datetime
+                // column format set up front is fixed for every row.
                 ColKind::Date32 => {
                     let days = column.as_primitive::<Date32Type>().value(row);
-                    match days_to_excel_date(days as i64) {
-                        Some(dt) => worksheet
-                            .write_datetime(row_u32, col_u16, &dt)
-                            .map_err(xlsx_err)?,
-                        None => worksheet
-                            .write_string(row_u32, col_u16, "")
-                            .map_err(xlsx_err)?,
-                    };
+                    write_temporal(
+                        worksheet,
+                        row_u32,
+                        col_u16,
+                        days_to_excel_date(days as i64),
+                        banding,
+                        overrides[col_idx].unwrap_or(&pal.datetime),
+                        text_fmt,
+                    )?;
                 }
                 ColKind::Date64 => {
                     let ms = column.as_primitive::<Date64Type>().value(row);
-                    match millis_to_excel_datetime(ms) {
-                        Some(dt) => worksheet
-                            .write_datetime(row_u32, col_u16, &dt)
-                            .map_err(xlsx_err)?,
-                        None => worksheet
-                            .write_string(row_u32, col_u16, "")
-                            .map_err(xlsx_err)?,
-                    };
+                    write_temporal(
+                        worksheet,
+                        row_u32,
+                        col_u16,
+                        millis_to_excel_datetime(ms),
+                        banding,
+                        overrides[col_idx].unwrap_or(&pal.datetime),
+                        text_fmt,
+                    )?;
                 }
                 ColKind::Timestamp(unit) => {
                     let micros = timestamp_to_micros(column, unit, row);
-                    match micros_to_excel_datetime(micros) {
-                        Some(dt) => worksheet
-                            .write_datetime(row_u32, col_u16, &dt)
-                            .map_err(xlsx_err)?,
-                        None => worksheet
-                            .write_string(row_u32, col_u16, "")
-                            .map_err(xlsx_err)?,
-                    };
+                    write_temporal(
+                        worksheet,
+                        row_u32,
+                        col_u16,
+                        micros_to_excel_datetime(micros),
+                        banding,
+                        overrides[col_idx].unwrap_or(&pal.datetime),
+                        text_fmt,
+                    )?;
                 }
                 ColKind::Unsupported => {
-                    worksheet.write_string(row_u32, col_u16, "").map_err(xlsx_err)?;
+                    write_string_opt(worksheet, row_u32, col_u16, "", text_fmt)?;
                 }
             }
         }
