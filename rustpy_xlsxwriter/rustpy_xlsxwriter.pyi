@@ -272,6 +272,7 @@ def write_worksheet(
     column_widths: Optional[ColumnWidths] = None,
     column_formats: Optional[ColumnFormats] = None,
     header_format: Optional[Format] = None,
+    dedupe_strings: bool = False,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -290,6 +291,10 @@ def write_worksheet(
         autofit: Automatically adjust column widths (default ``True``).
         column_width: Uniform width applied to every column.
         column_widths: Per-column width — a dict keyed by header name or a positional list.
+        dedupe_strings: Store repeated strings once in the shared-string table
+            instead of inline. Shrinks files with heavily repeated text, at the
+            cost of buffering the sheet in memory (disables constant-memory
+            mode). Off by default.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -314,6 +319,7 @@ def write_worksheets(
     column_widths: Optional[Dict[str, ColumnWidths]] = None,
     column_formats: Optional[Dict[str, ColumnFormats]] = None,
     header_format: Optional[Dict[str, Format]] = None,
+    dedupe_strings: Optional[Dict[str, bool]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -327,6 +333,9 @@ def write_worksheets(
         autofit: Automatically adjust column widths (default ``True``).
         column_width: Uniform width per sheet — dict keyed by sheet name (``"general"`` applies to all).
         column_widths: Per-column width per sheet — dict keyed by sheet name mapping to :data:`ColumnWidths`.
+        dedupe_strings: Per-sheet shared-string deduplication — dict keyed by
+            sheet name (``"general"`` applies to all). See
+            :func:`write_worksheet` for the trade-off.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
