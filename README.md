@@ -301,7 +301,7 @@ xlsx_bytes = buf.getvalue()  # send as HTTP response
 ### CSV / TSV Output
 
 ```python
-# Auto-detected from file extension — same API, no code change
+# Auto-detected from file extension
 FastExcel("output.csv").sheet("Sheet1", records).save()
 FastExcel("output.tsv").sheet("Sheet1", records).save()
 
@@ -311,6 +311,20 @@ from rustpy_xlsxwriter import write_csv
 write_csv(records, "output.csv")
 write_csv(records, "output.csv", delimiter=";")  # custom delimiter
 ```
+
+CSV carries no formatting, so every Excel-only option is dropped —
+`float_format`, `column_formats`, `header_format`, freeze panes, merges,
+banding, row heights and formats, `password`, `dedupe_strings`. Only
+`delimiter` and `sanitize_formulas` apply. Switching a target from `.xlsx` to
+`.csv` therefore silently changes the output, so the builder warns and names
+what it discarded:
+
+```python
+FastExcel("out.csv").format(float_format="0.00").sheet("S", rows).save()
+# UserWarning: CSV/TSV output ignores Excel-only options: float_format. …
+```
+
+The data is still written correctly — only the styling is gone.
 
 ### Functional API
 
