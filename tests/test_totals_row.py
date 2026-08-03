@@ -144,12 +144,31 @@ def test_autofilter_range_excludes_the_totals_row(tmp_path):
     assert ws["B6"].value == "=SUM(B2:B5)"
 
 
-def test_cached_result_is_zero_until_excel_recalculates(tmp_path):
-    """Documented caveat, pinned so it cannot change silently."""
+def test_uncomputed_result_reads_as_none_not_zero(tmp_path):
+    """The cached result must be empty, never a plausible-looking wrong total.
+
+    rust_xlsxwriter defaults the cached result to 0, so a reader trusting the
+    cache would see ``0`` as the sum. An empty result reads back as "not
+    computed" — and per the crate's docs it is also what makes LibreOffice
+    recalculate instead of showing the stale value.
+    """
     path = tmp_path / "cached.xlsx"
     write_worksheet(_records(3), str(path), totals_row={"amount": "sum"})
+
     cached = openpyxl.load_workbook(path, data_only=True).active
-    assert cached["B5"].value == 0
+    assert cached["B5"].value is None
+    # The formula itself is intact.
+    assert openpyxl.load_workbook(path).active["B5"].value == "=SUM(B2:B4)"
+
+
+def test_data_cells_keep_their_values(tmp_path):
+    """set_formula_result_default must not touch ordinary cells."""
+    path = tmp_path / "data.xlsx"
+    write_worksheet(_records(3), str(path), totals_row={"amount": "sum"})
+    cached = openpyxl.load_workbook(path, data_only=True).active
+    assert cached["B2"].value == 0.0
+    assert cached["B3"].value == 1.5
+    assert cached["A2"].value == "n0"
 
 
 @pytest.mark.parametrize("frame", ["pandas", "polars"])

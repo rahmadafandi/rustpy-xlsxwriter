@@ -263,10 +263,13 @@ into the data.
 `totals_format` exists because the totals row index depends on how much data
 there was, so `row_formats` cannot reach it.
 
-> **The formulas carry no computed result.** Readers that use cached values —
-> `pandas.read_excel`, `openpyxl` with `data_only=True` — see `0` until Excel or
-> LibreOffice opens the file and recalculates. Use the totals row for files
-> people will open, not for a machine-readable handoff.
+> **The formulas carry no computed result.** This library does not evaluate
+> them; Excel and LibreOffice do, on open. Readers that trust the cached value —
+> `pandas.read_excel`, `openpyxl` with `data_only=True` — get `None`, not a
+> number. That is deliberate: the cached result is written empty rather than
+> left at the underlying crate's default of `0`, which would look like a real
+> total of zero. Use the totals row for files people will open, not for a
+> machine-readable handoff.
 
 ### Hyperlinks
 

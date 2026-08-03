@@ -179,6 +179,14 @@ impl SheetLayout {
         let first = self.first_data_row() + 1;
         let last = self.first_data_row() + data_rows;
 
+        // We don't calculate the formulas, and the crate's default cached
+        // result is 0 — a plausible-looking wrong total for any reader that
+        // trusts the cache (`pandas.read_excel`, `openpyxl` with
+        // `data_only=True`). An empty result reads back as "not computed"
+        // instead, and per rust_xlsxwriter's docs it is also what forces
+        // LibreOffice to recalculate rather than display the stale 0.
+        worksheet.set_formula_result_default("");
+
         let warnings = py.import("warnings")?;
         let mut used_first_column = false;
 
