@@ -217,6 +217,11 @@ class FastExcel:
         self._col_formats: Dict[str, Any] = {}
         self._header_format: Dict[str, Any] = {}
         self._dedupe_strings: Dict[str, bool] = {}
+        self._header_row: Dict[str, int] = {}
+        self._merge_ranges: Dict[str, Any] = {}
+        self._row_heights: Dict[str, Dict[int, float]] = {}
+        self._row_formats: Dict[str, Dict[int, Any]] = {}
+        self._banded_rows: Dict[str, str] = {}
 
     def __enter__(self) -> "FastExcel":
         return self
@@ -291,6 +296,11 @@ class FastExcel:
         column_formats: Optional[Union[Dict[str, "Format"], List["Format"]]] = None,
         header_format: Optional["Format"] = None,
         dedupe_strings: bool = False,
+        header_row: int = 0,
+        merge_ranges: Optional[List[Tuple]] = None,
+        row_heights: Optional[Dict[int, float]] = None,
+        row_formats: Optional[Dict[int, "Format"]] = None,
+        banded_rows: Optional[str] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -313,13 +323,41 @@ class FastExcel:
                 it takes this sheet out of constant-memory mode, so the whole
                 sheet is buffered in RAM and every string is hashed. Turn it on
                 per sheet, for sheets whose text actually repeats, and measure.
+            header_row: 0-based row the header is written on; data follows it.
+                Raise it to leave room for merged banner headers above.
+            merge_ranges: Merged cells, as
+                ``(first_row, first_col, last_row, last_col, value[, format])``
+                tuples — e.g. ``[(0, 1, 0, 2, "Gender", banner_fmt)]`` for a
+                banner spanning two sub-columns. Ranges must sit strictly above
+                ``header_row``; anything overlapping the header or data raises,
+                because rows already written cannot be merged after the fact.
+            row_heights: ``{row_index: height}`` in points.
+            row_formats: ``{row_index: Format}`` applied to the whole row — the
+                way to put a bottom border under the header or a top border
+                above a totals row. A cell carrying its own format (a number
+                format, a column format, a band) wins over the row's.
+            banded_rows: Background colour (``"#F2F2F2"`` or a name) shaded onto
+                every other data row, starting with the second. Applied per cell
+                rather than per row, so columns with their own number format
+                stay shaded too.
 
         Raises:
-            ValueError: If the sheet name is invalid (validated on save).
+            ValueError: If the sheet name is invalid (validated on save), or a
+                merge range overlaps the header/data rows.
         """
         self._sheets.append((name, data))
         if dedupe_strings:
             self._dedupe_strings[name] = True
+        if header_row:
+            self._header_row[name] = header_row
+        if merge_ranges is not None:
+            self._merge_ranges[name] = merge_ranges
+        if row_heights is not None:
+            self._row_heights[name] = row_heights
+        if row_formats is not None:
+            self._row_formats[name] = row_formats
+        if banded_rows is not None:
+            self._banded_rows[name] = banded_rows
         if column_width is not None:
             self._col_width[name] = column_width
         if column_widths is not None:
@@ -398,6 +436,11 @@ class FastExcel:
                 column_formats=self._col_formats.get(sheet_name),
                 header_format=self._header_format.get(sheet_name),
                 dedupe_strings=self._dedupe_strings.get(sheet_name, False),
+                header_row=self._header_row.get(sheet_name, 0),
+                merge_ranges=self._merge_ranges.get(sheet_name),
+                row_heights=self._row_heights.get(sheet_name),
+                row_formats=self._row_formats.get(sheet_name),
+                banded_rows=self._banded_rows.get(sheet_name),
             )
         else:
             # Multi-sheet path
@@ -416,6 +459,11 @@ class FastExcel:
                 column_formats=self._col_formats or None,
                 header_format=self._header_format or None,
                 dedupe_strings=self._dedupe_strings or None,
+                header_row=self._header_row or None,
+                merge_ranges=self._merge_ranges or None,
+                row_heights=self._row_heights or None,
+                row_formats=self._row_formats or None,
+                banded_rows=self._banded_rows or None,
             )
 
 

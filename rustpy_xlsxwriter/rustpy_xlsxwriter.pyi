@@ -50,6 +50,13 @@ ColumnWidths = Union[Dict[str, float], List[float]]
 ColumnFormats = Union[Dict[str, "Format"], List["Format"]]
 """Per-column formats — a dict keyed by header name or a positional list of :class:`Format`."""
 
+MergeRange = Union[
+    Tuple[int, int, int, int, Any],
+    Tuple[int, int, int, int, Any, Optional["Format"]],
+]
+"""One merged cell range: ``(first_row, first_col, last_row, last_col, value)``,
+optionally followed by a :class:`Format`."""
+
 SheetData = Union[Records, DataFrame]
 """Data accepted per sheet – either :data:`Records` or a :data:`DataFrame`."""
 
@@ -273,6 +280,11 @@ def write_worksheet(
     column_formats: Optional[ColumnFormats] = None,
     header_format: Optional[Format] = None,
     dedupe_strings: bool = False,
+    header_row: int = 0,
+    merge_ranges: Optional[List[MergeRange]] = None,
+    row_heights: Optional[Dict[int, float]] = None,
+    row_formats: Optional[Dict[int, Format]] = None,
+    banded_rows: Optional[str] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -295,6 +307,12 @@ def write_worksheet(
             instead of inline. Shrinks files with heavily repeated text, at the
             cost of buffering the sheet in memory (disables constant-memory
             mode). Off by default.
+        header_row: 0-based row the header is written on; data follows it.
+        merge_ranges: ``(first_row, first_col, last_row, last_col, value[, format])``
+            tuples. Must sit strictly above ``header_row``.
+        row_heights: ``{row_index: height}`` in points.
+        row_formats: ``{row_index: Format}`` applied to the whole row.
+        banded_rows: Background colour shaded onto every other data row.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -320,6 +338,11 @@ def write_worksheets(
     column_formats: Optional[Dict[str, ColumnFormats]] = None,
     header_format: Optional[Dict[str, Format]] = None,
     dedupe_strings: Optional[Dict[str, bool]] = None,
+    header_row: Optional[Dict[str, int]] = None,
+    merge_ranges: Optional[Dict[str, List[MergeRange]]] = None,
+    row_heights: Optional[Dict[str, Dict[int, float]]] = None,
+    row_formats: Optional[Dict[str, Dict[int, Format]]] = None,
+    banded_rows: Optional[Dict[str, str]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -336,6 +359,11 @@ def write_worksheets(
         dedupe_strings: Per-sheet shared-string deduplication — dict keyed by
             sheet name (``"general"`` applies to all). See
             :func:`write_worksheet` for the trade-off.
+        header_row: Per-sheet header row index — dict keyed by sheet name.
+        merge_ranges: Per-sheet merged cells — dict keyed by sheet name.
+        row_heights: Per-sheet row heights — dict keyed by sheet name.
+        row_formats: Per-sheet row formats — dict keyed by sheet name.
+        banded_rows: Per-sheet alternating row colour — dict keyed by sheet name.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

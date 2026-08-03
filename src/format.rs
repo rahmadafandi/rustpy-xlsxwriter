@@ -309,6 +309,70 @@ format_methods! {
     ],
 }
 
+/// Every format a data row can need, pre-resolved. Two of these are built per
+/// sheet — plain and banded — and picked by row parity.
+///
+/// Banding deliberately does *not* go through `Worksheet::set_row_format`: a
+/// cell written with its own format ignores the row's, so a column carrying a
+/// number format comes out unshaded and the banding looks broken. Every cell on
+/// a band row instead gets an explicit format that already carries the fill.
+pub struct RowPalette {
+    /// For strings, bools and blanks — cells that otherwise carry no format.
+    pub text: Option<XlsxFormat>,
+    pub float: Option<XlsxFormat>,
+    pub datetime: XlsxFormat,
+    pub cols: Vec<Option<Format>>,
+}
+
+impl RowPalette {
+    /// Borrow the column override for `idx`, mirroring [`col_override`].
+    pub fn col(&self, idx: usize) -> Option<&XlsxFormat> {
+        col_override(&self.cols, idx)
+    }
+}
+
+/// Build the plain palette and, when `band_color` is set, its shaded twin.
+pub fn build_palettes(
+    col_formats: &[Option<Format>],
+    float_fmt: Option<&XlsxFormat>,
+    datetime_fmt: &XlsxFormat,
+    band_color: Option<&str>,
+) -> PyResult<(RowPalette, Option<RowPalette>)> {
+    let plain = RowPalette {
+        text: None,
+        float: float_fmt.cloned(),
+        datetime: datetime_fmt.clone(),
+        cols: col_formats.to_vec(),
+    };
+
+    let Some(color) = band_color else {
+        return Ok((plain, None));
+    };
+    let fill = parse_color(color)?;
+
+    let banded = RowPalette {
+        text: Some(XlsxFormat::new().set_background_color(fill)),
+        // A sheet with no float format still needs a shaded twin for its
+        // numeric cells, hence `unwrap_or_default` rather than `map`.
+        float: Some(
+            float_fmt
+                .cloned()
+                .unwrap_or_default()
+                .set_background_color(fill),
+        ),
+        datetime: datetime_fmt.clone().set_background_color(fill),
+        cols: col_formats
+            .iter()
+            .map(|c| {
+                c.as_ref().map(|f| Format {
+                    inner: f.inner.clone().set_background_color(fill),
+                })
+            })
+            .collect(),
+    };
+    Ok((plain, Some(banded)))
+}
+
 /// Borrow the inner `rust_xlsxwriter::Format` for column `idx`, if one was
 /// resolved. Used per-cell to let an explicit column format win over the
 /// sheet-wide float/datetime format.
