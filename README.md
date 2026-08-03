@@ -222,6 +222,14 @@ under_header = Format().set_border_bottom("thin")
 | `row_heights` | `{row_index: height}` in points |
 | `row_formats` | `{row_index: Format}` — borders under headers, above totals |
 | `banded_rows` | Background colour for every other data row |
+| `autofilter` | Filter dropdowns over the header row and its data |
+
+`autofilter=True` sizes its own range from the rows actually written, so it
+follows `header_row` and needs no manual bounds:
+
+```python
+FastExcel("report.xlsx").sheet("Data", rows, autofilter=True, freeze_row=1).save()
+```
 
 **Ordering is enforced, not assumed.** Sheets are written row by row and a row
 that has been flushed cannot be revisited — `rust_xlsxwriter` would drop a late
