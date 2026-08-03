@@ -64,6 +64,7 @@ from typing import (
 )
 
 import os as _os
+import warnings as _warnings
 from importlib.metadata import metadata as _metadata
 from importlib.metadata import version as _version
 
@@ -151,6 +152,27 @@ __version__ = get_version()
 # Builder-style class wrapper
 # ---------------------------------------------------------------------------
 
+#: Options ``sheet()`` records per sheet and forwards to the writers. Both save
+#: paths iterate this, so adding an option means touching only ``sheet()``.
+_PER_SHEET_OPTIONS = (
+    "column_width",
+    "column_widths",
+    "column_formats",
+    "header_format",
+    "dedupe_strings",
+    "header_row",
+    "merge_ranges",
+    "row_heights",
+    "row_formats",
+    "banded_rows",
+    "autofilter",
+    "url_columns",
+    "totals_row",
+    "totals_label",
+    "totals_format",
+    "formula_columns",
+)
+
 
 class FastExcel:
     """Fluent builder for creating Excel files.
@@ -212,16 +234,10 @@ class FastExcel:
         self._index_columns: Optional[List[str]] = None
         self._bold_headers: bool = False
         self._freeze_panes: Dict[str, Dict[str, int]] = {}
-        self._col_width: Dict[str, float] = {}
-        self._col_widths: Dict[str, Union[Dict[str, float], List[float]]] = {}
-        self._col_formats: Dict[str, Any] = {}
-        self._header_format: Dict[str, Any] = {}
-        self._dedupe_strings: Dict[str, bool] = {}
-        self._header_row: Dict[str, int] = {}
-        self._merge_ranges: Dict[str, Any] = {}
-        self._row_heights: Dict[str, Dict[int, float]] = {}
-        self._row_formats: Dict[str, Dict[int, Any]] = {}
-        self._banded_rows: Dict[str, str] = {}
+        # {option: {sheet_name: value}} — see _PER_SHEET_OPTIONS.
+        self._per_sheet: Dict[str, Dict[str, Any]] = {
+            option: {} for option in _PER_SHEET_OPTIONS
+        }
 
     def __enter__(self) -> "FastExcel":
         return self
@@ -301,6 +317,12 @@ class FastExcel:
         row_heights: Optional[Dict[int, float]] = None,
         row_formats: Optional[Dict[int, "Format"]] = None,
         banded_rows: Optional[str] = None,
+        autofilter: bool = False,
+        url_columns: Optional[List[str]] = None,
+        totals_row: Optional[Dict[str, str]] = None,
+        totals_label: Optional[str] = None,
+        totals_format: Optional["Format"] = None,
+        formula_columns: Optional[Dict[str, str]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -340,35 +362,104 @@ class FastExcel:
                 every other data row, starting with the second. Applied per cell
                 rather than per row, so columns with their own number format
                 stay shaded too.
+            autofilter: Add Excel's filter dropdowns over the header row and its
+                data. The range is computed from the rows actually written, so
+                it follows ``header_row`` and needs no manual bounds.
+            url_columns: Column names whose text cells become clickable links —
+                ``["homepage"]``. Accepts what Excel accepts: ``http(s)://``,
+                ``mailto:``, and ``internal:Sheet2!A1`` for a link to another
+                sheet. A value Excel would reject (ordinary text, or a URL past
+                its 2083-character limit) is written as plain text instead, so a
+                stray non-link never aborts the export. The cell displays the
+                URL itself; per-cell display text is not supported.
+            totals_row: ``{column_name: aggregate}`` written as Excel formulas
+                in a row below the data — ``{"amount": "sum"}`` becomes
+                ``=SUM(C2:C101)``. Valid aggregates: ``sum``, ``average``,
+                ``count``, ``min``, ``max``, ``product``, ``stdev``. A value
+                starting with ``=`` is used as a formula instead, with ``{col}``
+                the column letter and ``{first}``/``{last}`` the data range::
+
+                    totals_row={"margin": "=SUM({col}{first}:{col}{last})/2"}
+
+                Skipped entirely when there are no data rows, since the range
+                would be empty. NOTE: the formulas carry no computed result, so
+                readers that use cached values (``pandas.read_excel``,
+                ``openpyxl`` with ``data_only=True``) get ``None`` until Excel
+                or LibreOffice opens the file and recalculates.
+            totals_label: Text for the first column of the totals row, e.g.
+                ``"Total"``. Raises if the first column also has an aggregate.
+            totals_format: :class:`Format` for the whole totals row — the usual
+                bold plus a top border. Needed because the row index is not
+                known ahead of time, so ``row_formats`` cannot reach it.
+            formula_columns: ``{header: formula}`` — extra columns appended after
+                the data, one formula per data row. ``{row}`` is replaced with
+                that row's 1-based sheet row and ``{first}`` with the first data
+                row::
+
+                    formula_columns={"total": "=B{row}*C{row}"}
+
+                The formula text is passed through to Excel unchanged, so
+                anything Excel accepts works: nested calls, ``SUMIFS``,
+                cross-sheet references, and modern functions like ``XLOOKUP`` or
+                ``TEXTJOIN`` (which are rewritten with the ``_xlfn.`` prefix and
+                dynamic-array metadata automatically). Structure is checked —
+                unbalanced parentheses or quotes raise — but function names are
+                not, so ``=NOTAFUNC(A1)`` reaches the file and shows ``#NAME?``.
+                There is no ``{last}``: rows are still
+                streaming when these are written, so the final row is unknown;
+                use ``totals_row`` for whole-column formulas.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
                 merge range overlaps the header/data rows.
         """
         self._sheets.append((name, data))
-        if dedupe_strings:
-            self._dedupe_strings[name] = True
-        if header_row:
-            self._header_row[name] = header_row
-        if merge_ranges is not None:
-            self._merge_ranges[name] = merge_ranges
-        if row_heights is not None:
-            self._row_heights[name] = row_heights
-        if row_formats is not None:
-            self._row_formats[name] = row_formats
-        if banded_rows is not None:
-            self._banded_rows[name] = banded_rows
-        if column_width is not None:
-            self._col_width[name] = column_width
-        if column_widths is not None:
-            self._col_widths[name] = column_widths
-        if column_formats is not None:
-            self._col_formats[name] = column_formats
-        if header_format is not None:
-            self._header_format[name] = header_format
+        # Only options actually given are recorded, so the writers keep their
+        # own defaults for the rest — and a CSV target only warns about options
+        # that were really set.
+        for option, value in {
+            "column_width": column_width,
+            "column_widths": column_widths,
+            "column_formats": column_formats,
+            "header_format": header_format,
+            "dedupe_strings": dedupe_strings,
+            "header_row": header_row,
+            "merge_ranges": merge_ranges,
+            "row_heights": row_heights,
+            "row_formats": row_formats,
+            "banded_rows": banded_rows,
+            "autofilter": autofilter,
+            "url_columns": url_columns,
+            "totals_row": totals_row,
+            "totals_label": totals_label,
+            "totals_format": totals_format,
+            "formula_columns": formula_columns,
+        }.items():
+            if value:
+                self._per_sheet[option][name] = value
         return self
 
     # -- output -------------------------------------------------------------
+
+    def _excel_only_options(self) -> List[str]:
+        """Names of set options that only apply to ``.xlsx`` output.
+
+        ``autofit`` and ``sanitize_formulas`` are left out: the first is on by
+        default so it would fire on every CSV write, and the second is CSV-only.
+        """
+        workbook_wide = {
+            "password": self._password,
+            "float_format": self._float_format,
+            "datetime_format": self._datetime_format,
+            "index_columns": self._index_columns,
+            "bold_headers": self._bold_headers,
+            "freeze": self._freeze_panes,
+        }
+        names = [name for name, value in workbook_wide.items() if value]
+        names += [
+            option for option in _PER_SHEET_OPTIONS if self._per_sheet[option]
+        ]
+        return names
 
     def save(self) -> None:
         """Write all sheets to the target file or buffer.
@@ -395,6 +486,15 @@ class FastExcel:
                     )
                 delimiter = "\t" if lower.endswith(".tsv") else ","
                 _, data = self._sheets[0]
+                ignored = self._excel_only_options()
+                if ignored:
+                    _warnings.warn(
+                        "CSV/TSV output ignores Excel-only options: "
+                        f"{', '.join(ignored)}. "
+                        "The file will contain unformatted values; write to "
+                        "'.xlsx' if you need them.",
+                        stacklevel=2,
+                    )
                 write_csv(
                     data,
                     self._target,
@@ -416,9 +516,6 @@ class FastExcel:
                 freeze_row = cfg.get("row")
                 freeze_col = cfg.get("col")
 
-            cw = self._col_width.get(sheet_name)
-            cws = self._col_widths.get(sheet_name)
-
             write_worksheet(
                 data,
                 self._target,
@@ -431,16 +528,11 @@ class FastExcel:
                 index_columns=self._index_columns,
                 autofit=self._autofit,
                 bold_headers=self._bold_headers,
-                column_width=cw,
-                column_widths=cws,
-                column_formats=self._col_formats.get(sheet_name),
-                header_format=self._header_format.get(sheet_name),
-                dedupe_strings=self._dedupe_strings.get(sheet_name, False),
-                header_row=self._header_row.get(sheet_name, 0),
-                merge_ranges=self._merge_ranges.get(sheet_name),
-                row_heights=self._row_heights.get(sheet_name),
-                row_formats=self._row_formats.get(sheet_name),
-                banded_rows=self._banded_rows.get(sheet_name),
+                **{
+                    option: values[sheet_name]
+                    for option, values in self._per_sheet.items()
+                    if sheet_name in values
+                },
             )
         else:
             # Multi-sheet path
@@ -454,16 +546,11 @@ class FastExcel:
                 index_columns=self._index_columns,
                 autofit=self._autofit,
                 bold_headers=self._bold_headers,
-                column_width=self._col_width or None,
-                column_widths=self._col_widths or None,
-                column_formats=self._col_formats or None,
-                header_format=self._header_format or None,
-                dedupe_strings=self._dedupe_strings or None,
-                header_row=self._header_row or None,
-                merge_ranges=self._merge_ranges or None,
-                row_heights=self._row_heights or None,
-                row_formats=self._row_formats or None,
-                banded_rows=self._banded_rows or None,
+                **{
+                    option: values
+                    for option, values in self._per_sheet.items()
+                    if values
+                },
             )
 
 

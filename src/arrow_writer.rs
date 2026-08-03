@@ -91,6 +91,7 @@ fn write_temporal(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn write_arrow_batch(
     worksheet: &mut Worksheet,
     batch: &RecordBatch,
@@ -98,6 +99,9 @@ pub fn write_arrow_batch(
     plain: &crate::format::RowPalette,
     banded: Option<&crate::format::RowPalette>,
     layout: &crate::helpers::SheetLayout,
+    url_cols: &[bool],
+    formula_cols: &[crate::helpers::FormulaColumn],
+    n_data_cols: usize,
 ) -> PyResult<()> {
     let num_cols = batch.num_columns();
     let num_rows = batch.num_rows();
@@ -143,10 +147,20 @@ pub fn write_arrow_batch(
                     write_number_opt(worksheet, row_u32, col_u16, val, col_override)?;
                 }};
             }
+            // A url_columns entry turns text cells into links; anything that
+            // is not a valid URL falls back to plain text.
+            let as_url = url_cols.get(col_idx).copied().unwrap_or(false);
             macro_rules! write_str {
-                ($val:expr) => {
-                    write_string_opt(worksheet, row_u32, col_u16, $val, col_override)?
-                };
+                ($val:expr) => {{
+                    let val: &str = $val;
+                    if as_url && !val.is_empty() {
+                        crate::helpers::write_url_or_text(
+                            worksheet, row_u32, col_u16, val, col_override,
+                        )?
+                    } else {
+                        write_string_opt(worksheet, row_u32, col_u16, val, col_override)?
+                    }
+                }};
             }
 
             match kinds[col_idx] {
@@ -234,6 +248,18 @@ pub fn write_arrow_batch(
                     write_string_opt(worksheet, row_u32, col_u16, "", text_fmt)?;
                 }
             }
+        }
+        // Written inside the row loop: constant-memory mode flushes each row as
+        // the next begins, so a pass afterwards would be ignored.
+        if !formula_cols.is_empty() {
+            crate::helpers::write_formula_row(
+                worksheet,
+                formula_cols,
+                n_data_cols as u16,
+                row_u32,
+                layout.first_data_row(),
+                None,
+            )?;
         }
     }
 
