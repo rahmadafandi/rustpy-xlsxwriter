@@ -224,6 +224,7 @@ class FastExcel:
         self._row_formats: Dict[str, Dict[int, Any]] = {}
         self._banded_rows: Dict[str, str] = {}
         self._autofilter: Dict[str, bool] = {}
+        self._url_columns: Dict[str, List[str]] = {}
 
     def __enter__(self) -> "FastExcel":
         return self
@@ -304,6 +305,7 @@ class FastExcel:
         row_formats: Optional[Dict[int, "Format"]] = None,
         banded_rows: Optional[str] = None,
         autofilter: bool = False,
+        url_columns: Optional[List[str]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -346,6 +348,13 @@ class FastExcel:
             autofilter: Add Excel's filter dropdowns over the header row and its
                 data. The range is computed from the rows actually written, so
                 it follows ``header_row`` and needs no manual bounds.
+            url_columns: Column names whose text cells become clickable links —
+                ``["homepage"]``. Accepts what Excel accepts: ``http(s)://``,
+                ``mailto:``, and ``internal:Sheet2!A1`` for a link to another
+                sheet. A value Excel would reject (ordinary text, or a URL past
+                its 2083-character limit) is written as plain text instead, so a
+                stray non-link never aborts the export. The cell displays the
+                URL itself; per-cell display text is not supported.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -366,6 +375,8 @@ class FastExcel:
             self._banded_rows[name] = banded_rows
         if autofilter:
             self._autofilter[name] = True
+        if url_columns is not None:
+            self._url_columns[name] = url_columns
         if column_width is not None:
             self._col_width[name] = column_width
         if column_widths is not None:
@@ -402,6 +413,7 @@ class FastExcel:
             "row_formats": self._row_formats,
             "banded_rows": self._banded_rows,
             "autofilter": self._autofilter,
+            "url_columns": self._url_columns,
         }
         return [name for name, value in configured.items() if value]
 
@@ -486,6 +498,7 @@ class FastExcel:
                 row_formats=self._row_formats.get(sheet_name),
                 banded_rows=self._banded_rows.get(sheet_name),
                 autofilter=self._autofilter.get(sheet_name, False),
+                url_columns=self._url_columns.get(sheet_name),
             )
         else:
             # Multi-sheet path
@@ -510,6 +523,7 @@ class FastExcel:
                 row_formats=self._row_formats or None,
                 banded_rows=self._banded_rows or None,
                 autofilter=self._autofilter or None,
+                url_columns=self._url_columns or None,
             )
 
 
