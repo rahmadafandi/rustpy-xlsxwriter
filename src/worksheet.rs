@@ -454,6 +454,7 @@ fn write_worksheet_content(
     }
 
     layout.apply_autofilter(worksheet, data_rows, final_headers.len())?;
+    layout.apply_totals(worksheet, &final_headers, data_rows, py)?;
 
     if freeze_row.is_some() || freeze_col.is_some() {
         worksheet
@@ -753,7 +754,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -777,6 +778,9 @@ pub fn write_worksheets(
     banded_rows: Option<Bound<'_, pyo3::types::PyDict>>,
     autofilter: Option<Bound<'_, pyo3::types::PyDict>>,
     url_columns: Option<Bound<'_, pyo3::types::PyDict>>,
+    totals_row: Option<Bound<'_, pyo3::types::PyDict>>,
+    totals_label: Option<Bound<'_, pyo3::types::PyDict>>,
+    totals_format: Option<Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
@@ -831,6 +835,15 @@ pub fn write_worksheets(
                 .map(|v| v.extract::<bool>())
                 .transpose()?
                 .unwrap_or(false),
+            keyed_get(totals_row.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(totals_label.as_ref(), &sheet_name)?
+                .filter(|v| !v.is_none())
+                .map(|v| v.extract())
+                .transpose()?,
+            match keyed_get(totals_format.as_ref(), &sheet_name)? {
+                Some(v) if !v.is_none() => Some(v.extract::<crate::format::Format>()?.inner),
+                _ => None,
+            },
         )?;
 
         let sheet_urls: Option<Vec<String>> = keyed_get(url_columns.as_ref(), &sheet_name)?
@@ -865,7 +878,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -891,6 +904,9 @@ pub fn write_worksheet(
     banded_rows: Option<String>,
     autofilter: bool,
     url_columns: Option<Vec<String>>,
+    totals_row: Option<Bound<'_, PyAny>>,
+    totals_label: Option<String>,
+    totals_format: Option<Bound<'_, crate::format::Format>>,
 ) -> PyResult<()> {
     let layout = crate::helpers::resolve_layout(
         header_row,
@@ -899,6 +915,9 @@ pub fn write_worksheet(
         row_formats.as_ref(),
         banded_rows,
         autofilter,
+        totals_row.as_ref(),
+        totals_label,
+        totals_format.map(|f| f.borrow().inner.clone()),
     )?;
     let mut workbook = Workbook::new();
     let mut worksheet = if dedupe_strings {

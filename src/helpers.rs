@@ -86,6 +86,26 @@ pub struct SheetLayout {
     /// [`SheetLayout::apply_autofilter`] — the range needs the final row count,
     /// which is only known once the last row has been written.
     pub autofilter: bool,
+    /// `(column name, Excel function)` for the totals row. Also applied after
+    /// the data: the row sits below it and the formula ranges depend on how
+    /// many rows there turned out to be.
+    pub totals: Vec<(String, &'static str)>,
+    pub totals_label: Option<String>,
+    pub totals_format: Option<Format>,
+}
+
+/// Map an aggregate name to its Excel function.
+fn excel_function(name: &str) -> Option<&'static str> {
+    match name.to_ascii_lowercase().as_str() {
+        "sum" => Some("SUM"),
+        "average" | "avg" | "mean" => Some("AVERAGE"),
+        "count" => Some("COUNT"),
+        "min" => Some("MIN"),
+        "max" => Some("MAX"),
+        "product" => Some("PRODUCT"),
+        "stdev" => Some("STDEV"),
+        _ => None,
+    }
 }
 
 impl SheetLayout {
@@ -141,6 +161,67 @@ impl SheetLayout {
             .map_err(xlsx_err)?;
         Ok(())
     }
+
+    /// Write the totals row below the data. Skipped when there is no data —
+    /// a formula over an empty range (`=SUM(B2:B1)`) is not valid.
+    pub fn apply_totals(
+        &self,
+        worksheet: &mut Worksheet,
+        headers: &[String],
+        data_rows: u32,
+        py: Python,
+    ) -> PyResult<()> {
+        if (self.totals.is_empty() && self.totals_label.is_none()) || data_rows == 0 {
+            return Ok(());
+        }
+        let row = self.first_data_row() + data_rows;
+        // A1 notation is 1-based, and the data starts one row below the header.
+        let first = self.first_data_row() + 1;
+        let last = self.first_data_row() + data_rows;
+
+        let warnings = py.import("warnings")?;
+        let mut used_first_column = false;
+
+        for (name, function) in &self.totals {
+            let Some(col) = headers.iter().position(|h| h == name) else {
+                warnings.call_method1(
+                    "warn",
+                    (format!("totals_row: unknown column '{name}', skipped"),),
+                )?;
+                continue;
+            };
+            if col == 0 {
+                used_first_column = true;
+            }
+            let letter = rust_xlsxwriter::utility::column_number_to_name(col as u16);
+            let formula = format!("={function}({letter}{first}:{letter}{last})");
+            match &self.totals_format {
+                Some(fmt) => worksheet
+                    .write_formula_with_format(row, col as u16, formula.as_str(), fmt)
+                    .map_err(xlsx_err)?,
+                None => worksheet
+                    .write_formula(row, col as u16, formula.as_str())
+                    .map_err(xlsx_err)?,
+            };
+        }
+
+        if let Some(label) = &self.totals_label {
+            if used_first_column {
+                return Err(value_err(
+                    "totals_label would overwrite the totals formula in the first column; \
+drop one of them or move the aggregate to another column"
+                        .into(),
+                ));
+            }
+            match &self.totals_format {
+                Some(fmt) => worksheet
+                    .write_string_with_format(row, 0, label, fmt)
+                    .map_err(xlsx_err)?,
+                None => worksheet.write_string(row, 0, label).map_err(xlsx_err)?,
+            };
+        }
+        Ok(())
+    }
 }
 
 fn value_err(msg: String) -> PyErr {
@@ -178,7 +259,32 @@ pub fn resolve_layout(
     row_formats: Option<&Bound<'_, PyAny>>,
     banded_rows: Option<String>,
     autofilter: bool,
+    totals_row: Option<&Bound<'_, PyAny>>,
+    totals_label: Option<String>,
+    totals_format: Option<Format>,
 ) -> PyResult<SheetLayout> {
+    let mut totals = Vec::new();
+    if let Some(spec) = totals_row {
+        let dict = spec.cast::<PyDict>().map_err(|_| {
+            value_err("totals_row must be a dict of {column name: aggregate}".into())
+        })?;
+        for (key, val) in dict.iter() {
+            let column: String = key.extract().map_err(|_| {
+                value_err("totals_row keys must be column names".into())
+            })?;
+            let name: String = val.extract().map_err(|_| {
+                value_err("totals_row values must be aggregate names".into())
+            })?;
+            let function = excel_function(&name).ok_or_else(|| {
+                value_err(format!(
+                    "totals_row: unknown aggregate '{name}' for column '{column}' \
+(valid: sum, average, count, min, max, product, stdev)"
+                ))
+            })?;
+            totals.push((column, function));
+        }
+    }
+
     let mut merges = Vec::new();
     if let Some(spec) = merge_ranges {
         let list = spec.cast::<PyList>().map_err(|_| {
@@ -250,6 +356,9 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         row_formats: formats,
         band_color: banded_rows,
         autofilter,
+        totals,
+        totals_label,
+        totals_format,
     })
 }
 
