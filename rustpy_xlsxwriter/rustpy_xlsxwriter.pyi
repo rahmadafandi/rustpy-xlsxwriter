@@ -290,6 +290,7 @@ def write_worksheet(
     totals_row: Optional[Dict[str, str]] = None,
     totals_label: Optional[str] = None,
     totals_format: Optional[Format] = None,
+    formula_columns: Optional[Dict[str, str]] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -325,6 +326,8 @@ def write_worksheet(
             data. Valid: sum, average, count, min, max, product, stdev.
         totals_label: Text for the first column of the totals row.
         totals_format: Format applied to the whole totals row.
+        formula_columns: ``{header: formula}`` appended after the data, one
+            formula per row. ``{row}``/``{first}`` are substituted.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -360,6 +363,7 @@ def write_worksheets(
     totals_row: Optional[Dict[str, Dict[str, str]]] = None,
     totals_label: Optional[Dict[str, str]] = None,
     totals_format: Optional[Dict[str, Format]] = None,
+    formula_columns: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -386,6 +390,7 @@ def write_worksheets(
         totals_row: Per-sheet totals formulas — dict keyed by sheet name.
         totals_label: Per-sheet totals label — dict keyed by sheet name.
         totals_format: Per-sheet totals row format — dict keyed by sheet name.
+        formula_columns: Per-sheet computed columns — dict keyed by sheet name.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

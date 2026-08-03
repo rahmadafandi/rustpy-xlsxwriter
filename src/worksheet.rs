@@ -194,6 +194,7 @@ fn write_worksheet_content(
     header_format: Option<&crate::format::Format>,
     layout: &crate::helpers::SheetLayout,
     url_columns: Option<&Vec<String>>,
+    formula_columns: Option<&Bound<'_, PyAny>>,
     py: Python,
 ) -> PyResult<()> {
     let float_fmt = float_format.map(|s| Format::new().set_num_format(s));
@@ -210,6 +211,14 @@ fn write_worksheet_content(
     // Merges, row heights and row formats must all land before the first data
     // cell — constant-memory mode cannot revisit a flushed row.
     layout.apply(worksheet)?;
+    let formula_cols = crate::helpers::resolve_formula_columns(formula_columns)?;
+    // Applies to every formula this sheet writes, so it must be set before any
+    // of them. The crate's default cached result is 0, which readers that trust
+    // the cache take at face value — `pandas.read_excel` reports 0, and
+    // LibreOffice displays 0 instead of recalculating. An empty result reads
+    // back as "not computed" and forces a recalculation on open.
+    worksheet.set_formula_result_default("");
+    let first_data_row = layout.first_data_row();
     let header_row = layout.header_row;
     let banding = layout.band_color.is_some();
 
@@ -224,6 +233,10 @@ fn write_worksheet_content(
                     .iter()
                     .map(|f| f.name().to_string())
                     .collect();
+                for fc in &formula_cols {
+                    final_headers.push(fc.header.clone());
+                }
+                let n_data_cols = final_headers.len() - formula_cols.len();
                 write_all_headers(
                     worksheet,
                     header_row,
@@ -274,6 +287,8 @@ fn write_worksheet_content(
                         banded.as_ref(),
                         layout,
                         &url_cols,
+                        &formula_cols,
+                        n_data_cols,
                     )?;
 
                     current_row += batch.num_rows() as u32;
@@ -313,6 +328,7 @@ fn write_worksheet_content(
                     Option<crate::format::RowPalette>,
                 )> = None;
                 let mut url_cols: Vec<bool> = Vec::new();
+                let mut n_data_cols: usize = 0;
 
                 for (row_idx, row_res) in rows.enumerate() {
                     let row_obj = row_res?;
@@ -326,6 +342,9 @@ fn write_worksheet_content(
                         for key in row_dict.keys().iter() {
                             headers.push(key.extract::<String>()?);
                         }
+                        for fc in &formula_cols {
+                            headers.push(fc.header.clone());
+                        }
                         write_all_headers(
                             worksheet,
                             header_row,
@@ -337,6 +356,7 @@ fn write_worksheet_content(
                         )?;
                         col_types.resize(headers.len(), ColType::Unknown);
                         final_headers = headers.clone();
+                        n_data_cols = headers.len() - formula_cols.len();
                         // Resolve per-column formats ONCE and keep them for the whole loop.
                         // Apply set_column_format BEFORE writing data rows (constant memory mode).
                         let col_formats =
@@ -398,6 +418,16 @@ fn write_worksheet_content(
                             }
                         }
                     }
+                    if !formula_cols.is_empty() {
+                        crate::helpers::write_formula_row(
+                            worksheet,
+                            &formula_cols,
+                            n_data_cols as u16,
+                            row_u32,
+                            first_data_row,
+                            None,
+                        )?;
+                    }
                     data_rows = row_idx as u32 + 1;
                 }
             }
@@ -420,6 +450,7 @@ fn write_worksheet_content(
                 header_format,
                 layout,
                 url_columns,
+                &formula_cols,
                 "__getitem__",
                 "tolist",
                 |dtype| {
@@ -446,6 +477,7 @@ fn write_worksheet_content(
                 header_format,
                 layout,
                 url_columns,
+                &formula_cols,
                 "get_column",
                 "to_list",
                 |dtype| Ok(polars_kind(&dtype.to_string())),
@@ -527,6 +559,8 @@ fn write_df_rows<F>(
     banded: Option<&crate::format::RowPalette>,
     layout: &crate::helpers::SheetLayout,
     url_cols: &[bool],
+    formula_cols: &[crate::helpers::FormulaColumn],
+    n_data_cols: usize,
 ) -> PyResult<()>
 where
     F: Fn(usize) -> ScalarKind,
@@ -635,6 +669,16 @@ where
                 }
             }
         }
+        if !formula_cols.is_empty() {
+            crate::helpers::write_formula_row(
+                worksheet,
+                formula_cols,
+                n_data_cols as u16,
+                row_u32,
+                layout.first_data_row(),
+                None,
+            )?;
+        }
     }
     Ok(())
 }
@@ -664,6 +708,7 @@ fn write_dataframe<C>(
     header_format: Option<&crate::format::Format>,
     layout: &crate::helpers::SheetLayout,
     url_columns: Option<&Vec<String>>,
+    formula_cols: &[crate::helpers::FormulaColumn],
     get_column_method: &str,
     to_list_method: &str,
     classify_dtype: C,
@@ -672,7 +717,11 @@ where
     C: Fn(&Bound<'_, PyAny>) -> PyResult<ScalarKind>,
 {
     let headers: Vec<String> = df.getattr(py, "columns")?.extract(py)?;
+    let n_data_cols = headers.len();
     *final_headers = headers.clone();
+    for fc in formula_cols {
+        final_headers.push(fc.header.clone());
+    }
     let dtypes = df.getattr(py, "dtypes")?;
     let dtypes_list: Vec<Bound<'_, PyAny>> =
         dtypes.bind(py).try_iter()?.collect::<Result<Vec<_>, _>>()?;
@@ -680,7 +729,7 @@ where
     write_all_headers(
         worksheet,
         layout.header_row,
-        &headers,
+        final_headers,
         bold_headers,
         bold_fmt,
         index_columns,
@@ -736,6 +785,8 @@ where
         banded.as_ref(),
         layout,
         &url_cols,
+        formula_cols,
+        n_data_cols,
     )
 }
 
@@ -754,7 +805,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -781,6 +832,7 @@ pub fn write_worksheets(
     totals_row: Option<Bound<'_, pyo3::types::PyDict>>,
     totals_label: Option<Bound<'_, pyo3::types::PyDict>>,
     totals_format: Option<Bound<'_, pyo3::types::PyDict>>,
+    formula_columns: Option<Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
@@ -868,6 +920,7 @@ pub fn write_worksheets(
             sheet_hdr_fmt.as_ref(),
             &layout,
             sheet_urls.as_ref(),
+            keyed_get(formula_columns.as_ref(), &sheet_name)?.as_ref(),
             py,
         )?;
     }
@@ -878,7 +931,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -907,6 +960,7 @@ pub fn write_worksheet(
     totals_row: Option<Bound<'_, PyAny>>,
     totals_label: Option<String>,
     totals_format: Option<Bound<'_, crate::format::Format>>,
+    formula_columns: Option<Bound<'_, PyAny>>,
 ) -> PyResult<()> {
     let layout = crate::helpers::resolve_layout(
         header_row,
@@ -951,6 +1005,7 @@ pub fn write_worksheet(
         hdr_ref,
         &layout,
         url_columns.as_ref(),
+        formula_columns.as_ref(),
         py,
     )?;
 

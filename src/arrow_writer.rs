@@ -91,6 +91,7 @@ fn write_temporal(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn write_arrow_batch(
     worksheet: &mut Worksheet,
     batch: &RecordBatch,
@@ -99,6 +100,8 @@ pub fn write_arrow_batch(
     banded: Option<&crate::format::RowPalette>,
     layout: &crate::helpers::SheetLayout,
     url_cols: &[bool],
+    formula_cols: &[crate::helpers::FormulaColumn],
+    n_data_cols: usize,
 ) -> PyResult<()> {
     let num_cols = batch.num_columns();
     let num_rows = batch.num_rows();
@@ -245,6 +248,18 @@ pub fn write_arrow_batch(
                     write_string_opt(worksheet, row_u32, col_u16, "", text_fmt)?;
                 }
             }
+        }
+        // Written inside the row loop: constant-memory mode flushes each row as
+        // the next begins, so a pass afterwards would be ignored.
+        if !formula_cols.is_empty() {
+            crate::helpers::write_formula_row(
+                worksheet,
+                formula_cols,
+                n_data_cols as u16,
+                row_u32,
+                layout.first_data_row(),
+                None,
+            )?;
         }
     }
 

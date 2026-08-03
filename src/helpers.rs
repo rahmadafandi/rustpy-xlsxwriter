@@ -89,9 +89,110 @@ pub struct SheetLayout {
     /// `(column name, Excel function)` for the totals row. Also applied after
     /// the data: the row sits below it and the formula ranges depend on how
     /// many rows there turned out to be.
-    pub totals: Vec<(String, &'static str)>,
+    /// `(column name, aggregate function or raw formula template)`.
+    pub totals: Vec<(String, TotalsCell)>,
     pub totals_label: Option<String>,
     pub totals_format: Option<Format>,
+}
+
+/// A computed column: a header and a formula template appended after the data
+/// columns. `{row}` is replaced with the current row's 1-based sheet row and
+/// `{first}` with the first data row.
+///
+/// There is deliberately no `{last}`: these cells are written while the data is
+/// still streaming, so the final row is not yet known. Use `totals_row` for
+/// anything spanning the whole column — that runs after the last row.
+///
+/// The formula text is passed to `rust_xlsxwriter` verbatim, so anything Excel
+/// accepts works — nested calls, `SUMIFS`, cross-sheet references, and the 161
+/// functions the crate rewrites with an `_xlfn.` prefix or as a dynamic array.
+/// Nothing here validates the formula: a typo reaches the file unchanged and
+/// surfaces when a spreadsheet opens it.
+pub struct FormulaColumn {
+    pub header: String,
+    pub template: String,
+}
+
+impl FormulaColumn {
+    /// Substitute the row placeholders for one data row.
+    pub fn render(&self, row: u32, first: u32) -> String {
+        let mut out = self.template.clone();
+        if out.contains("{row}") {
+            out = out.replace("{row}", &row.to_string());
+        }
+        if out.contains("{first}") {
+            out = out.replace("{first}", &first.to_string());
+        }
+        out
+    }
+}
+
+/// Read `formula_columns` — an ordered `{header: formula}` mapping.
+pub fn resolve_formula_columns(
+    spec: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Vec<FormulaColumn>> {
+    let Some(spec) = spec else { return Ok(Vec::new()) };
+    let dict = spec.cast::<PyDict>().map_err(|_| {
+        value_err("formula_columns must be a dict of {header: formula}".into())
+    })?;
+    let mut out = Vec::with_capacity(dict.len());
+    for (key, val) in dict.iter() {
+        let header: String = key.extract().map_err(|_| {
+            value_err("formula_columns keys must be header names".into())
+        })?;
+        let template: String = val.extract().map_err(|_| {
+            value_err(format!("formula_columns['{header}'] must be a formula string"))
+        })?;
+        if template.trim().is_empty() {
+            return Err(value_err(format!(
+                "formula_columns['{header}'] is empty"
+            )));
+        }
+        if template.contains("{last}") {
+            return Err(value_err(format!(
+                "formula_columns['{header}'] uses {{last}}, but the last data row is not \
+known while rows are still streaming. Use totals_row for a whole-column formula, \
+or {{row}} for a per-row one."
+            )));
+        }
+        out.push(FormulaColumn { header, template });
+    }
+    Ok(out)
+}
+
+/// Write the formula cells for one data row, starting at `first_col`.
+pub fn write_formula_row(
+    worksheet: &mut Worksheet,
+    columns: &[FormulaColumn],
+    first_col: u16,
+    row: u32,
+    first_data_row: u32,
+    fmt: Option<&Format>,
+) -> PyResult<()> {
+    for (offset, column) in columns.iter().enumerate() {
+        // A1 notation is 1-based.
+        let formula = column.render(row + 1, first_data_row + 1);
+        let col = first_col + offset as u16;
+        match fmt {
+            Some(f) => worksheet
+                .write_formula_with_format(row, col, formula.as_str(), f)
+                .map_err(xlsx_err)?,
+            None => worksheet
+                .write_formula(row, col, formula.as_str())
+                .map_err(xlsx_err)?,
+        };
+    }
+    Ok(())
+}
+
+/// What to write in one totals cell.
+pub enum TotalsCell {
+    /// A named aggregate, expanded to `=FUNC(range)` over the column.
+    Aggregate(&'static str),
+    /// A caller-supplied formula. `{col}` is the column letter, `{first}` and
+    /// `{last}` the first and last data rows — all known by the time the totals
+    /// row is written.
+    Formula(String),
 }
 
 /// Map an aggregate name to its Excel function.
@@ -179,14 +280,6 @@ impl SheetLayout {
         let first = self.first_data_row() + 1;
         let last = self.first_data_row() + data_rows;
 
-        // We don't calculate the formulas, and the crate's default cached
-        // result is 0 — a plausible-looking wrong total for any reader that
-        // trusts the cache (`pandas.read_excel`, `openpyxl` with
-        // `data_only=True`). An empty result reads back as "not computed"
-        // instead, and per rust_xlsxwriter's docs it is also what forces
-        // LibreOffice to recalculate rather than display the stale 0.
-        worksheet.set_formula_result_default("");
-
         let warnings = py.import("warnings")?;
         let mut used_first_column = false;
 
@@ -202,7 +295,13 @@ impl SheetLayout {
                 used_first_column = true;
             }
             let letter = rust_xlsxwriter::utility::column_number_to_name(col as u16);
-            let formula = format!("={function}({letter}{first}:{letter}{last})");
+            let formula = match function {
+                TotalsCell::Aggregate(f) => format!("={f}({letter}{first}:{letter}{last})"),
+                TotalsCell::Formula(t) => t
+                    .replace("{col}", &letter)
+                    .replace("{first}", &first.to_string())
+                    .replace("{last}", &last.to_string()),
+            };
             match &self.totals_format {
                 Some(fmt) => worksheet
                     .write_formula_with_format(row, col as u16, formula.as_str(), fmt)
@@ -281,15 +380,21 @@ pub fn resolve_layout(
                 value_err("totals_row keys must be column names".into())
             })?;
             let name: String = val.extract().map_err(|_| {
-                value_err("totals_row values must be aggregate names".into())
+                value_err("totals_row values must be aggregate names or formulas".into())
             })?;
-            let function = excel_function(&name).ok_or_else(|| {
-                value_err(format!(
-                    "totals_row: unknown aggregate '{name}' for column '{column}' \
-(valid: sum, average, count, min, max, product, stdev)"
-                ))
-            })?;
-            totals.push((column, function));
+            // A leading '=' marks a raw formula; anything else must name a
+            // known aggregate, so a typo raises instead of writing a literal.
+            let cell = if name.trim_start().starts_with('=') {
+                TotalsCell::Formula(name)
+            } else {
+                TotalsCell::Aggregate(excel_function(&name).ok_or_else(|| {
+                    value_err(format!(
+                        "totals_row: unknown aggregate '{name}' for column '{column}' \
+(valid: sum, average, count, min, max, product, stdev; or a formula starting with '=')"
+                    ))
+                })?)
+            };
+            totals.push((column, cell));
         }
     }
 

@@ -228,6 +228,7 @@ class FastExcel:
         self._totals_row: Dict[str, Dict[str, str]] = {}
         self._totals_label: Dict[str, str] = {}
         self._totals_format: Dict[str, Any] = {}
+        self._formula_columns: Dict[str, Dict[str, str]] = {}
 
     def __enter__(self) -> "FastExcel":
         return self
@@ -312,6 +313,7 @@ class FastExcel:
         totals_row: Optional[Dict[str, str]] = None,
         totals_label: Optional[str] = None,
         totals_format: Optional["Format"] = None,
+        formula_columns: Optional[Dict[str, str]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -364,7 +366,13 @@ class FastExcel:
             totals_row: ``{column_name: aggregate}`` written as Excel formulas
                 in a row below the data — ``{"amount": "sum"}`` becomes
                 ``=SUM(C2:C101)``. Valid aggregates: ``sum``, ``average``,
-                ``count``, ``min``, ``max``, ``product``, ``stdev``. Skipped
+                ``count``, ``min``, ``max``, ``product``, ``stdev``. A value
+                starting with ``=`` is used as a formula instead, with ``{col}``
+                the column letter and ``{first}``/``{last}`` the data range::
+
+                    totals_row={"margin": "=SUM({col}{first}:{col}{last})/2"}
+
+                Skipped
                 entirely when there are no data rows, since the range would be
                 empty. NOTE: the formulas are written without a computed result,
                 so readers that use cached values (``pandas.read_excel``,
@@ -375,6 +383,22 @@ class FastExcel:
             totals_format: :class:`Format` for the whole totals row — the usual
                 bold plus a top border. Needed because the row index is not
                 known ahead of time, so ``row_formats`` cannot reach it.
+            formula_columns: ``{header: formula}`` — extra columns appended after
+                the data, one formula per data row. ``{row}`` is replaced with
+                that row's 1-based sheet row and ``{first}`` with the first data
+                row::
+
+                    formula_columns={"total": "=B{row}*C{row}"}
+
+                The formula text is passed through to Excel unchanged, so
+                anything Excel accepts works: nested calls, ``SUMIFS``,
+                cross-sheet references, and modern functions like ``XLOOKUP`` or
+                ``TEXTJOIN`` (which are rewritten with the ``_xlfn.`` prefix and
+                dynamic-array metadata automatically). Nothing validates the
+                formula — a typo reaches the file and surfaces when a
+                spreadsheet opens it. There is no ``{last}``: rows are still
+                streaming when these are written, so the final row is unknown;
+                use ``totals_row`` for whole-column formulas.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -403,6 +427,8 @@ class FastExcel:
             self._totals_label[name] = totals_label
         if totals_format is not None:
             self._totals_format[name] = totals_format
+        if formula_columns is not None:
+            self._formula_columns[name] = formula_columns
         if column_width is not None:
             self._col_width[name] = column_width
         if column_widths is not None:
@@ -443,6 +469,7 @@ class FastExcel:
             "totals_row": self._totals_row,
             "totals_label": self._totals_label,
             "totals_format": self._totals_format,
+            "formula_columns": self._formula_columns,
         }
         return [name for name, value in configured.items() if value]
 
@@ -531,6 +558,7 @@ class FastExcel:
                 totals_row=self._totals_row.get(sheet_name),
                 totals_label=self._totals_label.get(sheet_name),
                 totals_format=self._totals_format.get(sheet_name),
+                formula_columns=self._formula_columns.get(sheet_name),
             )
         else:
             # Multi-sheet path
@@ -559,6 +587,7 @@ class FastExcel:
                 totals_row=self._totals_row or None,
                 totals_label=self._totals_label or None,
                 totals_format=self._totals_format or None,
+                formula_columns=self._formula_columns or None,
             )
 
 
