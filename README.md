@@ -225,6 +225,7 @@ under_header = Format().set_border_bottom("thin")
 | `autofilter` | Filter dropdowns over the header row and its data |
 
 | `url_columns` | Column names whose text cells become clickable links |
+| `totals_row` | Aggregate formulas in a row below the data |
 
 `autofilter=True` sizes its own range from the rows actually written, so it
 follows `header_row` and needs no manual bounds:
@@ -232,6 +233,40 @@ follows `header_row` and needs no manual bounds:
 ```python
 FastExcel("report.xlsx").sheet("Data", rows, autofilter=True, freeze_row=1).save()
 ```
+
+### Totals Row
+
+Aggregate formulas in a row below the data. The ranges are derived from the
+rows actually written:
+
+```python
+(
+    FastExcel("report.xlsx")
+    .sheet(
+        "Sales",
+        rows,
+        totals_row={"amount": "sum", "qty": "sum"},
+        totals_label="Total",
+        totals_format=Format().set_bold().set_border_top("thin"),
+    )
+    .save()
+)
+# amount column gets  =SUM(C2:C101)
+```
+
+Aggregates: `sum`, `average` (`avg`/`mean`), `count`, `min`, `max`, `product`,
+`stdev`. An unknown one raises rather than writing a broken formula. The row is
+skipped entirely when there are no data rows, since the range would be empty,
+and `autofilter` deliberately stops above it so sorting never drags the total
+into the data.
+
+`totals_format` exists because the totals row index depends on how much data
+there was, so `row_formats` cannot reach it.
+
+> **The formulas carry no computed result.** Readers that use cached values —
+> `pandas.read_excel`, `openpyxl` with `data_only=True` — see `0` until Excel or
+> LibreOffice opens the file and recalculates. Use the totals row for files
+> people will open, not for a machine-readable handoff.
 
 ### Hyperlinks
 
