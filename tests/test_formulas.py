@@ -194,8 +194,14 @@ def test_special_characters_are_xml_escaped(tmp_path):
     assert _sheet(path)["C2"].value == '=IF(A2<2,"a&b",">c")'
 
 
-def test_invalid_formula_is_written_unchanged(tmp_path):
-    """Nothing validates formulas — this documents that, deliberately."""
+def test_unknown_function_is_written_unchanged(tmp_path):
+    """Structure is validated; function names deliberately are not.
+
+    LAMBDA and LET bind their own names, workbooks carry user-defined
+    functions, and Excel keeps adding to the list — a name whitelist would
+    reject valid formulas, which is worse than letting a typo through to a
+    ``#NAME?`` in one cell.
+    """
     path = tmp_path / "invalid.xlsx"
     write_worksheet(_rows(2), str(path), formula_columns={"f": "=NOTAFUNC(A{row})"})
     assert _sheet(path)["C2"].value == "=NOTAFUNC(A2)"
@@ -310,3 +316,68 @@ def test_csv_warns_that_formula_columns_are_dropped(tmp_path):
         FastExcel(str(tmp_path / "o.csv")).sheet(
             "S", _rows(2), formula_columns={"total": "=A{row}*B{row}"}
         ).save()
+
+
+# --- structural validation ------------------------------------------------
+# Malformed formulas do not corrupt the file — every case below opens fine in
+# LibreOffice and shows an error value in the cell. Validation only moves the
+# discovery from "when someone opens the report" to "when the export runs", so
+# it is deliberately limited to structure. Rejecting a formula Excel would have
+# accepted is worse than passing a broken one through.
+
+
+@pytest.mark.parametrize(
+    "formula,problem",
+    [
+        pytest.param("=SUM(A2:A5", "unclosed", id="unclosed-paren"),
+        pytest.param("=SUM((A2:A5)", "unclosed", id="one-of-two-unclosed"),
+        pytest.param("=SUM(A2:A5))", "never opened", id="extra-close"),
+        pytest.param('=IF(A2>1,"yes,"no")', "double quote", id="unbalanced-quote"),
+        pytest.param("='Sheet1!A1", "single quote", id="unbalanced-sheet-quote"),
+        pytest.param("=", "empty", id="bare-equals"),
+        pytest.param("=   ", "empty", id="whitespace-only"),
+    ],
+)
+def test_malformed_formulas_are_rejected(tmp_path, formula, problem):
+    with pytest.raises(ValueError, match=problem):
+        write_worksheet(
+            _rows(), str(tmp_path / "bad.xlsx"), formula_columns={"f": formula}
+        )
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        pytest.param('=IF(A2>1,"a)b","c(d")', id="parens-inside-string"),
+        pytest.param("='Sheet (1)'!A1", id="parens-inside-sheet-name"),
+        pytest.param('=A2&""""&B2', id="escaped-quote"),
+        pytest.param('=CONCAT("it\'s",A2)', id="apostrophe-inside-string"),
+        pytest.param("=NOTAFUNC(A2)", id="unknown-function-still-allowed"),
+        pytest.param("SUM(A2:A3)", id="no-leading-equals"),
+        pytest.param("=SUMPRODUCT((A2:A5>1)*(B2:B5))", id="nested-parens"),
+    ],
+)
+def test_valid_formulas_are_not_rejected(tmp_path, formula):
+    """False positives are the failure mode that matters here."""
+    write_worksheet(
+        _rows(), str(tmp_path / "ok.xlsx"), formula_columns={"f": formula}
+    )
+
+
+def test_totals_formula_is_validated_too(tmp_path):
+    with pytest.raises(ValueError, match="totals_row\\['qty'\\].*unclosed"):
+        write_worksheet(
+            _rows(),
+            str(tmp_path / "bad.xlsx"),
+            totals_row={"qty": "=SUM({col}{first}:{col}{last}"},
+        )
+
+
+def test_error_message_names_the_column_and_shows_the_formula(tmp_path):
+    with pytest.raises(ValueError) as excinfo:
+        write_worksheet(
+            _rows(), str(tmp_path / "bad.xlsx"), formula_columns={"margin": "=A2/("}
+        )
+    message = str(excinfo.value)
+    assert "formula_columns['margin']" in message
+    assert "=A2/(" in message

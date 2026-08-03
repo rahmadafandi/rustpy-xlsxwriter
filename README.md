@@ -272,9 +272,17 @@ totals_row={"qty": "sum", "price": "=ROUND(AVERAGE({col}{first}:{col}{last}),2)"
 
 Two things to know:
 
-**Nothing validates formulas.** `=NOTAFUNC(A1)` and unbalanced parentheses reach
-the file unchanged and surface only when a spreadsheet opens it. A typo in an
-aggregate *name* still raises, because that is a closed set.
+**Structure is validated, names are not.** Unbalanced parentheses or quotes and
+an empty formula raise at write time, naming the column and echoing the
+formula. Function names are not checked: `LAMBDA` and `LET` bind their own,
+workbooks carry user-defined functions, and Excel keeps adding to the list, so a
+whitelist would reject valid formulas. `=NOTAFUNC(A1)` therefore reaches the
+file and shows `#NAME?` in that cell.
+
+For context, a malformed formula never corrupts the file — every case tested
+opens fine and shows an error value in the one cell. Validation just moves the
+discovery from "when someone opens the report" to "when the export runs", which
+is why it stops at the checks that cannot produce a false positive.
 
 **There is no `{last}` in `formula_columns`.** Those cells are written while
 rows are still streaming, so the final row is unknown; the placeholder raises
