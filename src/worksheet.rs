@@ -8,7 +8,8 @@ use crate::cell::{classify_and_write, try_cached, CellWriter};
 use crate::data_types::{FreezePanesConfig, WorksheetData};
 use crate::helpers::{
     py_date_to_excel, py_datetime_to_excel, save_workbook, write_all_headers, write_bool_opt,
-    write_datetime_opt, write_num, write_number_opt, write_string_opt, ColType,
+    write_datetime_opt, write_num, write_number_opt, write_string_opt, write_url_or_text,
+    ColType,
 };
 use crate::utils::ensure_valid_sheet_name;
 
@@ -37,6 +38,8 @@ struct ExcelCell<'a> {
     /// one-shot column format — a column format is fixed for every row and so
     /// cannot alternate.
     per_cell_datetime: bool,
+    /// This column was listed in `url_columns`, so strings become links.
+    is_url: bool,
 }
 
 impl ExcelCell<'_> {
@@ -67,6 +70,9 @@ impl ExcelCell<'_> {
     }
 
     fn put_string(&mut self, s: &str) -> PyResult<()> {
+        if self.is_url && !s.is_empty() {
+            return write_url_or_text(self.worksheet, self.row, self.col, s, self.text_fmt);
+        }
         match self.text_fmt {
             Some(fmt) => self
                 .worksheet
@@ -187,6 +193,7 @@ fn write_worksheet_content(
     column_formats: Option<&Bound<'_, PyAny>>,
     header_format: Option<&crate::format::Format>,
     layout: &crate::helpers::SheetLayout,
+    url_columns: Option<&Vec<String>>,
     py: Python,
 ) -> PyResult<()> {
     let float_fmt = float_format.map(|s| Format::new().set_num_format(s));
@@ -241,6 +248,8 @@ fn write_worksheet_content(
                     &datetime_fmt,
                     layout.band_color.as_deref(),
                 )?;
+                let url_cols =
+                    crate::helpers::resolve_url_columns(url_columns, &final_headers, py)?;
 
                 for batch_result in reader {
                     let batch = batch_result.map_err(crate::arrow_ffi::batch_read_err)?;
@@ -264,6 +273,7 @@ fn write_worksheet_content(
                         &plain,
                         banded.as_ref(),
                         layout,
+                        &url_cols,
                     )?;
 
                     current_row += batch.num_rows() as u32;
@@ -302,6 +312,7 @@ fn write_worksheet_content(
                     crate::format::RowPalette,
                     Option<crate::format::RowPalette>,
                 )> = None;
+                let mut url_cols: Vec<bool> = Vec::new();
 
                 for (row_idx, row_res) in rows.enumerate() {
                     let row_obj = row_res?;
@@ -337,6 +348,8 @@ fn write_worksheet_content(
                             &datetime_fmt,
                             layout.band_color.as_deref(),
                         )?);
+                        url_cols =
+                            crate::helpers::resolve_url_columns(url_columns, &final_headers, py)?;
                         headers_written = true;
                     }
 
@@ -362,6 +375,7 @@ fn write_worksheet_content(
                         datetime_cols_set: &mut datetime_cols_set,
                         col_override: None,
                         per_cell_datetime: banding,
+                        is_url: false,
                     };
 
                     // Iterate the dict directly (insertion order == header order)
@@ -375,6 +389,7 @@ fn write_worksheet_content(
                         sink.col = col as u16;
                         // Column format override: wins over float_fmt / datetime_fmt.
                         sink.col_override = pal.col(col);
+                        sink.is_url = url_cols.get(col).copied().unwrap_or(false);
 
                         if !try_cached(&value, cached, &mut sink)? {
                             let detected = classify_and_write(&value, &mut sink)?;
@@ -404,6 +419,7 @@ fn write_worksheet_content(
                 index_columns,
                 header_format,
                 layout,
+                url_columns,
                 "__getitem__",
                 "tolist",
                 |dtype| {
@@ -429,6 +445,7 @@ fn write_worksheet_content(
                 index_columns,
                 header_format,
                 layout,
+                url_columns,
                 "get_column",
                 "to_list",
                 |dtype| Ok(polars_kind(&dtype.to_string())),
@@ -508,6 +525,7 @@ fn write_df_rows<F>(
     plain: &crate::format::RowPalette,
     banded: Option<&crate::format::RowPalette>,
     layout: &crate::helpers::SheetLayout,
+    url_cols: &[bool],
 ) -> PyResult<()>
 where
     F: Fn(usize) -> ScalarKind,
@@ -610,6 +628,7 @@ where
                         datetime_cols_set: &mut *datetime_cols_set,
                         col_override,
                         per_cell_datetime: banding,
+                        is_url: url_cols.get(col_idx).copied().unwrap_or(false),
                     };
                     classify_and_write(&item, &mut sink)?;
                 }
@@ -643,6 +662,7 @@ fn write_dataframe<C>(
     index_columns: Option<&Vec<String>>,
     header_format: Option<&crate::format::Format>,
     layout: &crate::helpers::SheetLayout,
+    url_columns: Option<&Vec<String>>,
     get_column_method: &str,
     to_list_method: &str,
     classify_dtype: C,
@@ -702,6 +722,8 @@ where
         layout.band_color.as_deref(),
     )?;
 
+    let url_cols = crate::helpers::resolve_url_columns(url_columns, final_headers, py)?;
+
     write_df_rows(
         worksheet,
         py,
@@ -712,6 +734,7 @@ where
         &plain,
         banded.as_ref(),
         layout,
+        &url_cols,
     )
 }
 
@@ -730,7 +753,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -753,6 +776,7 @@ pub fn write_worksheets(
     row_formats: Option<Bound<'_, pyo3::types::PyDict>>,
     banded_rows: Option<Bound<'_, pyo3::types::PyDict>>,
     autofilter: Option<Bound<'_, pyo3::types::PyDict>>,
+    url_columns: Option<Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
@@ -809,6 +833,11 @@ pub fn write_worksheets(
                 .unwrap_or(false),
         )?;
 
+        let sheet_urls: Option<Vec<String>> = keyed_get(url_columns.as_ref(), &sheet_name)?
+            .filter(|v| !v.is_none())
+            .map(|v| v.extract())
+            .transpose()?;
+
         write_worksheet_content(
             &mut worksheet,
             &records,
@@ -825,6 +854,7 @@ pub fn write_worksheets(
             sheet_col_fmts.as_ref(),
             sheet_hdr_fmt.as_ref(),
             &layout,
+            sheet_urls.as_ref(),
             py,
         )?;
     }
@@ -835,7 +865,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -860,6 +890,7 @@ pub fn write_worksheet(
     row_formats: Option<Bound<'_, PyAny>>,
     banded_rows: Option<String>,
     autofilter: bool,
+    url_columns: Option<Vec<String>>,
 ) -> PyResult<()> {
     let layout = crate::helpers::resolve_layout(
         header_row,
@@ -900,6 +931,7 @@ pub fn write_worksheet(
         column_formats.as_ref(),
         hdr_ref,
         &layout,
+        url_columns.as_ref(),
         py,
     )?;
 

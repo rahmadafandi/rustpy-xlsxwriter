@@ -375,6 +375,57 @@ pub fn write_string_opt(
     Ok(())
 }
 
+/// Write a string as a clickable link, falling back to plain text when it is
+/// not one.
+///
+/// `write_url` rejects anything it cannot classify — ordinary text, an empty
+/// string, or a URL past Excel's 2083-character limit — so calling it blindly
+/// over a column would abort the whole export on the first blank cell. A value
+/// that is not a link is therefore written as its literal text: visible and
+/// correct, just not clickable.
+pub fn write_url_or_text(
+    worksheet: &mut Worksheet,
+    row: u32,
+    col: u16,
+    val: &str,
+    fmt: Option<&Format>,
+) -> PyResult<()> {
+    let wrote = match fmt {
+        Some(f) => worksheet.write_url_with_format(row, col, val, f).is_ok(),
+        None => worksheet.write_url(row, col, val).is_ok(),
+    };
+    if wrote {
+        return Ok(());
+    }
+    write_string_opt(worksheet, row, col, val, fmt)
+}
+
+/// Resolve `url_columns` (column names) to their positions in `headers`.
+/// Unknown names warn and are skipped, matching `column_formats`.
+pub fn resolve_url_columns(
+    url_columns: Option<&Vec<String>>,
+    headers: &[String],
+    py: Python,
+) -> PyResult<Vec<bool>> {
+    let mut flags = vec![false; headers.len()];
+    let Some(names) = url_columns else {
+        return Ok(flags);
+    };
+    let warnings = py.import("warnings")?;
+    for name in names {
+        match headers.iter().position(|h| h == name) {
+            Some(idx) => flags[idx] = true,
+            None => {
+                warnings.call_method1(
+                    "warn",
+                    (format!("url_columns: unknown column '{name}', skipped"),),
+                )?;
+            }
+        }
+    }
+    Ok(flags)
+}
+
 /// Write a boolean cell, with an optional explicit format.
 pub fn write_bool_opt(
     worksheet: &mut Worksheet,
