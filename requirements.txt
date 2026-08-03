@@ -29,7 +29,7 @@ pytest-codspeed==5.0.3
 python-dateutil==2.9.0.post0
 pytokens==0.4.1
 rich==15.0.0
--e git+ssh://git@github.com/rahmadafandi/rustpy-xlsxwriter.git@c42b28d5ad71d34ca02485693e1613dc48494f60#egg=rustpy_xlsxwriter
+-e .
 semantic-version==2.10.0
 setuptools==83.0.0
 setuptools-rust==1.13.0
