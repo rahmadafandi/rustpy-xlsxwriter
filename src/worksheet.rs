@@ -792,6 +792,34 @@ where
 
 /// Resolve a per-sheet value from a dict keyed by sheet name, falling back
 /// to the `"general"` key. Returns the matching Python value, if any.
+/// [`keyed_get`] plus extraction, treating an explicit `None` as absent.
+/// Callers that want a Rust value rather than the raw object use this so the
+/// `filter`/`map`/`transpose` dance is written once.
+fn keyed_extract<'py, T>(
+    dict: Option<&Bound<'py, pyo3::types::PyDict>>,
+    sheet: &str,
+) -> PyResult<Option<T>>
+where
+    T: for<'a> FromPyObject<'a, 'py, Error = PyErr>,
+{
+    keyed_get(dict, sheet)?
+        .filter(|v| !v.is_none())
+        .map(|v| v.extract())
+        .transpose()
+}
+
+/// [`keyed_extract`] for `Format`, which has its own `FromPyObject` error type
+/// and so does not fit that generic bound.
+fn keyed_format(
+    dict: Option<&Bound<'_, pyo3::types::PyDict>>,
+    sheet: &str,
+) -> PyResult<Option<crate::format::Format>> {
+    match keyed_get(dict, sheet)? {
+        Some(v) if !v.is_none() => Ok(Some(v.extract()?)),
+        _ => Ok(None),
+    }
+}
+
 fn keyed_get<'py>(
     dict: Option<&Bound<'py, pyo3::types::PyDict>>,
     sheet: &str,
@@ -838,9 +866,7 @@ pub fn write_worksheets(
     for (sheet_name, records) in records_with_sheet_name {
         ensure_valid_sheet_name(&sheet_name)?;
 
-        let dedupe = keyed_get(dedupe_strings.as_ref(), &sheet_name)?
-            .map(|v| v.extract::<bool>())
-            .transpose()?
+        let dedupe = keyed_extract::<bool>(dedupe_strings.as_ref(), &sheet_name)?
             .unwrap_or(false);
 
         let mut worksheet = if dedupe {
@@ -855,53 +881,30 @@ pub fn write_worksheets(
             .map(|c| c.resolve(&sheet_name))
             .unwrap_or_default();
 
-        let sheet_uniform: Option<f64> = keyed_get(column_width.as_ref(), &sheet_name)?
-            .map(|v| v.extract())
-            .transpose()?;
+        let sheet_uniform = keyed_extract::<f64>(column_width.as_ref(), &sheet_name)?;
         let sheet_spec: Option<Bound<'_, PyAny>> =
             keyed_get(column_widths.as_ref(), &sheet_name)?;
 
         let sheet_col_fmts: Option<Bound<'_, PyAny>> =
             keyed_get(column_formats.as_ref(), &sheet_name)?;
-        let sheet_hdr_fmt: Option<crate::format::Format> =
-            match keyed_get(header_format.as_ref(), &sheet_name)? {
-                Some(v) => Some(v.extract()?),
-                None => None,
-            };
+        let sheet_hdr_fmt = keyed_format(header_format.as_ref(), &sheet_name)?;
 
-        let sheet_header_row: u32 = keyed_get(header_row.as_ref(), &sheet_name)?
-            .map(|v| v.extract())
-            .transpose()?
-            .unwrap_or(0);
-        let sheet_band: Option<String> = keyed_get(banded_rows.as_ref(), &sheet_name)?
-            .filter(|v| !v.is_none())
-            .map(|v| v.extract())
-            .transpose()?;
+        let sheet_header_row =
+            keyed_extract::<u32>(header_row.as_ref(), &sheet_name)?.unwrap_or(0);
+        let sheet_band = keyed_extract::<String>(banded_rows.as_ref(), &sheet_name)?;
         let layout = crate::helpers::resolve_layout(
             sheet_header_row,
             keyed_get(merge_ranges.as_ref(), &sheet_name)?.as_ref(),
             keyed_get(row_heights.as_ref(), &sheet_name)?.as_ref(),
             keyed_get(row_formats.as_ref(), &sheet_name)?.as_ref(),
             sheet_band,
-            keyed_get(autofilter.as_ref(), &sheet_name)?
-                .map(|v| v.extract::<bool>())
-                .transpose()?
-                .unwrap_or(false),
+            keyed_extract::<bool>(autofilter.as_ref(), &sheet_name)?.unwrap_or(false),
             keyed_get(totals_row.as_ref(), &sheet_name)?.as_ref(),
-            keyed_get(totals_label.as_ref(), &sheet_name)?
-                .filter(|v| !v.is_none())
-                .map(|v| v.extract())
-                .transpose()?,
-            match keyed_get(totals_format.as_ref(), &sheet_name)? {
-                Some(v) if !v.is_none() => Some(v.extract::<crate::format::Format>()?.inner),
-                _ => None,
-            },
+            keyed_extract::<String>(totals_label.as_ref(), &sheet_name)?,
+            keyed_format(totals_format.as_ref(), &sheet_name)?.map(|f| f.inner),
         )?;
 
-        let sheet_urls: Option<Vec<String>> = keyed_get(url_columns.as_ref(), &sheet_name)?
-            .filter(|v| !v.is_none())
-            .map(|v| v.extract())
-            .transpose()?;
+        let sheet_urls = keyed_extract::<Vec<String>>(url_columns.as_ref(), &sheet_name)?;
 
         write_worksheet_content(
             &mut worksheet,

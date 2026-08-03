@@ -152,6 +152,27 @@ __version__ = get_version()
 # Builder-style class wrapper
 # ---------------------------------------------------------------------------
 
+#: Options ``sheet()`` records per sheet and forwards to the writers. Both save
+#: paths iterate this, so adding an option means touching only ``sheet()``.
+_PER_SHEET_OPTIONS = (
+    "column_width",
+    "column_widths",
+    "column_formats",
+    "header_format",
+    "dedupe_strings",
+    "header_row",
+    "merge_ranges",
+    "row_heights",
+    "row_formats",
+    "banded_rows",
+    "autofilter",
+    "url_columns",
+    "totals_row",
+    "totals_label",
+    "totals_format",
+    "formula_columns",
+)
+
 
 class FastExcel:
     """Fluent builder for creating Excel files.
@@ -213,22 +234,10 @@ class FastExcel:
         self._index_columns: Optional[List[str]] = None
         self._bold_headers: bool = False
         self._freeze_panes: Dict[str, Dict[str, int]] = {}
-        self._col_width: Dict[str, float] = {}
-        self._col_widths: Dict[str, Union[Dict[str, float], List[float]]] = {}
-        self._col_formats: Dict[str, Any] = {}
-        self._header_format: Dict[str, Any] = {}
-        self._dedupe_strings: Dict[str, bool] = {}
-        self._header_row: Dict[str, int] = {}
-        self._merge_ranges: Dict[str, Any] = {}
-        self._row_heights: Dict[str, Dict[int, float]] = {}
-        self._row_formats: Dict[str, Dict[int, Any]] = {}
-        self._banded_rows: Dict[str, str] = {}
-        self._autofilter: Dict[str, bool] = {}
-        self._url_columns: Dict[str, List[str]] = {}
-        self._totals_row: Dict[str, Dict[str, str]] = {}
-        self._totals_label: Dict[str, str] = {}
-        self._totals_format: Dict[str, Any] = {}
-        self._formula_columns: Dict[str, Dict[str, str]] = {}
+        # {option: {sheet_name: value}} — see _PER_SHEET_OPTIONS.
+        self._per_sheet: Dict[str, Dict[str, Any]] = {
+            option: {} for option in _PER_SHEET_OPTIONS
+        }
 
     def __enter__(self) -> "FastExcel":
         return self
@@ -372,12 +381,11 @@ class FastExcel:
 
                     totals_row={"margin": "=SUM({col}{first}:{col}{last})/2"}
 
-                Skipped
-                entirely when there are no data rows, since the range would be
-                empty. NOTE: the formulas are written without a computed result,
-                so readers that use cached values (``pandas.read_excel``,
-                ``openpyxl`` with ``data_only=True``) see ``0`` until Excel or
-                LibreOffice opens the file and recalculates.
+                Skipped entirely when there are no data rows, since the range
+                would be empty. NOTE: the formulas carry no computed result, so
+                readers that use cached values (``pandas.read_excel``,
+                ``openpyxl`` with ``data_only=True``) get ``None`` until Excel
+                or LibreOffice opens the file and recalculates.
             totals_label: Text for the first column of the totals row, e.g.
                 ``"Total"``. Raises if the first column also has an aggregate.
             totals_format: :class:`Format` for the whole totals row — the usual
@@ -394,9 +402,10 @@ class FastExcel:
                 anything Excel accepts works: nested calls, ``SUMIFS``,
                 cross-sheet references, and modern functions like ``XLOOKUP`` or
                 ``TEXTJOIN`` (which are rewritten with the ``_xlfn.`` prefix and
-                dynamic-array metadata automatically). Nothing validates the
-                formula — a typo reaches the file and surfaces when a
-                spreadsheet opens it. There is no ``{last}``: rows are still
+                dynamic-array metadata automatically). Structure is checked —
+                unbalanced parentheses or quotes raise — but function names are
+                not, so ``=NOTAFUNC(A1)`` reaches the file and shows ``#NAME?``.
+                There is no ``{last}``: rows are still
                 streaming when these are written, so the final row is unknown;
                 use ``totals_row`` for whole-column formulas.
 
@@ -405,38 +414,29 @@ class FastExcel:
                 merge range overlaps the header/data rows.
         """
         self._sheets.append((name, data))
-        if dedupe_strings:
-            self._dedupe_strings[name] = True
-        if header_row:
-            self._header_row[name] = header_row
-        if merge_ranges is not None:
-            self._merge_ranges[name] = merge_ranges
-        if row_heights is not None:
-            self._row_heights[name] = row_heights
-        if row_formats is not None:
-            self._row_formats[name] = row_formats
-        if banded_rows is not None:
-            self._banded_rows[name] = banded_rows
-        if autofilter:
-            self._autofilter[name] = True
-        if url_columns is not None:
-            self._url_columns[name] = url_columns
-        if totals_row is not None:
-            self._totals_row[name] = totals_row
-        if totals_label is not None:
-            self._totals_label[name] = totals_label
-        if totals_format is not None:
-            self._totals_format[name] = totals_format
-        if formula_columns is not None:
-            self._formula_columns[name] = formula_columns
-        if column_width is not None:
-            self._col_width[name] = column_width
-        if column_widths is not None:
-            self._col_widths[name] = column_widths
-        if column_formats is not None:
-            self._col_formats[name] = column_formats
-        if header_format is not None:
-            self._header_format[name] = header_format
+        # Only options actually given are recorded, so the writers keep their
+        # own defaults for the rest — and a CSV target only warns about options
+        # that were really set.
+        for option, value in {
+            "column_width": column_width,
+            "column_widths": column_widths,
+            "column_formats": column_formats,
+            "header_format": header_format,
+            "dedupe_strings": dedupe_strings,
+            "header_row": header_row,
+            "merge_ranges": merge_ranges,
+            "row_heights": row_heights,
+            "row_formats": row_formats,
+            "banded_rows": banded_rows,
+            "autofilter": autofilter,
+            "url_columns": url_columns,
+            "totals_row": totals_row,
+            "totals_label": totals_label,
+            "totals_format": totals_format,
+            "formula_columns": formula_columns,
+        }.items():
+            if value:
+                self._per_sheet[option][name] = value
         return self
 
     # -- output -------------------------------------------------------------
@@ -447,31 +447,19 @@ class FastExcel:
         ``autofit`` and ``sanitize_formulas`` are left out: the first is on by
         default so it would fire on every CSV write, and the second is CSV-only.
         """
-        configured = {
+        workbook_wide = {
             "password": self._password,
             "float_format": self._float_format,
             "datetime_format": self._datetime_format,
             "index_columns": self._index_columns,
             "bold_headers": self._bold_headers,
             "freeze": self._freeze_panes,
-            "column_width": self._col_width,
-            "column_widths": self._col_widths,
-            "column_formats": self._col_formats,
-            "header_format": self._header_format,
-            "dedupe_strings": self._dedupe_strings,
-            "header_row": self._header_row,
-            "merge_ranges": self._merge_ranges,
-            "row_heights": self._row_heights,
-            "row_formats": self._row_formats,
-            "banded_rows": self._banded_rows,
-            "autofilter": self._autofilter,
-            "url_columns": self._url_columns,
-            "totals_row": self._totals_row,
-            "totals_label": self._totals_label,
-            "totals_format": self._totals_format,
-            "formula_columns": self._formula_columns,
         }
-        return [name for name, value in configured.items() if value]
+        names = [name for name, value in workbook_wide.items() if value]
+        names += [
+            option for option in _PER_SHEET_OPTIONS if self._per_sheet[option]
+        ]
+        return names
 
     def save(self) -> None:
         """Write all sheets to the target file or buffer.
@@ -528,9 +516,6 @@ class FastExcel:
                 freeze_row = cfg.get("row")
                 freeze_col = cfg.get("col")
 
-            cw = self._col_width.get(sheet_name)
-            cws = self._col_widths.get(sheet_name)
-
             write_worksheet(
                 data,
                 self._target,
@@ -543,22 +528,11 @@ class FastExcel:
                 index_columns=self._index_columns,
                 autofit=self._autofit,
                 bold_headers=self._bold_headers,
-                column_width=cw,
-                column_widths=cws,
-                column_formats=self._col_formats.get(sheet_name),
-                header_format=self._header_format.get(sheet_name),
-                dedupe_strings=self._dedupe_strings.get(sheet_name, False),
-                header_row=self._header_row.get(sheet_name, 0),
-                merge_ranges=self._merge_ranges.get(sheet_name),
-                row_heights=self._row_heights.get(sheet_name),
-                row_formats=self._row_formats.get(sheet_name),
-                banded_rows=self._banded_rows.get(sheet_name),
-                autofilter=self._autofilter.get(sheet_name, False),
-                url_columns=self._url_columns.get(sheet_name),
-                totals_row=self._totals_row.get(sheet_name),
-                totals_label=self._totals_label.get(sheet_name),
-                totals_format=self._totals_format.get(sheet_name),
-                formula_columns=self._formula_columns.get(sheet_name),
+                **{
+                    option: values[sheet_name]
+                    for option, values in self._per_sheet.items()
+                    if sheet_name in values
+                },
             )
         else:
             # Multi-sheet path
@@ -572,22 +546,11 @@ class FastExcel:
                 index_columns=self._index_columns,
                 autofit=self._autofit,
                 bold_headers=self._bold_headers,
-                column_width=self._col_width or None,
-                column_widths=self._col_widths or None,
-                column_formats=self._col_formats or None,
-                header_format=self._header_format or None,
-                dedupe_strings=self._dedupe_strings or None,
-                header_row=self._header_row or None,
-                merge_ranges=self._merge_ranges or None,
-                row_heights=self._row_heights or None,
-                row_formats=self._row_formats or None,
-                banded_rows=self._banded_rows or None,
-                autofilter=self._autofilter or None,
-                url_columns=self._url_columns or None,
-                totals_row=self._totals_row or None,
-                totals_label=self._totals_label or None,
-                totals_format=self._totals_format or None,
-                formula_columns=self._formula_columns or None,
+                **{
+                    option: values
+                    for option, values in self._per_sheet.items()
+                    if values
+                },
             )
 
 
