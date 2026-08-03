@@ -225,6 +225,9 @@ class FastExcel:
         self._banded_rows: Dict[str, str] = {}
         self._autofilter: Dict[str, bool] = {}
         self._url_columns: Dict[str, List[str]] = {}
+        self._totals_row: Dict[str, Dict[str, str]] = {}
+        self._totals_label: Dict[str, str] = {}
+        self._totals_format: Dict[str, Any] = {}
 
     def __enter__(self) -> "FastExcel":
         return self
@@ -306,6 +309,9 @@ class FastExcel:
         banded_rows: Optional[str] = None,
         autofilter: bool = False,
         url_columns: Optional[List[str]] = None,
+        totals_row: Optional[Dict[str, str]] = None,
+        totals_label: Optional[str] = None,
+        totals_format: Optional["Format"] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -355,6 +361,20 @@ class FastExcel:
                 its 2083-character limit) is written as plain text instead, so a
                 stray non-link never aborts the export. The cell displays the
                 URL itself; per-cell display text is not supported.
+            totals_row: ``{column_name: aggregate}`` written as Excel formulas
+                in a row below the data — ``{"amount": "sum"}`` becomes
+                ``=SUM(C2:C101)``. Valid aggregates: ``sum``, ``average``,
+                ``count``, ``min``, ``max``, ``product``, ``stdev``. Skipped
+                entirely when there are no data rows, since the range would be
+                empty. NOTE: the formulas are written without a computed result,
+                so readers that use cached values (``pandas.read_excel``,
+                ``openpyxl`` with ``data_only=True``) see ``0`` until Excel or
+                LibreOffice opens the file and recalculates.
+            totals_label: Text for the first column of the totals row, e.g.
+                ``"Total"``. Raises if the first column also has an aggregate.
+            totals_format: :class:`Format` for the whole totals row — the usual
+                bold plus a top border. Needed because the row index is not
+                known ahead of time, so ``row_formats`` cannot reach it.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -377,6 +397,12 @@ class FastExcel:
             self._autofilter[name] = True
         if url_columns is not None:
             self._url_columns[name] = url_columns
+        if totals_row is not None:
+            self._totals_row[name] = totals_row
+        if totals_label is not None:
+            self._totals_label[name] = totals_label
+        if totals_format is not None:
+            self._totals_format[name] = totals_format
         if column_width is not None:
             self._col_width[name] = column_width
         if column_widths is not None:
@@ -414,6 +440,9 @@ class FastExcel:
             "banded_rows": self._banded_rows,
             "autofilter": self._autofilter,
             "url_columns": self._url_columns,
+            "totals_row": self._totals_row,
+            "totals_label": self._totals_label,
+            "totals_format": self._totals_format,
         }
         return [name for name, value in configured.items() if value]
 
@@ -499,6 +528,9 @@ class FastExcel:
                 banded_rows=self._banded_rows.get(sheet_name),
                 autofilter=self._autofilter.get(sheet_name, False),
                 url_columns=self._url_columns.get(sheet_name),
+                totals_row=self._totals_row.get(sheet_name),
+                totals_label=self._totals_label.get(sheet_name),
+                totals_format=self._totals_format.get(sheet_name),
             )
         else:
             # Multi-sheet path
@@ -524,6 +556,9 @@ class FastExcel:
                 banded_rows=self._banded_rows or None,
                 autofilter=self._autofilter or None,
                 url_columns=self._url_columns or None,
+                totals_row=self._totals_row or None,
+                totals_label=self._totals_label or None,
+                totals_format=self._totals_format or None,
             )
 
 

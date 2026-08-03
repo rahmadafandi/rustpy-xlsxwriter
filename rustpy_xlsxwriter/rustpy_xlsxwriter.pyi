@@ -287,6 +287,9 @@ def write_worksheet(
     banded_rows: Optional[str] = None,
     autofilter: bool = False,
     url_columns: Optional[List[str]] = None,
+    totals_row: Optional[Dict[str, str]] = None,
+    totals_label: Optional[str] = None,
+    totals_format: Optional[Format] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -318,6 +321,10 @@ def write_worksheet(
         autofilter: Add filter dropdowns over the header row and its data.
         url_columns: Column names whose text cells become clickable links.
             Values Excel rejects fall back to plain text.
+        totals_row: ``{column_name: aggregate}`` written as formulas below the
+            data. Valid: sum, average, count, min, max, product, stdev.
+        totals_label: Text for the first column of the totals row.
+        totals_format: Format applied to the whole totals row.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -350,6 +357,9 @@ def write_worksheets(
     banded_rows: Optional[Dict[str, str]] = None,
     autofilter: Optional[Dict[str, bool]] = None,
     url_columns: Optional[Dict[str, List[str]]] = None,
+    totals_row: Optional[Dict[str, Dict[str, str]]] = None,
+    totals_label: Optional[Dict[str, str]] = None,
+    totals_format: Optional[Dict[str, Format]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -373,6 +383,9 @@ def write_worksheets(
         banded_rows: Per-sheet alternating row colour — dict keyed by sheet name.
         autofilter: Per-sheet filter dropdowns — dict keyed by sheet name.
         url_columns: Per-sheet link columns — dict keyed by sheet name.
+        totals_row: Per-sheet totals formulas — dict keyed by sheet name.
+        totals_label: Per-sheet totals label — dict keyed by sheet name.
+        totals_format: Per-sheet totals row format — dict keyed by sheet name.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
