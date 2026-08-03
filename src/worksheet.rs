@@ -197,6 +197,8 @@ fn write_worksheet_content(
     let bold_fmt = Format::new().set_bold();
     let mut datetime_cols_set: HashSet<u16> = HashSet::new();
     let mut final_headers: Vec<String> = Vec::new();
+    // Number of data rows written, needed for the autofilter range.
+    let mut data_rows: u32 = 0;
 
     // Merges, row heights and row formats must all land before the first data
     // cell — constant-memory mode cannot revisit a flushed row.
@@ -266,6 +268,7 @@ fn write_worksheet_content(
 
                     current_row += batch.num_rows() as u32;
                 }
+                data_rows = current_row - layout.first_data_row();
                 Ok(())
             })();
 
@@ -380,6 +383,7 @@ fn write_worksheet_content(
                             }
                         }
                     }
+                    data_rows = row_idx as u32 + 1;
                 }
             }
         }
@@ -390,6 +394,7 @@ fn write_worksheet_content(
                 py,
                 df,
                 &mut final_headers,
+                &mut data_rows,
                 column_formats,
                 float_fmt.as_ref(),
                 &datetime_fmt,
@@ -414,6 +419,7 @@ fn write_worksheet_content(
                 py,
                 df,
                 &mut final_headers,
+                &mut data_rows,
                 column_formats,
                 float_fmt.as_ref(),
                 &datetime_fmt,
@@ -429,6 +435,8 @@ fn write_worksheet_content(
             )?;
         }
     }
+
+    layout.apply_autofilter(worksheet, data_rows, final_headers.len())?;
 
     if freeze_row.is_some() || freeze_col.is_some() {
         worksheet
@@ -625,6 +633,7 @@ fn write_dataframe<C>(
     py: Python,
     df: &Py<PyAny>,
     final_headers: &mut Vec<String>,
+    data_rows: &mut u32,
     column_formats: Option<&Bound<'_, PyAny>>,
     float_fmt: Option<&Format>,
     datetime_fmt: &Format,
@@ -672,6 +681,7 @@ where
     }
 
     let nrows: usize = df.call_method0(py, "__len__")?.extract(py)?;
+    *data_rows = nrows as u32;
 
     // Auto datetime column formats first, then explicit column_formats
     // override (constant memory: BEFORE writing data rows).
@@ -720,7 +730,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -742,6 +752,7 @@ pub fn write_worksheets(
     row_heights: Option<Bound<'_, pyo3::types::PyDict>>,
     row_formats: Option<Bound<'_, pyo3::types::PyDict>>,
     banded_rows: Option<Bound<'_, pyo3::types::PyDict>>,
+    autofilter: Option<Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
@@ -792,6 +803,10 @@ pub fn write_worksheets(
             keyed_get(row_heights.as_ref(), &sheet_name)?.as_ref(),
             keyed_get(row_formats.as_ref(), &sheet_name)?.as_ref(),
             sheet_band,
+            keyed_get(autofilter.as_ref(), &sheet_name)?
+                .map(|v| v.extract::<bool>())
+                .transpose()?
+                .unwrap_or(false),
         )?;
 
         write_worksheet_content(
@@ -820,7 +835,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -844,6 +859,7 @@ pub fn write_worksheet(
     row_heights: Option<Bound<'_, PyAny>>,
     row_formats: Option<Bound<'_, PyAny>>,
     banded_rows: Option<String>,
+    autofilter: bool,
 ) -> PyResult<()> {
     let layout = crate::helpers::resolve_layout(
         header_row,
@@ -851,6 +867,7 @@ pub fn write_worksheet(
         row_heights.as_ref(),
         row_formats.as_ref(),
         banded_rows,
+        autofilter,
     )?;
     let mut workbook = Workbook::new();
     let mut worksheet = if dedupe_strings {

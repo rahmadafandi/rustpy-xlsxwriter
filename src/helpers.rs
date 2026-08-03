@@ -81,6 +81,11 @@ pub struct SheetLayout {
     pub row_formats: Vec<(u32, Format)>,
     /// Background colour for alternating data rows, as given by the caller.
     pub band_color: Option<String>,
+    /// Add a filter dropdown over the header row and its data. Unlike the rest
+    /// of this struct this is applied *after* the data, in
+    /// [`SheetLayout::apply_autofilter`] — the range needs the final row count,
+    /// which is only known once the last row has been written.
+    pub autofilter: bool,
 }
 
 impl SheetLayout {
@@ -113,6 +118,29 @@ impl SheetLayout {
         }
         Ok(())
     }
+
+    /// Add the filter over `header_row..=header_row + data_rows`. Safe to call
+    /// after every row is flushed: the `autoFilter` element lives in the
+    /// worksheet footer, not in the row data.
+    pub fn apply_autofilter(
+        &self,
+        worksheet: &mut Worksheet,
+        data_rows: u32,
+        num_columns: usize,
+    ) -> PyResult<()> {
+        if !self.autofilter || num_columns == 0 {
+            return Ok(());
+        }
+        worksheet
+            .autofilter(
+                self.header_row,
+                0,
+                self.header_row + data_rows,
+                (num_columns - 1) as u16,
+            )
+            .map_err(xlsx_err)?;
+        Ok(())
+    }
 }
 
 fn value_err(msg: String) -> PyErr {
@@ -142,12 +170,14 @@ fn row_keyed<T>(
 
 /// Build a [`SheetLayout`] from the Python-side arguments, rejecting anything
 /// constant-memory mode would otherwise drop without raising.
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_layout(
     header_row: u32,
     merge_ranges: Option<&Bound<'_, PyAny>>,
     row_heights: Option<&Bound<'_, PyAny>>,
     row_formats: Option<&Bound<'_, PyAny>>,
     banded_rows: Option<String>,
+    autofilter: bool,
 ) -> PyResult<SheetLayout> {
     let mut merges = Vec::new();
     if let Some(spec) = merge_ranges {
@@ -219,6 +249,7 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         row_heights: heights,
         row_formats: formats,
         band_color: banded_rows,
+        autofilter,
     })
 }
 
