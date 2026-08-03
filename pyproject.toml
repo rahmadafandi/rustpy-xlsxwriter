@@ -38,3 +38,9 @@ tests = ["pytest", "XlsxWriter", "pytest-codspeed", "faker", "openpyxl", "pandas
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+markers = [
+    "benchmark: performance benchmarks, deselected by default in CI",
+    "recalc: opens output in LibreOffice to verify computed formula results",
+]
