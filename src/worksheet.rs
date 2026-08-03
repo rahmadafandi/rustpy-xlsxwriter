@@ -346,29 +346,32 @@ fn write_worksheet_content(
                     } else {
                         plain
                     };
+                    // Everything but `col`/`col_override` is fixed for the row,
+                    // so build the sink once and step it across the columns
+                    // rather than reassembling all nine fields per cell.
+                    let mut sink = ExcelCell {
+                        worksheet: &mut *worksheet,
+                        row: row_u32,
+                        col: 0,
+                        text_fmt: pal.text.as_ref(),
+                        float_fmt: pal.float.as_ref(),
+                        datetime_fmt: &pal.datetime,
+                        datetime_cols_set: &mut datetime_cols_set,
+                        col_override: None,
+                        per_cell_datetime: banding,
+                    };
+
                     // Iterate the dict directly (insertion order == header order)
                     // to avoid allocating a fresh `values()` list per row.
                     for (col, (_key, value)) in row_dict.iter().enumerate() {
-                        let col_u16 = col as u16;
                         let cached = col_types
                             .get(col)
                             .copied()
                             .unwrap_or(ColType::Unknown);
 
+                        sink.col = col as u16;
                         // Column format override: wins over float_fmt / datetime_fmt.
-                        let col_override = pal.col(col);
-
-                        let mut sink = ExcelCell {
-                            worksheet: &mut *worksheet,
-                            row: row_u32,
-                            col: col_u16,
-                            text_fmt: pal.text.as_ref(),
-                            float_fmt: pal.float.as_ref(),
-                            datetime_fmt: &pal.datetime,
-                            datetime_cols_set: &mut datetime_cols_set,
-                            col_override,
-                            per_cell_datetime: banding,
-                        };
+                        sink.col_override = pal.col(col);
 
                         if !try_cached(&value, cached, &mut sink)? {
                             let detected = classify_and_write(&value, &mut sink)?;
