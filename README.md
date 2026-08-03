@@ -224,12 +224,28 @@ under_header = Format().set_border_bottom("thin")
 | `banded_rows` | Background colour for every other data row |
 | `autofilter` | Filter dropdowns over the header row and its data |
 
+| `url_columns` | Column names whose text cells become clickable links |
+
 `autofilter=True` sizes its own range from the rows actually written, so it
 follows `header_row` and needs no manual bounds:
 
 ```python
 FastExcel("report.xlsx").sheet("Data", rows, autofilter=True, freeze_row=1).save()
 ```
+
+### Hyperlinks
+
+Name the columns that hold links; the cell text stays the URL:
+
+```python
+FastExcel("report.xlsx").sheet("Docs", rows, url_columns=["homepage"]).save()
+```
+
+Accepts what Excel accepts — `http(s)://`, `mailto:`, and `internal:Sheet2!A1`
+to jump to another sheet. Anything Excel would reject (ordinary text, a blank,
+or a URL past its 2083-character limit) is written as plain text instead, so one
+stray value in a column of thousands never aborts the export. Links keep their
+banding and column format.
 
 **Ordering is enforced, not assumed.** Sheets are written row by row and a row
 that has been flushed cannot be revisited — `rust_xlsxwriter` would drop a late
