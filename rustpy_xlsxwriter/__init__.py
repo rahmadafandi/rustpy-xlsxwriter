@@ -223,6 +223,7 @@ class FastExcel:
         self._row_heights: Dict[str, Dict[int, float]] = {}
         self._row_formats: Dict[str, Dict[int, Any]] = {}
         self._banded_rows: Dict[str, str] = {}
+        self._autofilter: Dict[str, bool] = {}
 
     def __enter__(self) -> "FastExcel":
         return self
@@ -302,6 +303,7 @@ class FastExcel:
         row_heights: Optional[Dict[int, float]] = None,
         row_formats: Optional[Dict[int, "Format"]] = None,
         banded_rows: Optional[str] = None,
+        autofilter: bool = False,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -341,6 +343,9 @@ class FastExcel:
                 every other data row, starting with the second. Applied per cell
                 rather than per row, so columns with their own number format
                 stay shaded too.
+            autofilter: Add Excel's filter dropdowns over the header row and its
+                data. The range is computed from the rows actually written, so
+                it follows ``header_row`` and needs no manual bounds.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -359,6 +364,8 @@ class FastExcel:
             self._row_formats[name] = row_formats
         if banded_rows is not None:
             self._banded_rows[name] = banded_rows
+        if autofilter:
+            self._autofilter[name] = True
         if column_width is not None:
             self._col_width[name] = column_width
         if column_widths is not None:
@@ -394,6 +401,7 @@ class FastExcel:
             "row_heights": self._row_heights,
             "row_formats": self._row_formats,
             "banded_rows": self._banded_rows,
+            "autofilter": self._autofilter,
         }
         return [name for name, value in configured.items() if value]
 
@@ -477,6 +485,7 @@ class FastExcel:
                 row_heights=self._row_heights.get(sheet_name),
                 row_formats=self._row_formats.get(sheet_name),
                 banded_rows=self._banded_rows.get(sheet_name),
+                autofilter=self._autofilter.get(sheet_name, False),
             )
         else:
             # Multi-sheet path
@@ -500,6 +509,7 @@ class FastExcel:
                 row_heights=self._row_heights or None,
                 row_formats=self._row_formats or None,
                 banded_rows=self._banded_rows or None,
+                autofilter=self._autofilter or None,
             )
 
 

@@ -285,6 +285,7 @@ def write_worksheet(
     row_heights: Optional[Dict[int, float]] = None,
     row_formats: Optional[Dict[int, Format]] = None,
     banded_rows: Optional[str] = None,
+    autofilter: bool = False,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -313,6 +314,7 @@ def write_worksheet(
         row_heights: ``{row_index: height}`` in points.
         row_formats: ``{row_index: Format}`` applied to the whole row.
         banded_rows: Background colour shaded onto every other data row.
+        autofilter: Add filter dropdowns over the header row and its data.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -343,6 +345,7 @@ def write_worksheets(
     row_heights: Optional[Dict[str, Dict[int, float]]] = None,
     row_formats: Optional[Dict[str, Dict[int, Format]]] = None,
     banded_rows: Optional[Dict[str, str]] = None,
+    autofilter: Optional[Dict[str, bool]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -364,6 +367,7 @@ def write_worksheets(
         row_heights: Per-sheet row heights — dict keyed by sheet name.
         row_formats: Per-sheet row formats — dict keyed by sheet name.
         banded_rows: Per-sheet alternating row colour — dict keyed by sheet name.
+        autofilter: Per-sheet filter dropdowns — dict keyed by sheet name.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
