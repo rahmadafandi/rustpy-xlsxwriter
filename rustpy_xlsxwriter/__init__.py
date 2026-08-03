@@ -64,6 +64,7 @@ from typing import (
 )
 
 import os as _os
+import warnings as _warnings
 from importlib.metadata import metadata as _metadata
 from importlib.metadata import version as _version
 
@@ -370,6 +371,32 @@ class FastExcel:
 
     # -- output -------------------------------------------------------------
 
+    def _excel_only_options(self) -> List[str]:
+        """Names of set options that only apply to ``.xlsx`` output.
+
+        ``autofit`` and ``sanitize_formulas`` are left out: the first is on by
+        default so it would fire on every CSV write, and the second is CSV-only.
+        """
+        configured = {
+            "password": self._password,
+            "float_format": self._float_format,
+            "datetime_format": self._datetime_format,
+            "index_columns": self._index_columns,
+            "bold_headers": self._bold_headers,
+            "freeze": self._freeze_panes,
+            "column_width": self._col_width,
+            "column_widths": self._col_widths,
+            "column_formats": self._col_formats,
+            "header_format": self._header_format,
+            "dedupe_strings": self._dedupe_strings,
+            "header_row": self._header_row,
+            "merge_ranges": self._merge_ranges,
+            "row_heights": self._row_heights,
+            "row_formats": self._row_formats,
+            "banded_rows": self._banded_rows,
+        }
+        return [name for name, value in configured.items() if value]
+
     def save(self) -> None:
         """Write all sheets to the target file or buffer.
 
@@ -395,6 +422,15 @@ class FastExcel:
                     )
                 delimiter = "\t" if lower.endswith(".tsv") else ","
                 _, data = self._sheets[0]
+                ignored = self._excel_only_options()
+                if ignored:
+                    _warnings.warn(
+                        "CSV/TSV output ignores Excel-only options: "
+                        f"{', '.join(ignored)}. "
+                        "The file will contain unformatted values; write to "
+                        "'.xlsx' if you need them.",
+                        stacklevel=2,
+                    )
                 write_csv(
                     data,
                     self._target,
