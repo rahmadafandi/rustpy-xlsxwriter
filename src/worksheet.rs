@@ -605,7 +605,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -621,12 +621,22 @@ pub fn write_worksheets(
     column_widths: Option<Bound<'_, pyo3::types::PyDict>>,
     column_formats: Option<Bound<'_, pyo3::types::PyDict>>,
     header_format: Option<Bound<'_, pyo3::types::PyDict>>,
+    dedupe_strings: Option<Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
         ensure_valid_sheet_name(&sheet_name)?;
 
-        let mut worksheet = workbook.add_worksheet_with_constant_memory();
+        let dedupe = keyed_get(dedupe_strings.as_ref(), &sheet_name)?
+            .map(|v| v.extract::<bool>())
+            .transpose()?
+            .unwrap_or(false);
+
+        let mut worksheet = if dedupe {
+            workbook.add_worksheet()
+        } else {
+            workbook.add_worksheet_with_constant_memory()
+        };
         worksheet.set_name(&sheet_name).map_err(xlsx_err)?;
 
         let pane = freeze_panes
@@ -673,7 +683,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -691,9 +701,14 @@ pub fn write_worksheet(
     column_widths: Option<Bound<'_, PyAny>>,
     column_formats: Option<Bound<'_, PyAny>>,
     header_format: Option<Bound<'_, crate::format::Format>>,
+    dedupe_strings: bool,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
-    let mut worksheet = workbook.add_worksheet_with_constant_memory();
+    let mut worksheet = if dedupe_strings {
+        workbook.add_worksheet()
+    } else {
+        workbook.add_worksheet_with_constant_memory()
+    };
 
     if let Some(sheet_name) = sheet_name {
         ensure_valid_sheet_name(&sheet_name)?;

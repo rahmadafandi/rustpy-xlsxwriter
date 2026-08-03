@@ -189,6 +189,41 @@ accept `"#RRGGBB"` or names (`"red"`); enum-valued setters take lowercase string
 > show the raw Excel serial number — chain `.set_num_format("yyyy-mm-dd")` (or
 > similar) to keep a date display.
 
+### String Deduplication
+
+By default every sheet is written in constant-memory mode: strings go inline
+into the sheet XML and nothing is buffered. Passing `dedupe_strings=True` takes
+that sheet out of constant-memory mode and stores each distinct string once in
+the workbook's shared-string table instead.
+
+```python
+(
+    FastExcel("report.xlsx")
+    .sheet("Events", events, dedupe_strings=True)   # lots of repeated text
+    .sheet("Raw", raw_rows)                         # default: streamed
+    .save()
+)
+```
+
+Measured on 50k rows — the uncompressed XML shrinks a lot, but `.xlsx` is a zip
+and deflate already collapses repetition, so the **on-disk** win is modest and
+can even be negative:
+
+| Data | Uncompressed | On disk | Write time |
+|---|---|---|---|
+| Short repeats (4 distinct values) | −11% | **+2%** | 1.7x |
+| Long repeats (20 distinct, 120 chars) | −56% | −5% | 1.1x |
+| All-unique strings | +11% | −1% | 1.5x |
+| 20 repeated text columns | −39% | −9% | 1.1x |
+
+Worth enabling for sheets with many repeated *long* strings, or when the
+consumer parses the uncompressed XML. Not worth it for short categorical values.
+Off by default because it buffers the whole sheet in memory — measure on your
+own data before turning it on for a large export.
+
+For `write_worksheets`, pass `dedupe_strings` as a dict keyed by sheet name
+(with a `"general"` fallback key).
+
 ### Generator Streaming
 
 ```python
@@ -198,6 +233,9 @@ def rows():
 
 FastExcel("streamed.xlsx").sheet("Data", rows()).save()
 ```
+
+> **Note:** `dedupe_strings=True` buffers the sheet, so it defeats the point of
+> generator streaming. Leave it off for very large streamed exports.
 
 ### In-Memory Buffer (Web Frameworks)
 

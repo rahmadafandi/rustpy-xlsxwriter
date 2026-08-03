@@ -191,9 +191,10 @@ class FastExcel:
                 protection is trivially removed; do not rely on it to keep
                 data confidential.
             autofit: Automatically adjust column widths (default ``True``).
-                Under constant-memory mode (used by this library for all
-                Excel paths) autofit sizing is approximate. Set to
-                ``False`` for large datasets to improve performance.
+                Under constant-memory mode (the default for every Excel sheet,
+                unless ``sheet(..., dedupe_strings=True)`` opts out) autofit
+                sizing is approximate. Set to ``False`` for large datasets to
+                improve performance.
             sanitize_formulas: CSV/TSV only. When ``True``, string fields that
                 begin with ``= + - @`` are prefixed with a single quote so
                 spreadsheet apps open them as text instead of executing them as
@@ -215,6 +216,7 @@ class FastExcel:
         self._col_widths: Dict[str, Union[Dict[str, float], List[float]]] = {}
         self._col_formats: Dict[str, Any] = {}
         self._header_format: Dict[str, Any] = {}
+        self._dedupe_strings: Dict[str, bool] = {}
 
     def __enter__(self) -> "FastExcel":
         return self
@@ -288,6 +290,7 @@ class FastExcel:
         column_widths: Optional[Union[Dict[str, float], List[float]]] = None,
         column_formats: Optional[Union[Dict[str, "Format"], List["Format"]]] = None,
         header_format: Optional["Format"] = None,
+        dedupe_strings: bool = False,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -303,11 +306,20 @@ class FastExcel:
                 (``[Format().set_bold(), None]``).
             header_format: :class:`Format` applied to every header cell of this
                 sheet.
+            dedupe_strings: Store repeated strings once in the workbook's
+                shared-string table instead of inline, which can shrink the
+                ``.xlsx`` substantially when a sheet has many repeated text
+                values (categories, statuses, country codes). Off by default:
+                it takes this sheet out of constant-memory mode, so the whole
+                sheet is buffered in RAM and every string is hashed. Turn it on
+                per sheet, for sheets whose text actually repeats, and measure.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save).
         """
         self._sheets.append((name, data))
+        if dedupe_strings:
+            self._dedupe_strings[name] = True
         if column_width is not None:
             self._col_width[name] = column_width
         if column_widths is not None:
@@ -385,6 +397,7 @@ class FastExcel:
                 column_widths=cws,
                 column_formats=self._col_formats.get(sheet_name),
                 header_format=self._header_format.get(sheet_name),
+                dedupe_strings=self._dedupe_strings.get(sheet_name, False),
             )
         else:
             # Multi-sheet path
@@ -402,6 +415,7 @@ class FastExcel:
                 column_widths=self._col_widths or None,
                 column_formats=self._col_formats or None,
                 header_format=self._header_format or None,
+                dedupe_strings=self._dedupe_strings or None,
             )
 
 
