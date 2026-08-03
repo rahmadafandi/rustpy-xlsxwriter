@@ -224,9 +224,17 @@ fn write_worksheet_content(
 
     match records {
         WorksheetData::ArrowDataFrame(stream_obj) => {
-            let arrow_ok = (|| -> PyResult<()> {
-                let reader = crate::arrow_ffi::stream_to_reader(stream_obj, py)?;
-
+            // Producing the stream can fail even though the object advertises
+            // `__arrow_c_stream__` — pandas raises ImportError when pyarrow is
+            // not installed, and an all-Null empty frame has no Arrow type. The
+            // reader is therefore built up front: while nothing has been
+            // written yet, falling back to the column-by-column writer is safe.
+            // Once batches start landing a failure has to propagate, because
+            // re-writing from the top would duplicate rows.
+            let reader = crate::arrow_ffi::stream_to_reader(stream_obj, py);
+            let arrow_ok = match reader {
+                Err(stream_err) => Err(stream_err),
+                Ok(reader) => (|| -> PyResult<()> {
                 let schema = reader.schema();
                 final_headers = schema
                     .fields()
@@ -295,21 +303,36 @@ fn write_worksheet_content(
                 }
                 data_rows = current_row - layout.first_data_row();
                 Ok(())
-            })();
+                })(),
+            };
 
-            // If Arrow FFI failed (e.g. Null-typed empty DataFrame), at
-            // least write the header row from `.columns`.
-            if arrow_ok.is_err() {
-                if let Ok(cols) = stream_obj.getattr(py, "columns") {
-                    final_headers = cols.extract(py).unwrap_or_default();
-                    write_all_headers(
-                        worksheet,
-                        header_row,
-                        &final_headers,
-                        bold_headers,
-                        &bold_fmt,
-                        index_columns,
-                        header_format.map(|h| &h.inner),
+            if let Err(stream_err) = arrow_ok {
+                let df = stream_obj.bind(py);
+                // Polars exposes `get_column`; pandas indexes with `[]`.
+                let polars = df.hasattr("get_column")?;
+                if !df.hasattr("columns")? || !df.hasattr("dtypes")? {
+                    return Err(stream_err);
+                }
+                if polars {
+                    write_dataframe(
+                        worksheet, py, stream_obj, &mut final_headers, &mut data_rows,
+                        column_formats, float_fmt.as_ref(), &datetime_fmt,
+                        &mut datetime_cols_set, bold_headers, &bold_fmt, index_columns,
+                        header_format, layout, url_columns, &formula_cols,
+                        "get_column", "to_list",
+                        |dtype| Ok(polars_kind(&dtype.to_string())),
+                    )?;
+                } else {
+                    write_dataframe(
+                        worksheet, py, stream_obj, &mut final_headers, &mut data_rows,
+                        column_formats, float_fmt.as_ref(), &datetime_fmt,
+                        &mut datetime_cols_set, bold_headers, &bold_fmt, index_columns,
+                        header_format, layout, url_columns, &formula_cols,
+                        "__getitem__", "tolist",
+                        |dtype| {
+                            let kind: String = dtype.getattr("kind")?.extract()?;
+                            Ok(map_pandas_kind(kind.chars().next().unwrap_or('O')))
+                        },
                     )?;
                 }
             }
