@@ -86,10 +86,9 @@ pub struct SheetLayout {
     /// [`SheetLayout::apply_autofilter`] — the range needs the final row count,
     /// which is only known once the last row has been written.
     pub autofilter: bool,
-    /// `(column name, Excel function)` for the totals row. Also applied after
-    /// the data: the row sits below it and the formula ranges depend on how
-    /// many rows there turned out to be.
-    /// `(column name, aggregate function or raw formula template)`.
+    /// `(column name, aggregate or raw formula)` for the totals row. Applied
+    /// after the data: the row sits below it and the ranges depend on how many
+    /// rows there turned out to be.
     pub totals: Vec<(String, TotalsCell)>,
     pub totals_label: Option<String>,
     pub totals_format: Option<Format>,
@@ -106,8 +105,8 @@ pub struct SheetLayout {
 /// The formula text is passed to `rust_xlsxwriter` verbatim, so anything Excel
 /// accepts works — nested calls, `SUMIFS`, cross-sheet references, and the 161
 /// functions the crate rewrites with an `_xlfn.` prefix or as a dynamic array.
-/// Nothing here validates the formula: a typo reaches the file unchanged and
-/// surfaces when a spreadsheet opens it.
+/// Only the structure is checked, by [`formula_problem`]; function names and
+/// semantics are Excel's business.
 pub struct FormulaColumn {
     pub header: String,
     pub template: String,
@@ -125,6 +124,71 @@ impl FormulaColumn {
         }
         out
     }
+}
+
+/// Structural check on a formula: balanced parentheses and quotes, and some
+/// content after the `=`.
+///
+/// Deliberately *not* a function-name check. A malformed formula does not
+/// corrupt the file — every case tested opens fine and shows `#NAME?`/`#VALUE!`
+/// in the cell — so the only thing validation buys is catching a typo earlier.
+/// That makes a false positive strictly worse than a false negative: rejecting
+/// a formula Excel would have accepted blocks real work, while letting one
+/// through costs an error value in one cell. Function names cannot be checked
+/// safely — `LAMBDA`/`LET` bind their own names, workbooks carry user-defined
+/// functions, and Excel keeps adding to the list.
+///
+/// Returns the problem description, or `None` when the formula looks sound.
+pub fn formula_problem(formula: &str) -> Option<String> {
+    let body = formula.strip_prefix('=').unwrap_or(formula);
+    if body.trim().is_empty() {
+        return Some("it is empty".to_string());
+    }
+
+    let mut depth: i32 = 0;
+    // Excel quotes strings with `"` (a literal quote inside is doubled) and
+    // wraps sheet names containing spaces or punctuation in `'`. Parentheses
+    // inside either are text, not structure — `='Sheet (1)'!A1` is valid.
+    let mut in_double = false;
+    let mut in_single = false;
+    let chars: Vec<char> = body.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '"' if !in_single => {
+                if in_double && chars.get(i + 1) == Some(&'"') {
+                    i += 1; // an escaped quote inside a string
+                } else {
+                    in_double = !in_double;
+                }
+            }
+            '\'' if !in_double => in_single = !in_single,
+            '(' if !in_double && !in_single => depth += 1,
+            ')' if !in_double && !in_single => {
+                depth -= 1;
+                if depth < 0 {
+                    return Some("it closes a parenthesis that was never opened".to_string());
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    if in_double {
+        return Some("a double quote is left open".to_string());
+    }
+    if in_single {
+        return Some("a single quote is left open".to_string());
+    }
+    if depth > 0 {
+        return Some(format!(
+            "{depth} parenthesis{} left unclosed",
+            if depth == 1 { " is" } else { "es are" }
+        ));
+    }
+    None
 }
 
 /// Read `formula_columns` — an ordered `{header: formula}` mapping.
@@ -146,6 +210,13 @@ pub fn resolve_formula_columns(
         if template.trim().is_empty() {
             return Err(value_err(format!(
                 "formula_columns['{header}'] is empty"
+            )));
+        }
+        // Placeholders expand to digits, so the structure is already final.
+        if let Some(problem) = formula_problem(&template) {
+            return Err(value_err(format!(
+                "formula_columns['{header}'] looks malformed: {problem}. \
+Formula: {template}"
             )));
         }
         if template.contains("{last}") {
@@ -385,6 +456,11 @@ pub fn resolve_layout(
             // A leading '=' marks a raw formula; anything else must name a
             // known aggregate, so a typo raises instead of writing a literal.
             let cell = if name.trim_start().starts_with('=') {
+                if let Some(problem) = formula_problem(&name) {
+                    return Err(value_err(format!(
+                        "totals_row['{column}'] looks malformed: {problem}. Formula: {name}"
+                    )));
+                }
                 TotalsCell::Formula(name)
             } else {
                 TotalsCell::Aggregate(excel_function(&name).ok_or_else(|| {
