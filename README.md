@@ -226,6 +226,7 @@ under_header = Format().set_border_bottom("thin")
 
 | `url_columns` | Column names whose text cells become clickable links |
 | `totals_row` | Aggregate formulas in a row below the data |
+| `formula_columns` | Computed columns appended after the data |
 
 `autofilter=True` sizes its own range from the rows actually written, so it
 follows `header_row` and needs no manual bounds:
@@ -233,6 +234,51 @@ follows `header_row` and needs no manual bounds:
 ```python
 FastExcel("report.xlsx").sheet("Data", rows, autofilter=True, freeze_row=1).save()
 ```
+
+### Formulas
+
+Append computed columns. `{row}` becomes that row's sheet row, `{first}` the
+first data row:
+
+```python
+(
+    FastExcel("report.xlsx")
+    .sheet(
+        "Sales",
+        rows,
+        formula_columns={
+            "total":   "=A{row}*B{row}",
+            "running": "=SUM(B${first}:B{row})",
+        },
+    )
+    .save()
+)
+```
+
+The text goes to Excel unchanged, so **anything Excel accepts works** — nested
+calls, `SUMIFS`, `INDEX`/`MATCH`, cross-sheet references. Modern functions are
+handled for you: the 131 "future" functions (`IFS`, `TEXTJOIN`, `MAXIFS`,
+`STDEV.P`, …) get their required `_xlfn.` prefix, and the 30 dynamic-array ones
+(`XLOOKUP`, `UNIQUE`, `SORT`, `FILTER`, …) additionally get array-formula markup
+and the `xl/metadata.xml` part. Writing those by hand is the usual way to end up
+with a file Excel refuses to open.
+
+`totals_row` values may also be raw formulas — a value starting with `=`, with
+`{col}` the column letter and `{first}`/`{last}` the data range:
+
+```python
+totals_row={"qty": "sum", "price": "=ROUND(AVERAGE({col}{first}:{col}{last}),2)"}
+```
+
+Two things to know:
+
+**Nothing validates formulas.** `=NOTAFUNC(A1)` and unbalanced parentheses reach
+the file unchanged and surface only when a spreadsheet opens it. A typo in an
+aggregate *name* still raises, because that is a closed set.
+
+**There is no `{last}` in `formula_columns`.** Those cells are written while
+rows are still streaming, so the final row is unknown; the placeholder raises
+with that explanation. Use `totals_row` for whole-column formulas.
 
 ### Totals Row
 
