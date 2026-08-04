@@ -148,3 +148,43 @@ def test_real_dataframes_still_take_the_arrow_path(tmp_path):
     ws = openpyxl.load_workbook(path).active
     assert ws.max_row == 4
     assert [c.value for c in ws[2]] == ["a", 1.5, 1]
+
+
+# --- input that cannot be iterated at all ---------------------------------
+# Same failure shape as the Arrow one: the loop used to be skipped on error,
+# leaving an empty file and a successful return.
+
+
+class _NotIterable:
+    pass
+
+
+@pytest.mark.parametrize(
+    "data", [42, None, _NotIterable(), 3.5], ids=["int", "none", "object", "float"]
+)
+def test_non_iterable_input_raises(tmp_path, data):
+    from rustpy_xlsxwriter import write_csv
+
+    for writer, suffix in ((write_worksheet, ".xlsx"), (write_csv, ".csv")):
+        path = tmp_path / f"bad{suffix}"
+        with pytest.raises(TypeError, match="must be an iterable of dicts"):
+            writer(data, str(path))
+
+
+def test_iterable_of_non_dicts_still_names_the_real_problem(tmp_path):
+    """A set is iterable, so it must fail on the items, not on iteration."""
+    with pytest.raises(TypeError, match="must be dictionaries"):
+        write_worksheet({1, 2, 3}, str(tmp_path / "bad.xlsx"))
+
+
+def test_empty_input_is_still_valid(tmp_path):
+    """An empty list is not an error — it just has no rows."""
+    path = tmp_path / "empty.xlsx"
+    write_worksheet([], str(path))
+    assert openpyxl.load_workbook(path).active.max_row == 1
+
+
+def test_generator_input_is_still_accepted(tmp_path):
+    path = tmp_path / "gen.xlsx"
+    write_worksheet((r for r in [{"a": 1}, {"a": 2}]), str(path))
+    assert openpyxl.load_workbook(path).active.max_row == 3

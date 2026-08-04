@@ -9,6 +9,14 @@ use pyo3::Py;
 use crate::cell::{classify_and_write, try_cached, CellWriter};
 use crate::helpers::{write_bytes_to_target, write_csv_escaped_guarded, ColType};
 
+/// Turn a failed `try_iter` into a clear message. Skipping the loop instead
+/// would write an empty file and report success.
+fn not_iterable(_: PyErr) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+        "records must be an iterable of dicts, a DataFrame, or an Arrow stream",
+    )
+}
+
 /// Write data to CSV (file path or buffer).
 ///
 /// When `sanitize_formulas` is `true`, string fields that begin with
@@ -78,23 +86,21 @@ pub fn write_csv(
         } else {
             // Pandas — iterate rows via `.values`
             let values = records.getattr(py, "values")?;
-            if let Ok(rows) = values.bind(py).try_iter() {
-                for row_res in rows {
-                    let row = row_res?;
-                    if let Ok(items) = row.try_iter() {
-                        let mut first = true;
-                        for item_res in items {
-                            let item = item_res?;
-                            if !first {
-                                output.push(delim_byte);
-                            }
-                            first = false;
-                            let mut sink = CsvCell::new(&mut output, sanitize_formulas);
-                            classify_and_write(&item, &mut sink)?;
-                        }
-                        output.push(b'\n');
+            // Propagate rather than skip: silently emitting an empty file is
+            // worse than saying the input could not be iterated.
+            for row_res in values.bind(py).try_iter()? {
+                let row = row_res?;
+                let mut first = true;
+                for item_res in row.try_iter()? {
+                    let item = item_res?;
+                    if !first {
+                        output.push(delim_byte);
                     }
+                    first = false;
+                    let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                    classify_and_write(&item, &mut sink)?;
                 }
+                output.push(b'\n');
             }
         }
     } else {
@@ -105,42 +111,43 @@ pub fn write_csv(
         let mut headers_written = false;
         let mut col_types: Vec<ColType> = Vec::new();
 
-        if let Ok(rows) = bound.try_iter() {
-            for row_res in rows {
-                let row_obj = row_res?;
-                let row_dict = row_obj.cast::<pyo3::types::PyDict>().map_err(|_| {
-                    PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                        "Items in records must be dictionaries",
-                    )
-                })?;
+        let rows: pyo3::Bound<'_, pyo3::types::PyIterator> =
+            bound.try_iter().map_err(not_iterable)?;
+        for row_res in rows {
+            let row_obj = row_res?;
+            let row_dict = row_obj.cast::<pyo3::types::PyDict>().map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                    "Items in records must be dictionaries",
+                )
+            })?;
 
-                if !headers_written {
-                    for key in row_dict.keys().iter() {
-                        headers.push(key.extract::<String>()?);
-                    }
-                    write_csv_row_strings(&mut output, &headers, delim_byte, sanitize_formulas);
-                    col_types.resize(headers.len(), ColType::Unknown);
-                    headers_written = true;
+            if !headers_written {
+                for key in row_dict.keys().iter() {
+                    headers.push(key.extract::<String>()?);
                 }
-
-                // Iterate the dict directly (insertion order == header order)
-                // to avoid allocating a fresh `values()` list per row.
-                for (col, (_key, value)) in row_dict.iter().enumerate() {
-                    if col > 0 {
-                        output.push(delim_byte);
-                    }
-                    let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
-                    let mut sink = CsvCell::new(&mut output, sanitize_formulas);
-                    if !try_cached(&value, cached, &mut sink)? {
-                        let detected = classify_and_write(&value, &mut sink)?;
-                        if col < col_types.len() && col_types[col] == ColType::Unknown {
-                            col_types[col] = detected;
-                        }
-                    }
-                }
-                output.push(b'\n');
+                write_csv_row_strings(&mut output, &headers, delim_byte, sanitize_formulas);
+                col_types.resize(headers.len(), ColType::Unknown);
+                headers_written = true;
             }
+
+            // Iterate the dict directly (insertion order == header order)
+            // to avoid allocating a fresh `values()` list per row.
+            for (col, (_key, value)) in row_dict.iter().enumerate() {
+                if col > 0 {
+                    output.push(delim_byte);
+                }
+                let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
+                let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                if !try_cached(&value, cached, &mut sink)? {
+                    let detected = classify_and_write(&value, &mut sink)?;
+                    if col < col_types.len() && col_types[col] == ColType::Unknown {
+                        col_types[col] = detected;
+                    }
+                }
+            }
+            output.push(b'\n');
         }
+
     }
 
     write_bytes_to_target(py, &output, file_name)

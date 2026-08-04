@@ -339,121 +339,127 @@ fn write_worksheet_content(
         }
 
         WorksheetData::Records(records_list) => {
-            if let Ok(rows) = records_list.bind(py).try_iter() {
-                let mut headers: Vec<String> = Vec::new();
-                let mut headers_written = false;
-                let mut col_types: Vec<ColType> = Vec::new();
-                // Resolved once when headers are first seen; kept alive for the
-                // entire row loop so we can hand out &Format borrows per cell.
-                // `banded` is None unless the sheet asked for alternating rows.
-                let mut palettes: Option<(
-                    crate::format::RowPalette,
-                    Option<crate::format::RowPalette>,
-                )> = None;
-                let mut url_cols: Vec<bool> = Vec::new();
-                let mut n_data_cols: usize = 0;
+            // Propagate rather than skip: a non-iterable input used to
+            // produce an empty sheet and report success.
+            let rows = records_list.bind(py).try_iter().map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                    "records must be an iterable of dicts, a DataFrame, or an Arrow stream",
+                )
+            })?;
+            let mut headers: Vec<String> = Vec::new();
+            let mut headers_written = false;
+            let mut col_types: Vec<ColType> = Vec::new();
+            // Resolved once when headers are first seen; kept alive for the
+            // entire row loop so we can hand out &Format borrows per cell.
+            // `banded` is None unless the sheet asked for alternating rows.
+            let mut palettes: Option<(
+                crate::format::RowPalette,
+                Option<crate::format::RowPalette>,
+            )> = None;
+            let mut url_cols: Vec<bool> = Vec::new();
+            let mut n_data_cols: usize = 0;
 
-                for (row_idx, row_res) in rows.enumerate() {
-                    let row_obj = row_res?;
-                    let row_dict = row_obj.cast::<pyo3::types::PyDict>().map_err(|_| {
-                        PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                            "Items in records must be dictionaries",
-                        )
-                    })?;
+            for (row_idx, row_res) in rows.enumerate() {
+                let row_obj = row_res?;
+                let row_dict = row_obj.cast::<pyo3::types::PyDict>().map_err(|_| {
+                    PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                        "Items in records must be dictionaries",
+                    )
+                })?;
 
-                    if !headers_written {
-                        for key in row_dict.keys().iter() {
-                            headers.push(key.extract::<String>()?);
-                        }
-                        for fc in &formula_cols {
-                            headers.push(fc.header.clone());
-                        }
-                        write_all_headers(
-                            worksheet,
-                            header_row,
-                            &headers,
-                            bold_headers,
-                            &bold_fmt,
-                            index_columns,
-                            header_format.map(|h| &h.inner),
-                        )?;
-                        col_types.resize(headers.len(), ColType::Unknown);
-                        final_headers = headers.clone();
-                        n_data_cols = headers.len() - formula_cols.len();
-                        // Resolve per-column formats ONCE and keep them for the whole loop.
-                        // Apply set_column_format BEFORE writing data rows (constant memory mode).
-                        let col_formats =
-                            crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
-                        crate::format::apply_column_formats(worksheet, &col_formats)?;
-                        palettes = Some(crate::format::build_palettes(
-                            &col_formats,
-                            float_fmt.as_ref(),
-                            &datetime_fmt,
-                            layout.band_color.as_deref(),
-                        )?);
-                        url_cols =
-                            crate::helpers::resolve_url_columns(url_columns, &final_headers, py)?;
-                        headers_written = true;
+                if !headers_written {
+                    for key in row_dict.keys().iter() {
+                        headers.push(key.extract::<String>()?);
                     }
-
-                    let row_u32 = layout.first_data_row() + row_idx as u32;
-                    let (plain, banded) = palettes
-                        .as_ref()
-                        .expect("palettes are built with the header row");
-                    let pal = if layout.is_banded(row_u32) {
-                        banded.as_ref().unwrap_or(plain)
-                    } else {
-                        plain
-                    };
-                    // Everything but `col`/`col_override` is fixed for the row,
-                    // so build the sink once and step it across the columns
-                    // rather than reassembling all nine fields per cell.
-                    let mut sink = ExcelCell {
-                        worksheet: &mut *worksheet,
-                        row: row_u32,
-                        col: 0,
-                        text_fmt: pal.text.as_ref(),
-                        float_fmt: pal.float.as_ref(),
-                        datetime_fmt: &pal.datetime,
-                        datetime_cols_set: &mut datetime_cols_set,
-                        col_override: None,
-                        per_cell_datetime: banding,
-                        is_url: false,
-                    };
-
-                    // Iterate the dict directly (insertion order == header order)
-                    // to avoid allocating a fresh `values()` list per row.
-                    for (col, (_key, value)) in row_dict.iter().enumerate() {
-                        let cached = col_types
-                            .get(col)
-                            .copied()
-                            .unwrap_or(ColType::Unknown);
-
-                        sink.col = col as u16;
-                        // Column format override: wins over float_fmt / datetime_fmt.
-                        sink.col_override = pal.col(col);
-                        sink.is_url = url_cols.get(col).copied().unwrap_or(false);
-
-                        if !try_cached(&value, cached, &mut sink)? {
-                            let detected = classify_and_write(&value, &mut sink)?;
-                            if col < col_types.len() && col_types[col] == ColType::Unknown {
-                                col_types[col] = detected;
-                            }
-                        }
+                    for fc in &formula_cols {
+                        headers.push(fc.header.clone());
                     }
-                    if !formula_cols.is_empty() {
-                        crate::helpers::write_formula_row(
-                            worksheet,
-                            &formula_cols,
-                            n_data_cols as u16,
-                            row_u32,
-                            first_data_row,
-                            None,
-                        )?;
-                    }
-                    data_rows = row_idx as u32 + 1;
+                    write_all_headers(
+                        worksheet,
+                        header_row,
+                        &headers,
+                        bold_headers,
+                        &bold_fmt,
+                        index_columns,
+                        header_format.map(|h| &h.inner),
+                    )?;
+                    col_types.resize(headers.len(), ColType::Unknown);
+                    final_headers = headers.clone();
+                    n_data_cols = headers.len() - formula_cols.len();
+                    // Resolve per-column formats ONCE and keep them for the whole loop.
+                    // Apply set_column_format BEFORE writing data rows (constant memory mode).
+                    let col_formats =
+                        crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
+                    crate::format::apply_column_formats(worksheet, &col_formats)?;
+                    palettes = Some(crate::format::build_palettes(
+                        &col_formats,
+                        float_fmt.as_ref(),
+                        &datetime_fmt,
+                        layout.band_color.as_deref(),
+                    )?);
+                    url_cols =
+                        crate::helpers::resolve_url_columns(url_columns, &final_headers, py)?;
+                    headers_written = true;
                 }
+
+                let row_u32 = layout.first_data_row() + row_idx as u32;
+                let (plain, banded) = palettes
+                    .as_ref()
+                    .expect("palettes are built with the header row");
+                let pal = if layout.is_banded(row_u32) {
+                    banded.as_ref().unwrap_or(plain)
+                } else {
+                    plain
+                };
+                // Everything but `col`/`col_override` is fixed for the row,
+                // so build the sink once and step it across the columns
+                // rather than reassembling all nine fields per cell.
+                let mut sink = ExcelCell {
+                    worksheet: &mut *worksheet,
+                    row: row_u32,
+                    col: 0,
+                    text_fmt: pal.text.as_ref(),
+                    float_fmt: pal.float.as_ref(),
+                    datetime_fmt: &pal.datetime,
+                    datetime_cols_set: &mut datetime_cols_set,
+                    col_override: None,
+                    per_cell_datetime: banding,
+                    is_url: false,
+                };
+
+                // Iterate the dict directly (insertion order == header order)
+                // to avoid allocating a fresh `values()` list per row.
+                for (col, (_key, value)) in row_dict.iter().enumerate() {
+                    let cached = col_types
+                        .get(col)
+                        .copied()
+                        .unwrap_or(ColType::Unknown);
+
+                    sink.col = col as u16;
+                    // Column format override: wins over float_fmt / datetime_fmt.
+                    sink.col_override = pal.col(col);
+                    sink.is_url = url_cols.get(col).copied().unwrap_or(false);
+
+                    if !try_cached(&value, cached, &mut sink)? {
+                        let detected = classify_and_write(&value, &mut sink)?;
+                        if col < col_types.len() && col_types[col] == ColType::Unknown {
+                            col_types[col] = detected;
+                        }
+                    }
+                }
+                if !formula_cols.is_empty() {
+                    crate::helpers::write_formula_row(
+                        worksheet,
+                        &formula_cols,
+                        n_data_cols as u16,
+                        row_u32,
+                        first_data_row,
+                        None,
+                    )?;
+                }
+                data_rows = row_idx as u32 + 1;
             }
+
         }
 
         WorksheetData::PandasDataFrame(df) => {
