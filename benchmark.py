@@ -8,7 +8,13 @@ Compares rustpy-xlsxwriter vs Python xlsxwriter for:
 - Polars DataFrame: 500K and 1M rows
 
 Usage:
-    python benchmark.py
+    python benchmark.py              # the comparison above
+    python benchmark.py --concurrent # 1M rows split across 1/2/4/8 threads
+
+The concurrency run is the interesting one on a free-threaded build
+(``python3.14t``): with the GIL the total time is flat no matter how many
+threads, without it the work actually spreads. Run it under both interpreters
+to see the difference.
 """
 
 import os
@@ -18,9 +24,19 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List
 
 import numpy as np
-import pandas as pd
-import polars as pl
 import xlsxwriter
+
+# Optional: the DataFrame comparisons need these, the records and concurrency
+# runs do not. Polars has no free-threaded wheel yet, so importing it eagerly
+# would stop `--concurrent` from running on the interpreter it exists for.
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover
+    pd = None
+try:
+    import polars as pl
+except ImportError:  # pragma: no cover
+    pl = None
 
 from rustpy_xlsxwriter import FastExcel, write_csv
 
@@ -139,8 +155,71 @@ def cleanup(path: str) -> None:
         os.remove(path)
 
 
+def bench_concurrent() -> None:
+    """Write the same 1M rows split across N threads, for N in 1/2/4/8.
+
+    Both writers are measured at every worker count. xlsxwriter is pure Python,
+    so on a free-threaded build it spreads across threads too — comparing a
+    parallel rustpy run against a single-threaded baseline would flatter us.
+    The speedup column therefore pits the two against each other at the same
+    worker count, which is what the table in the README reports.
+    """
+    import sys
+    from concurrent.futures import ThreadPoolExecutor
+
+    total = 1_000_000
+    gil = getattr(sys, "_is_gil_enabled", lambda: True)()
+    print(f"Python {sys.version.split()[0]} — GIL {'enabled' if gil else 'DISABLED'}")
+    print(f"Generating {total:,} records...")
+    records = generate_records(total)
+    headers = list(records[0].keys())
+
+    print()
+    print("=" * 62)
+    print(f"Every row writes the same {total:,} records, spread over the workers.")
+    print(f"{'Workers':>8} {'RustPy':>10} {'xlsxwriter':>13} {'Speedup':>10}")
+    print("-" * 62)
+
+    for workers in (1, 2, 4, 8):
+        per = total // workers
+        chunks = [records[w * per : (w + 1) * per] for w in range(workers)]
+
+        def spread(job) -> None:
+            if workers == 1:
+                job(0)
+            else:
+                with ThreadPoolExecutor(workers) as pool:
+                    list(pool.map(job, range(workers)))
+
+        def rust(w: int) -> None:
+            path = os.path.join(TMP_DIR, f"conc_r{w}.xlsx")
+            FastExcel(path, autofit=False).sheet("B", chunks[w]).save()
+
+        def xlsx(w: int) -> None:
+            path = os.path.join(TMP_DIR, f"conc_x{w}.xlsx")
+            rows = (list(r.values()) for r in chunks[w])
+            _xlsxwriter_write(path, headers, rows)
+
+        spread(rust)  # warm caches so the first row is not penalised
+        t_r = min(bench("", spread, rust) for _ in range(3))
+        t_x = bench("", spread, xlsx)  # one pass: this one is slow
+
+        print(f"{workers:>8} {t_r:>9.2f}s {t_x:>12.2f}s {t_x / t_r:>9.1f}x")
+        for w in range(workers):
+            cleanup(os.path.join(TMP_DIR, f"conc_r{w}.xlsx"))
+            cleanup(os.path.join(TMP_DIR, f"conc_x{w}.xlsx"))
+    print("=" * 62)
+    if gil:
+        print("Flat: the GIL serialises both writers.")
+    else:
+        print("Free-threaded: both spread across threads — the ratio is the honest gain.")
+
+
 def main() -> None:
     os.makedirs(TMP_DIR, exist_ok=True)
+    for name, mod in (("pandas", pd), ("polars", pl)):
+        if mod is None:
+            print(f"({name} not installed — skipping its section)")
 
     results = []
 
@@ -166,7 +245,7 @@ def main() -> None:
         cleanup(p2)
 
     # --- Pandas DataFrame ---
-    for n in [500_000, 1_000_000]:
+    for n in [] if pd is None else [500_000, 1_000_000]:
         label = f"{n:,}"
         print(f"Generating Pandas DataFrame ({label} rows)...")
         df = generate_pandas_df(n)
@@ -187,7 +266,7 @@ def main() -> None:
         cleanup(p2)
 
     # --- Polars DataFrame ---
-    for n in [500_000, 1_000_000]:
+    for n in [] if pl is None else [500_000, 1_000_000]:
         label = f"{n:,}"
         print(f"Generating Polars DataFrame ({label} rows)...")
         df_pl = generate_polars_df(n)
@@ -257,4 +336,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    if "--concurrent" in sys.argv:
+        os.makedirs(TMP_DIR, exist_ok=True)
+        bench_concurrent()
+        os.rmdir(TMP_DIR)
+    else:
+        main()
