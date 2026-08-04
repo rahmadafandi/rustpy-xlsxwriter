@@ -143,6 +143,51 @@ jobs:
           name: wheels-macos-${{ matrix.platform.target }}
           path: dist
 
+  freethreaded:
+    # The jobs above use --find-interpreter, which only sees the interpreters
+    # installed on the runner. A free-threaded build is a separate binary
+    # (python3.14t), so it is never picked up and no cp314t wheel is produced —
+    # even though the package advertises Python 3.14 support.
+    #
+    # Scoped to the platforms free-threading is actually run on. The exotic
+    # linux targets (s390x, ppc64le, armv7, x86) have no free-threaded
+    # interpreter available, and cross-building one is not worth it until
+    # somebody asks.
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      # One platform lacking a 3.14t interpreter must not hide the others.
+      fail-fast: false
+      matrix:
+        platform:
+          - runner: ubuntu-22.04
+            target: x86_64
+          - runner: ubuntu-22.04
+            target: aarch64
+          - runner: macos-latest
+            target: aarch64
+          - runner: macos-15-intel
+            target: x86_64
+          - runner: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: 3.14t
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          # Name the interpreter explicitly — discovery is what misses it.
+          args: --release --out dist -i python3.14t
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: auto
+      - name: Upload wheels
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheels-freethreaded-${{ matrix.platform.runner }}-${{ matrix.platform.target }}
+          path: dist
+
   sdist:
     runs-on: ubuntu-latest
     steps:
@@ -162,7 +207,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [linux, musllinux, windows, macos, sdist]
+    needs: [linux, musllinux, windows, macos, freethreaded, sdist]
     permissions:
       # Use to sign the release artifacts
       id-token: write
