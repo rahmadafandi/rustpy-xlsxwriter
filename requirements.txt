@@ -1,6 +1,6 @@
 autoflake==2.3.3
 black==26.5.1
-cffi==2.1.0
+cffi==2.1.1
 click==8.4.2
 et_xmlfile==2.0.0
 Faker==40.36.0
@@ -12,14 +12,14 @@ mdurl==0.1.2
 mypy_extensions==1.1.0
 numpy==2.4.2
 openpyxl==3.1.5
-packaging==26.2
+packaging==26.3
 pandas==3.0.0
 pathspec==1.1.1
-platformdirs==4.11.0
+platformdirs==4.11.2
 pluggy==1.6.0
-polars==1.42.1
-polars-runtime-32==1.42.1
-pyarrow==25.0.0
+polars==1.43.2
+polars-runtime-32==1.43.2
+pyarrow==25.0.1
 pyclean==3.7.0
 pycparser==3.0
 pyflakes==3.4.0
@@ -31,7 +31,7 @@ pytokens==0.4.1
 rich==15.0.0
 -e .
 semantic-version==2.10.0
-setuptools==83.0.0
+setuptools==84.0.0
 setuptools-rust==1.13.0
 six==1.17.0
 tzdata==2026.3
