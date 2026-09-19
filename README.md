@@ -437,6 +437,21 @@ you don't need it.
 For `write_worksheets`, every one of these takes a dict keyed by sheet name
 (with a `"general"` fallback key).
 
+#### Showing something other than the URL
+
+Pass a mapping instead of a list to link one column and display another:
+
+```python
+write_worksheet(
+    rows,
+    "out.xlsx",
+    url_columns={"url": "product_name"},   # cell reads "Widget", links to the URL
+)
+```
+
+An unknown display-text column warns and falls back to showing the URL, so a
+typo costs a label rather than the export.
+
 ### String Deduplication
 
 By default every sheet is written in constant-memory mode: strings go inline

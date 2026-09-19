@@ -337,7 +337,7 @@ class FastExcel:
         row_formats: Optional[Dict[int, "Format"]] = None,
         banded_rows: Optional[str] = None,
         autofilter: bool = False,
-        url_columns: Optional[List[str]] = None,
+        url_columns: Optional[Union[List[str], Dict[str, str]]] = None,
         totals_row: Optional[Dict[str, str]] = None,
         totals_label: Optional[str] = None,
         totals_format: Optional["Format"] = None,
@@ -384,13 +384,17 @@ class FastExcel:
             autofilter: Add Excel's filter dropdowns over the header row and its
                 data. The range is computed from the rows actually written, so
                 it follows ``header_row`` and needs no manual bounds.
-            url_columns: Column names whose text cells become clickable links —
-                ``["homepage"]``. Accepts what Excel accepts: ``http(s)://``,
+            url_columns: Columns whose text cells become clickable links.
+                A list names them and each cell shows the URL —
+                ``["homepage"]``. A dict maps a link column to the column
+                holding its display text — ``{"url": "product_name"}`` shows
+                the product name and links to the URL, which is what a report
+                usually wants. Accepts what Excel accepts: ``http(s)://``,
                 ``mailto:``, and ``internal:Sheet2!A1`` for a link to another
                 sheet. A value Excel would reject (ordinary text, or a URL past
-                its 2083-character limit) is written as plain text instead, so a
-                stray non-link never aborts the export. The cell displays the
-                URL itself; per-cell display text is not supported.
+                its 2083-character limit) is written as plain text instead, so
+                a stray non-link never aborts the export. An unknown
+                display-text column warns and falls back to showing the URL.
             totals_row: ``{column_name: aggregate}`` written as Excel formulas
                 in a row below the data — ``{"amount": "sum"}`` becomes
                 ``=SUM(C2:C101)``. Valid aggregates: ``sum``, ``average``,

@@ -59,6 +59,9 @@ MergeRange = Union[
 """One merged cell range: ``(first_row, first_col, last_row, last_col, value)``,
 optionally followed by a :class:`Format`."""
 
+UrlColumns = Union[List[str], Dict[str, str]]
+"""Link columns — a list of column names, or ``{url column: display-text column}``."""
+
 SheetData = Union[Records, DataFrame]
 """Data accepted per sheet – either :data:`Records` or a :data:`DataFrame`."""
 
@@ -159,7 +162,7 @@ def write_worksheet(
     row_formats: Optional[Dict[int, Format]] = None,
     banded_rows: Optional[str] = None,
     autofilter: bool = False,
-    url_columns: Optional[List[str]] = None,
+    url_columns: Optional[UrlColumns] = None,
     totals_row: Optional[Dict[str, str]] = None,
     totals_label: Optional[str] = None,
     totals_format: Optional[Format] = None,
@@ -195,8 +198,11 @@ def write_worksheet(
         row_formats: ``{row_index: Format}`` applied to the whole row.
         banded_rows: Background colour shaded onto every other data row.
         autofilter: Add filter dropdowns over the header row and its data.
-        url_columns: Column names whose text cells become clickable links.
-            Values Excel rejects fall back to plain text.
+        url_columns: Columns whose text cells become clickable links. A list
+            names them and the cell shows the URL; a dict maps each link column
+            to the column holding its display text
+            (``{"url": "product_name"}``). Values Excel rejects fall back to
+            plain text.
         totals_row: ``{column_name: aggregate}`` written as formulas below the
             data. Valid: sum, average, count, min, max, product, stdev.
         totals_label: Text for the first column of the totals row.
@@ -242,7 +248,7 @@ def write_worksheets(
     row_formats: Optional[Dict[str, Dict[int, Format]]] = None,
     banded_rows: Optional[Dict[str, str]] = None,
     autofilter: Optional[Dict[str, bool]] = None,
-    url_columns: Optional[Dict[str, List[str]]] = None,
+    url_columns: Optional[Dict[str, UrlColumns]] = None,
     totals_row: Optional[Dict[str, Dict[str, str]]] = None,
     totals_label: Optional[Dict[str, str]] = None,
     totals_format: Optional[Dict[str, Format]] = None,

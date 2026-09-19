@@ -757,10 +757,17 @@ pub fn write_url_or_text(
     col: u16,
     val: &str,
     fmt: Option<&Format>,
+    text: Option<&str>,
 ) -> PyResult<()> {
+    // Display text rides on the Url itself rather than a second write, which
+    // would overwrite the format the first one applied.
+    let link = match text {
+        Some(t) => rust_xlsxwriter::Url::new(val).set_text(t),
+        None => rust_xlsxwriter::Url::new(val),
+    };
     let wrote = match fmt {
-        Some(f) => worksheet.write_url_with_format(row, col, val, f).is_ok(),
-        None => worksheet.write_url(row, col, val).is_ok(),
+        Some(f) => worksheet.write_url_with_format(row, col, link, f).is_ok(),
+        None => worksheet.write_url(row, col, link).is_ok(),
     };
     if wrote {
         return Ok(());
@@ -768,30 +775,74 @@ pub fn write_url_or_text(
     write_string_opt(worksheet, row, col, val, fmt)
 }
 
-/// Resolve `url_columns` (column names) to their positions in `headers`.
-/// Unknown names warn and are skipped, matching `column_formats`.
+/// One column's link settings.
+#[derive(Clone, Copy, Default)]
+pub struct UrlCol {
+    /// The column was listed in `url_columns`, so its text becomes a link.
+    pub link: bool,
+    /// Index of the column supplying the display text, when the caller passed
+    /// the mapping form. `None` shows the URL itself.
+    pub text_col: Option<usize>,
+}
+
+/// Resolve `url_columns` against `headers`.
+///
+/// Two shapes, because showing the URL itself is rarely what a report wants:
+/// a list names the link columns, a dict maps each link column to the column
+/// holding its display text (`{"url": "product_name"}`).
+///
+/// Unknown names warn and are skipped, matching `column_formats` — a stray
+/// name costs a link, not the export.
 pub fn resolve_url_columns(
-    url_columns: Option<&Vec<String>>,
+    url_columns: Option<&Bound<'_, PyAny>>,
     headers: &[String],
     py: Python,
-) -> PyResult<Vec<bool>> {
-    let mut flags = vec![false; headers.len()];
-    let Some(names) = url_columns else {
-        return Ok(flags);
+) -> PyResult<Vec<UrlCol>> {
+    let mut cols = vec![UrlCol::default(); headers.len()];
+    let Some(spec) = url_columns else {
+        return Ok(cols);
     };
     let warnings = py.import("warnings")?;
-    for name in names {
-        match headers.iter().position(|h| h == name) {
-            Some(idx) => flags[idx] = true,
-            None => {
-                warnings.call_method1(
-                    "warn",
-                    (format!("url_columns: unknown column '{name}', skipped"),),
-                )?;
-            }
-        }
+    let warn = |msg: String| -> PyResult<()> {
+        warnings.call_method1("warn", (msg,))?;
+        Ok(())
+    };
+
+    let pairs: Vec<(String, Option<String>)> = if let Ok(map) = spec.cast::<PyDict>() {
+        map.iter()
+            .map(|(k, v)| Ok((k.extract::<String>()?, Some(v.extract::<String>()?))))
+            .collect::<PyResult<_>>()?
+    } else {
+        spec.extract::<Vec<String>>()?
+            .into_iter()
+            .map(|name| (name, None))
+            .collect()
+    };
+
+    for (name, text_name) in pairs {
+        let Some(idx) = headers.iter().position(|h| h == &name) else {
+            warn(format!("url_columns: unknown column '{name}', skipped"))?;
+            continue;
+        };
+        let text_col = match text_name {
+            Some(t) => match headers.iter().position(|h| h == &t) {
+                Some(ti) => Some(ti),
+                None => {
+                    warn(format!(
+                        "url_columns: unknown display-text column '{t}' for '{name}', \
+                         showing the URL instead"
+                    ))?;
+                    None
+                }
+            },
+            None => None,
+        };
+        cols[idx] = UrlCol {
+            link: true,
+            text_col,
+        };
     }
-    Ok(flags)
+    Ok(cols)
 }
 
 /// Write a boolean cell, with an optional explicit format.

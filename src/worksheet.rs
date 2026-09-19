@@ -42,6 +42,11 @@ struct ExcelCell<'a> {
     per_cell_datetime: bool,
     /// This column was listed in `url_columns`, so strings become links.
     is_url: bool,
+    /// Display text for the link, when `url_columns` named a text column.
+    /// Owned: it comes from another cell of the same row, whose Python object
+    /// does not outlive the lookup. One allocation per link cell, and link
+    /// columns are few.
+    url_text: Option<String>,
 }
 
 impl ExcelCell<'_> {
@@ -73,7 +78,17 @@ impl ExcelCell<'_> {
 
     fn put_string(&mut self, s: &str) -> PyResult<()> {
         if self.is_url && !s.is_empty() {
-            return write_url_or_text(self.worksheet, self.row, self.col, s, self.text_fmt);
+            return write_url_or_text(
+                self.worksheet,
+                self.row,
+                self.col,
+                s,
+                // A column format has to win here exactly as it does for a
+                // plain string; passing only text_fmt silently dropped
+                // `column_formats` on any url column.
+                self.col_override.or(self.text_fmt),
+                self.url_text.as_deref(),
+            );
         }
         match self.text_fmt {
             Some(fmt) => self
@@ -196,7 +211,7 @@ fn write_worksheet_content(
     column_formats: Option<&Bound<'_, PyAny>>,
     header_format: Option<&crate::format::Format>,
     layout: &crate::helpers::SheetLayout,
-    url_columns: Option<&Vec<String>>,
+    url_columns: Option<&Bound<'_, PyAny>>,
     formula_columns: Option<&Bound<'_, PyAny>>,
     py: Python,
 ) -> PyResult<()> {
@@ -359,7 +374,7 @@ fn write_worksheet_content(
                 crate::format::RowPalette,
                 Option<crate::format::RowPalette>,
             )> = None;
-            let mut url_cols: Vec<bool> = Vec::new();
+            let mut url_cols: Vec<crate::helpers::UrlCol> = Vec::new();
             let mut n_data_cols: usize = 0;
 
             for (row_idx, row_res) in rows.enumerate() {
@@ -426,6 +441,7 @@ fn write_worksheet_content(
                     datetime_fmt: &pal.datetime,
                     datetime_cols_set: &mut datetime_cols_set,
                     col_override: None,
+                    url_text: None,
                     reps: layout.reps(),
                     per_cell_datetime: banding,
                     is_url: false,
@@ -442,7 +458,18 @@ fn write_worksheet_content(
                     sink.col = col as u16;
                     // Column format override: wins over float_fmt / datetime_fmt.
                     sink.col_override = pal.col(col);
-                    sink.is_url = url_cols.get(col).copied().unwrap_or(false);
+                    let url_col = url_cols.get(col).copied().unwrap_or_default();
+                    sink.is_url = url_col.link;
+                    // Display text lives in another column of this same row,
+                    // so it is looked up here rather than in the sink.
+                    sink.url_text = match url_col.text_col {
+                        Some(ti) => final_headers
+                            .get(ti)
+                            .and_then(|name| row_dict.get_item(name).ok().flatten())
+                            .and_then(|v| v.str().ok())
+                            .map(|v| v.to_string_lossy().into_owned()),
+                        None => None,
+                    };
 
                     if !try_cached(&value, cached, &mut sink)? {
                         let detected = classify_and_write(&value, &mut sink)?;
@@ -591,7 +618,7 @@ fn write_df_rows<F>(
     plain: &crate::format::RowPalette,
     banded: Option<&crate::format::RowPalette>,
     layout: &crate::helpers::SheetLayout,
-    url_cols: &[bool],
+    url_cols: &[crate::helpers::UrlCol],
     formula_cols: &[crate::helpers::FormulaColumn],
     n_data_cols: usize,
 ) -> PyResult<()>
@@ -634,9 +661,19 @@ where
             let col_u16 = col_idx as u16;
             let item = col_list.get(row)?;
             let col_override = overrides[col_idx];
+            let url_col = url_cols.get(col_idx).copied().unwrap_or_default();
+            // Display text sits in another column of this same row.
+            let url_text: Option<String> = match url_col.text_col {
+                Some(ti) => bound_cols
+                    .get(ti)
+                    .and_then(|c| c.get(row).ok())
+                    .and_then(|v| v.str().ok())
+                    .map(|v| v.to_string_lossy().into_owned()),
+                None => None,
+            };
 
             if item.is_none() {
-                write_string_opt(worksheet, row_u32, col_u16, "", text_fmt)?;
+                write_string_opt(worksheet, row_u32, col_u16, layout.reps().na_text(), text_fmt)?;
                 continue;
             }
 
@@ -698,7 +735,8 @@ where
                         col_override,
                         reps: layout.reps(),
                         per_cell_datetime: banding,
-                        is_url: url_cols.get(col_idx).copied().unwrap_or(false),
+                        is_url: url_col.link,
+                        url_text: url_text.clone(),
                     };
                     classify_and_write(&item, &mut sink)?;
                 }
@@ -742,7 +780,7 @@ fn write_dataframe<C>(
     index_columns: Option<&Vec<String>>,
     header_format: Option<&crate::format::Format>,
     layout: &crate::helpers::SheetLayout,
-    url_columns: Option<&Vec<String>>,
+    url_columns: Option<&Bound<'_, PyAny>>,
     formula_cols: &[crate::helpers::FormulaColumn],
     get_column_method: &str,
     to_list_method: &str,
@@ -945,7 +983,7 @@ pub fn write_worksheets(
             inf_value.clone(),
         )?;
 
-        let sheet_urls = keyed_extract::<Vec<String>>(url_columns.as_ref(), &sheet_name)?;
+        let sheet_urls = keyed_get(url_columns.as_ref(), &sheet_name)?;
 
         write_worksheet_content(
             worksheet,
@@ -1000,7 +1038,7 @@ pub fn write_worksheet(
     row_formats: Option<Bound<'_, PyAny>>,
     banded_rows: Option<String>,
     autofilter: bool,
-    url_columns: Option<Vec<String>>,
+    url_columns: Option<Bound<'_, PyAny>>,
     totals_row: Option<Bound<'_, PyAny>>,
     totals_label: Option<String>,
     totals_format: Option<Bound<'_, crate::format::Format>>,

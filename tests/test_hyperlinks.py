@@ -179,3 +179,91 @@ def test_csv_warns_that_url_columns_are_dropped(tmp_path):
         FastExcel(str(tmp_path / "o.csv")).sheet(
             "S", [{"link": "https://example.com"}], url_columns=["link"]
         ).save()
+
+
+class TestDisplayText:
+    """``url_columns`` as a mapping: link one column, show another.
+
+    Showing the raw URL is rarely what a report wants — the docstring used to
+    say per-cell display text was unsupported, but ``write_url_with_text`` has
+    been in ``rust_xlsxwriter`` all along.
+    """
+
+    ROWS = [
+        {"url": "https://example.com/a", "name": "Product A"},
+        {"url": "https://example.com/b", "name": "Product B"},
+    ]
+
+    def _sheet(self, tmp_path, data, **kwargs):
+        path = tmp_path / "links.xlsx"
+        write_worksheet(data, str(path), **kwargs)
+        return openpyxl.load_workbook(path).active
+
+    def test_mapping_shows_the_text_and_links_the_url(self, tmp_path):
+        ws = self._sheet(tmp_path, self.ROWS, url_columns={"url": "name"})
+        assert ws.cell(2, 1).value == "Product A"
+        assert ws.cell(2, 1).hyperlink.target == "https://example.com/a"
+        assert ws.cell(3, 1).value == "Product B"
+        assert ws.cell(3, 1).hyperlink.target == "https://example.com/b"
+
+    def test_list_form_is_unchanged(self, tmp_path):
+        """The existing shape must keep showing the URL itself."""
+        ws = self._sheet(tmp_path, self.ROWS, url_columns=["url"])
+        assert ws.cell(2, 1).value == "https://example.com/a"
+        assert ws.cell(2, 1).hyperlink.target == "https://example.com/a"
+
+    def test_unknown_text_column_warns_and_shows_the_url(self, tmp_path):
+        with pytest.warns(UserWarning, match="unknown display-text column"):
+            ws = self._sheet(tmp_path, self.ROWS, url_columns={"url": "nope"})
+        assert ws.cell(2, 1).value == "https://example.com/a"
+        assert ws.cell(2, 1).hyperlink.target == "https://example.com/a"
+
+    def test_display_text_survives_a_column_format(self, tmp_path):
+        """A formatted link cell keeps both the format and the text."""
+        ws = self._sheet(
+            tmp_path,
+            self.ROWS,
+            url_columns={"url": "name"},
+            column_formats={"url": Format().set_bold()},
+        )
+        assert ws.cell(2, 1).value == "Product A"
+        assert ws.cell(2, 1).hyperlink.target == "https://example.com/a"
+        assert ws.cell(2, 1).font.bold
+
+    def test_on_the_arrow_path(self, tmp_path):
+        pd = pytest.importorskip("pandas")
+        pytest.importorskip("pyarrow")
+        ws = self._sheet(tmp_path, pd.DataFrame(self.ROWS), url_columns={"url": "name"})
+        assert ws.cell(2, 1).value == "Product A"
+        assert ws.cell(2, 1).hyperlink.target == "https://example.com/a"
+
+    def test_via_the_builder(self, tmp_path):
+        path = tmp_path / "b.xlsx"
+        FastExcel(path).sheet("S", self.ROWS, url_columns={"url": "name"}).save()
+        ws = openpyxl.load_workbook(path).active
+        assert ws.cell(2, 1).value == "Product A"
+
+    def test_multi_sheet(self, tmp_path):
+        path = tmp_path / "m.xlsx"
+        write_worksheets(
+            [("A", self.ROWS)], str(path), url_columns={"A": {"url": "name"}}
+        )
+        ws = openpyxl.load_workbook(path)["A"]
+        assert ws.cell(2, 1).value == "Product A"
+        assert ws.cell(2, 1).hyperlink.target == "https://example.com/a"
+
+    def test_column_format_applies_to_a_plain_link_column(self, tmp_path):
+        """Regression: column_formats was dropped on url columns entirely.
+
+        It applied to an ordinary string column but not to a linked one, since
+        the url branch passed only the banding format and ignored the column
+        override.
+        """
+        ws = self._sheet(
+            tmp_path,
+            self.ROWS,
+            url_columns=["url"],
+            column_formats={"url": Format().set_bold()},
+        )
+        assert ws.cell(2, 1).value == "https://example.com/a"
+        assert ws.cell(2, 1).font.bold

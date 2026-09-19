@@ -99,7 +99,7 @@ pub fn write_arrow_batch(
     plain: &crate::format::RowPalette,
     banded: Option<&crate::format::RowPalette>,
     layout: &crate::helpers::SheetLayout,
-    url_cols: &[bool],
+    url_cols: &[crate::helpers::UrlCol],
     formula_cols: &[crate::helpers::FormulaColumn],
     n_data_cols: usize,
 ) -> PyResult<()> {
@@ -149,13 +149,31 @@ pub fn write_arrow_batch(
             }
             // A url_columns entry turns text cells into links; anything that
             // is not a valid URL falls back to plain text.
-            let as_url = url_cols.get(col_idx).copied().unwrap_or(false);
+            let url_col = url_cols.get(col_idx).copied().unwrap_or_default();
+            let as_url = url_col.link;
+            // The display text is another column of this same row; only a
+            // string column can supply one, anything else shows the URL.
+            let url_text = url_col.text_col.and_then(|ti| {
+                let c = columns.get(ti)?;
+                if c.is_null(row) {
+                    return None;
+                }
+                // Only a string column can supply display text, and which
+                // string kind depends on the producer: polars gives Utf8,
+                // pandas gives Utf8View.
+                match kinds.get(ti)? {
+                    ColKind::Utf8 => Some(c.as_string::<i32>().value(row)),
+                    ColKind::LargeUtf8 => Some(c.as_string::<i64>().value(row)),
+                    ColKind::Utf8View => Some(c.as_string_view().value(row)),
+                    _ => None,
+                }
+            });
             macro_rules! write_str {
                 ($val:expr) => {{
                     let val: &str = $val;
                     if as_url && !val.is_empty() {
                         crate::helpers::write_url_or_text(
-                            worksheet, row_u32, col_u16, val, col_override,
+                            worksheet, row_u32, col_u16, val, col_override, url_text,
                         )?
                     } else {
                         write_string_opt(worksheet, row_u32, col_u16, val, col_override)?
