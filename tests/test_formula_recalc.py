@@ -129,15 +129,16 @@ def test_totals_row_computes(computed):
     assert computed["B5"].value == 4  # (2+4+6)/3
 
 
-def test_dynamic_arrays_are_beyond_this_engine(tmp_path):
-    """Documents the limit of this check, and that the limit is LibreOffice's.
+def test_dynamic_arrays_recalculate_or_are_unsupported(tmp_path):
+    """A dynamic array either computes to the right value, or the engine says so.
 
-    LibreOffice 24.2 does not implement SORT/UNIQUE/XLOOKUP — they yield
-    ``#NAME?`` even when written by openpyxl with no ``_xlfn.`` prefix at all.
-    So the dynamic-array output is verified structurally in ``test_formulas.py``
-    (``_xlfn.`` prefix, ``t="array"``, ``cm="1"``, ``xl/metadata.xml``) rather
-    than by computing it here. This test fails if a future LibreOffice gains
-    support, which is the signal to promote it to a real value assertion.
+    LibreOffice gained SORT/UNIQUE/XLOOKUP somewhere between 24.2 (``#NAME?``)
+    and 26.2 (computes), so the cutoff is not worth pinning to a version. What
+    holds on every engine: if SORT runs at all it yields the first sorted value,
+    never the ``#VALUE?``/``#REF!``/``#SPILL!`` that malformed dynamic-array
+    metadata would produce. The structural side — ``_xlfn.`` prefix,
+    ``t="array"``, ``cm="1"``, ``xl/metadata.xml`` — is covered in
+    ``test_formulas.py``.
     """
     path = tmp_path / "dynamic.xlsx"
     write_worksheet(
@@ -147,9 +148,10 @@ def test_dynamic_arrays_are_beyond_this_engine(tmp_path):
     )
     sheet = _recalculate(path, tmp_path)
 
-    assert sheet["C2"].value == "#NAME?", "LibreOffice now supports SORT — tighten this"
-    # An ordinary formula in the same file still computes, so the failure above
-    # is the engine's missing function, not a broken file.
+    # ROWS qty is already 1,2,3, so a correct SORT spills 1 into the first cell.
+    assert sheet["C2"].value in (1, "#NAME?")
+    # An ordinary formula in the same file always computes, so a #NAME? above is
+    # the engine's missing function, not a broken file.
     assert sheet["D2"].value == 12
 
 
