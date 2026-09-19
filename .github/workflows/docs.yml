@@ -38,7 +38,7 @@ jobs:
       # `rustpy_xlsxwriter.pyi`, which is where it lives — the compiled
       # functions carry no `__doc__` of their own.
       - name: Build & install package + docs toolchain
-        run: pip install . mkdocs-material "mkdocstrings[python]"
+        run: pip install . mkdocs-material "mkdocstrings[python]" black
 
       - name: Build site
         run: mkdocs build --strict -d site
