@@ -9,11 +9,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyDict};
 use rust_xlsxwriter::{IgnoreError, Worksheet};
 
+use crate::options::{column_index, value_err};
 use crate::worksheet::xlsx_err;
-
-fn value_err(msg: String) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
-}
 
 const NAMES: [&str; 9] = [
     "number_stored_as_text",
@@ -104,16 +101,11 @@ impl IgnoreErrors {
         if self.0.is_empty() || data_rows == 0 {
             return Ok(());
         }
-        let warnings = py.import("warnings")?;
         let first = header_row + 1;
         let last = header_row + data_rows;
 
         for (column, error) in &self.0 {
-            let Some(idx) = headers.iter().position(|h| h == column) else {
-                warnings.call_method1(
-                    "warn",
-                    (format!("ignore_errors: unknown column '{column}', skipped"),),
-                )?;
+            let Some(idx) = column_index(headers, column, "ignore_errors", py)? else {
                 continue;
             };
             let col = idx as u16;

@@ -11,11 +11,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyDict};
 use rust_xlsxwriter::{Image, Worksheet};
 
+use crate::options::{reject_unknown_keys, value_err};
 use crate::worksheet::xlsx_err;
-
-fn value_err(msg: String) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
-}
 
 const KEYS: [&str; 11] = [
     "path",
@@ -44,15 +41,7 @@ pub struct Placed {
 pub struct Images(Vec<Placed>);
 
 fn build(map: &Bound<'_, PyDict>, index: usize) -> PyResult<Placed> {
-    for key in map.keys().iter() {
-        let name: String = key.extract()?;
-        if !KEYS.contains(&name.as_str()) {
-            return Err(value_err(format!(
-                "images[{index}]: unknown key '{name}' (expected one of {})",
-                KEYS.join(", ")
-            )));
-        }
-    }
+    reject_unknown_keys(map, &format!("images[{index}]"), &KEYS)?;
 
     let mut image = match (map.get_item("path")?, map.get_item("data")?) {
         (Some(_), Some(_)) => {

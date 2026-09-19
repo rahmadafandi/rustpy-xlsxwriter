@@ -22,11 +22,8 @@ use pyo3::types::{PyAnyMethods, PyDict};
 use rust_xlsxwriter::{Sparkline, SparklineType, Worksheet};
 
 use crate::format::parse_color;
+use crate::options::value_err;
 use crate::worksheet::xlsx_err;
-
-fn value_err(msg: String) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
-}
 
 const KEYS: [&str; 13] = [
     "from",

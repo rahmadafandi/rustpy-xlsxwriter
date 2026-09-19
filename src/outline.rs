@@ -11,11 +11,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyDict};
 use rust_xlsxwriter::Worksheet;
 
+use crate::options::value_err;
 use crate::worksheet::xlsx_err;
-
-fn value_err(msg: String) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
-}
 
 const KEYS: [&str; 4] = ["rows", "columns", "symbols_above", "symbols_to_left"];
 

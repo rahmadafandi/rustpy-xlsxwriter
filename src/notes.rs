@@ -16,11 +16,8 @@ use pyo3::types::{PyAnyMethods, PyDict};
 use rust_xlsxwriter::{Note, Worksheet};
 
 use crate::format::parse_color;
+use crate::options::{column_index, value_err};
 use crate::worksheet::xlsx_err;
-
-fn value_err(msg: String) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
-}
 
 const KEYS: [&str; 6] = [
     "text",
@@ -109,13 +106,8 @@ impl Notes {
         if self.0.is_empty() {
             return Ok(());
         }
-        let warnings = py.import("warnings")?;
         for (column, note) in &self.0 {
-            let Some(idx) = headers.iter().position(|h| h == column) else {
-                warnings.call_method1(
-                    "warn",
-                    (format!("notes: unknown column '{column}', skipped"),),
-                )?;
+            let Some(idx) = column_index(headers, column, "notes", py)? else {
                 continue;
             };
             worksheet

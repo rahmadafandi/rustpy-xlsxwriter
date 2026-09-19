@@ -12,6 +12,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyDict};
 use rust_xlsxwriter::Worksheet;
 
+use crate::options::value_err;
 use crate::worksheet::xlsx_err;
 
 /// Excel's own defaults, in inches, used for any margin left unset.
@@ -53,10 +54,6 @@ pub struct PageSetup {
     first_page_number: Option<u16>,
     header: Option<String>,
     footer: Option<String>,
-}
-
-fn value_err(msg: String) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
 }
 
 /// A span given either as one index (`0`) or as a pair (`(0, 2)`).

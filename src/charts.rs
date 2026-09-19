@@ -15,11 +15,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyDict};
 use rust_xlsxwriter::{Chart, ChartType, Worksheet};
 
+use crate::options::{opt, reject_unknown_keys, value_err};
 use crate::worksheet::xlsx_err;
-
-fn value_err(msg: String) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
-}
 
 const KEYS: [&str; 12] = [
     "type",
@@ -155,15 +152,7 @@ fn parse_series(value: &Bound<'_, PyAny>, index: usize) -> PyResult<Vec<Series>>
 }
 
 fn parse(map: &Bound<'_, PyDict>, index: usize) -> PyResult<Spec> {
-    for key in map.keys().iter() {
-        let name: String = key.extract()?;
-        if !KEYS.contains(&name.as_str()) {
-            return Err(value_err(format!(
-                "charts[{index}]: unknown key '{name}' (expected one of {})",
-                KEYS.join(", ")
-            )));
-        }
-    }
+    reject_unknown_keys(map, &format!("charts[{index}]"), &KEYS)?;
     let get = |key: &str| map.get_item(key);
     let text = |key: &str| -> PyResult<Option<String>> {
         match map.get_item(key)? {
@@ -198,33 +187,15 @@ fn parse(map: &Bound<'_, PyDict>, index: usize) -> PyResult<Spec> {
         kind,
         series,
         categories,
-        row: match get("row")? {
-            Some(v) => Some(v.extract()?),
-            None => None,
-        },
-        col: match get("col")? {
-            Some(v) => Some(v.extract()?),
-            None => None,
-        },
+        row: opt(map, "row")?,
+        col: opt(map, "col")?,
         title: text("title")?,
         x_axis: text("x_axis")?,
         y_axis: text("y_axis")?,
-        width: match get("width")? {
-            Some(v) => Some(v.extract()?),
-            None => None,
-        },
-        height: match get("height")? {
-            Some(v) => Some(v.extract()?),
-            None => None,
-        },
-        style: match get("style")? {
-            Some(v) => Some(v.extract()?),
-            None => None,
-        },
-        legend: match get("legend")? {
-            Some(v) => Some(v.extract()?),
-            None => None,
-        },
+        width: opt(map, "width")?,
+        height: opt(map, "height")?,
+        style: opt(map, "style")?,
+        legend: opt(map, "legend")?,
     })
 }
 
