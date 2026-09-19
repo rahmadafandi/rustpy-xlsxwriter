@@ -150,6 +150,7 @@ build is younger — treat it as the newer option it is.
 - Outline grouping (`outline=`): collapsible row and column groups
 - Header notes (`notes=`) and cell-anchored images (`images=`, path or bytes)
 - Sparklines (`sparklines=`): a one-cell trend chart per row
+- Charts (`charts=`): column, bar, line, pie, scatter and more, series by column name
 - Sheet view (`sheet_view=`): tab colour, gridlines, zoom, hidden
 - Suppress error triangles (`ignore_errors=`), e.g. numbers stored as text
 
@@ -459,6 +460,38 @@ write_worksheet(
 
 An unknown display-text column warns and falls back to showing the URL, so a
 typo costs a label rather than the export.
+
+### Charts
+
+Series are named by column and cover that column's data rows, so there are no
+ranges to compute:
+
+```python
+write_worksheet(
+    rows,
+    "report.xlsx",
+    charts=[{
+        "type": "column",
+        "series": ["q1", "q2", "q3", "q4"],
+        "categories": "region",
+        "title": "Quarterly revenue",
+        "y_axis": "USD",
+    }],
+)
+```
+
+Types: `area`, `bar`, `column`, `line` (each with `_stacked` and
+`_percent_stacked` too), `pie`, `doughnut`, `radar`, `radar_with_markers`,
+`radar_filled`, `scatter`, `scatter_smooth`, `stock`. Also takes `row`/`col`,
+`title`, `x_axis`, `y_axis`, `width`, `height`, `style` and `legend`.
+
+A series name links to the column's **header cell**, so the legend follows the
+header if it is ever edited; pass `{"values": "q1", "name": "Quarter 1"}` to
+set it outright. Left unplaced, a chart lands one column clear of the data
+rather than on top of it.
+
+A scatter chart needs `categories` — they are its x values, not labels — and
+saying so is refused up front rather than after the rows are written.
 
 ### Sparklines
 
@@ -898,6 +931,7 @@ python benchmark.py
 | `test_outline.py` | Row and column groups, and the constant-memory swap |
 | `test_notes_images.py` | Header notes, images from path or bytes |
 | `test_sparklines.py` | Per-row trend charts and their ranges |
+| `test_charts.py` | Chart types, series ranges, placement, validation |
 | `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
 
 </details>

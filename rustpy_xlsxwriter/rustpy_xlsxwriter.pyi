@@ -65,6 +65,9 @@ ConditionalRule = Dict[str, Any]
 ConditionalFormats = Dict[str, Union[ConditionalRule, List[ConditionalRule]]]
 """Conditional formats keyed by column name."""
 
+Charts = List[Dict[str, Any]]
+"""Charts anchored to a cell."""
+
 Sparklines = Dict[str, Dict[str, Any]]
 """Per-row trend charts, by the column they are drawn in."""
 
@@ -208,6 +211,7 @@ def write_worksheet(
     notes: Optional[Notes] = None,
     images: Optional[Images] = None,
     sparklines: Optional[Sparklines] = None,
+    charts: Optional[Charts] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -374,6 +378,28 @@ def write_worksheet(
             reaching into the header assembly and column accounting that
             ``formula_columns`` uses, in both row loops, which is far more than
             the feature is worth. An unknown column warns and is skipped.
+        charts: Charts anchored to a cell, as a list of dicts. Each needs a
+            ``type`` and a ``series``::
+
+                charts=[{"type": "column", "series": ["q1", "q2"],
+                         "categories": "region", "title": "Quarterly"}]
+
+            ``series`` is a list of column names, or of dicts with ``values``
+            and an optional ``name`` — left out, the series name links to that
+            column's header cell, so the legend follows the header.
+            ``categories`` names the column used for the axis labels.
+
+            Types: ``area``, ``bar``, ``column``, ``line`` (each also with
+            ``_stacked`` and ``_percent_stacked``), ``pie``, ``doughnut``,
+            ``radar``, ``radar_with_markers``, ``radar_filled``, ``scatter``,
+            ``scatter_smooth``, ``stock``.
+
+            Also takes ``row``/``col``, ``title``, ``x_axis``, ``y_axis``,
+            ``width``, ``height``, ``style`` and ``legend``. Left unplaced, a
+            chart lands one column clear of the data and level with the header
+            rather than on top of the table. Series cover the data rows only.
+            An unknown column warns and skips that chart, since a chart missing
+            a series draws a misleading picture.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -421,6 +447,7 @@ def write_worksheets(
     notes: Optional[Dict[str, Notes]] = None,
     images: Optional[Dict[str, Images]] = None,
     sparklines: Optional[Dict[str, Sparklines]] = None,
+    charts: Optional[Dict[str, Charts]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -574,6 +601,28 @@ def write_worksheets(
             reaching into the header assembly and column accounting that
             ``formula_columns`` uses, in both row loops, which is far more than
             the feature is worth. An unknown column warns and is skipped.
+        charts: Charts anchored to a cell, as a list of dicts. Each needs a
+            ``type`` and a ``series``::
+
+                charts=[{"type": "column", "series": ["q1", "q2"],
+                         "categories": "region", "title": "Quarterly"}]
+
+            ``series`` is a list of column names, or of dicts with ``values``
+            and an optional ``name`` — left out, the series name links to that
+            column's header cell, so the legend follows the header.
+            ``categories`` names the column used for the axis labels.
+
+            Types: ``area``, ``bar``, ``column``, ``line`` (each also with
+            ``_stacked`` and ``_percent_stacked``), ``pie``, ``doughnut``,
+            ``radar``, ``radar_with_markers``, ``radar_filled``, ``scatter``,
+            ``scatter_smooth``, ``stock``.
+
+            Also takes ``row``/``col``, ``title``, ``x_axis``, ``y_axis``,
+            ``width``, ``height``, ``style`` and ``legend``. Left unplaced, a
+            chart lands one column clear of the data and level with the header
+            rather than on top of the table. Series cover the data rows only.
+            An unknown column warns and skips that chart, since a chart missing
+            a series draws a misleading picture.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
