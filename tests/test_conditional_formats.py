@@ -222,3 +222,111 @@ def test_builder(tmp_path):
         "S", ROWS, conditional_formats={"score": {"type": "data_bar"}}
     ).save()
     assert len(_rules(openpyxl.load_workbook(path).active)) == 1
+
+
+# --- every criteria, not just the one per type that was exercised -----------
+#
+# These map a string onto an enum variant and nothing else. A variant wired to
+# the wrong string compiles and writes a file that is quietly wrong, so each
+# needs to be seen once. Before this, four of the eight cell criteria and three
+# of the four text criteria had never been executed.
+
+
+@pytest.mark.parametrize(
+    "criteria,operator",
+    [
+        ("==", "equal"),
+        ("equal_to", "equal"),
+        ("!=", "notEqual"),
+        ("not_equal_to", "notEqual"),
+        (">", "greaterThan"),
+        ("greater_than", "greaterThan"),
+        (">=", "greaterThanOrEqual"),
+        ("<", "lessThan"),
+        ("less_than", "lessThan"),
+        ("<=", "lessThanOrEqual"),
+    ],
+)
+def test_every_cell_criteria(tmp_path, criteria, operator):
+    ws = _sheet(
+        tmp_path,
+        {"score": {"type": "cell", "criteria": criteria, "value": 15,
+                   "format": Format().set_bold()}},
+    )
+    (_, rule), = _rules(ws)
+    assert rule.operator == operator
+
+
+def test_cell_not_between(tmp_path):
+    ws = _sheet(
+        tmp_path,
+        {"score": {"type": "cell", "criteria": "not_between", "min": 5, "max": 15,
+                   "format": Format().set_bold()}},
+    )
+    (_, rule), = _rules(ws)
+    assert rule.operator == "notBetween"
+    assert rule.formula == ["5", "15"]
+
+
+@pytest.mark.parametrize(
+    "criteria,kind",
+    [
+        ("contains", "containsText"),
+        ("does_not_contain", "notContainsText"),
+        ("begins_with", "beginsWith"),
+        ("ends_with", "endsWith"),
+    ],
+)
+def test_every_text_criteria(tmp_path, criteria, kind):
+    ws = _sheet(
+        tmp_path,
+        {"name": {"type": "text", "criteria": criteria, "value": "alp",
+                  "format": Format().set_bold()}},
+    )
+    (_, rule), = _rules(ws)
+    assert rule.type == kind
+
+
+# Excel omits a flag that is at its default, so `bottom` absent means top and
+# `aboveAverage` absent means above. The expectations below are the attribute
+# values as written, which is what makes each case tell the others apart.
+@pytest.mark.parametrize(
+    "criteria,bottom,percent",
+    [
+        ("top", None, None),
+        ("bottom", True, None),
+        ("top_percent", None, True),
+        ("bottom_percent", True, True),
+    ],
+)
+def test_every_top_criteria(tmp_path, criteria, bottom, percent):
+    ws = _sheet(
+        tmp_path,
+        {"score": {"type": "top", "criteria": criteria, "value": 1,
+                   "format": Format().set_bold()}},
+    )
+    (_, rule), = _rules(ws)
+    assert rule.type == "top10"
+    assert rule.rank == 1
+    assert (rule.bottom, rule.percent) == (bottom, percent)
+
+
+@pytest.mark.parametrize(
+    "criteria,above,equal",
+    [
+        ("above", None, None),
+        ("below", False, None),
+        ("equal_or_above", None, True),
+        ("equal_or_below", False, True),
+    ],
+)
+def test_every_average_criteria(tmp_path, criteria, above, equal):
+    """Excel models all four as aboveAverage with two flags, not four types."""
+    ws = _sheet(
+        tmp_path,
+        {"score": {"type": "average", "criteria": criteria,
+                   "format": Format().set_bold()}},
+    )
+    (_, rule), = _rules(ws)
+    assert rule.type == "aboveAverage"
+    assert (rule.aboveAverage, rule.equalAverage) == (above, equal)
