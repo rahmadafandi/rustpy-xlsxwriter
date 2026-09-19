@@ -65,6 +65,9 @@ ConditionalRule = Dict[str, Any]
 ConditionalFormats = Dict[str, Union[ConditionalRule, List[ConditionalRule]]]
 """Conditional formats keyed by column name."""
 
+DataValidations = Dict[str, Dict[str, Any]]
+"""Data validation rules keyed by column name."""
+
 SheetView = Dict[str, Any]
 """Screen presentation; see :func:`write_worksheet` for the keys."""
 
@@ -188,6 +191,7 @@ def write_worksheet(
     conditional_formats: Optional[ConditionalFormats] = None,
     sheet_view: Optional[SheetView] = None,
     ignore_errors: Optional[IgnoreErrors] = None,
+    data_validations: Optional[DataValidations] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -288,6 +292,27 @@ def write_worksheet(
             One name per column, never a list: Excel allows a single ignore
             rule per cell. Covers the data rows only, and an unknown column
             warns and is skipped.
+        data_validations: Per-column data validation, as ``{column: rule}``.
+            A rule is a dict with a ``type``:
+
+            - ``list`` — ``values``, a list of strings; this is the dropdown,
+              and the reason most people want the feature. Excel caps the
+              inline list at 255 characters including separators, and a longer
+              one raises rather than producing a file Excel refuses to open
+            - ``whole_number`` / ``decimal`` / ``text_length`` — ``criteria``
+              (``==``, ``!=``, ``>``, ``>=``, ``<``, ``<=``, ``between``,
+              ``not_between``) with ``value``, or ``min`` and ``max`` for the
+              two range criteria. A fraction given to ``whole_number`` or
+              ``text_length`` raises instead of being truncated
+            - ``custom`` — ``formula``
+            - ``any`` — accepts anything, useful only to carry a message
+
+            Any rule also takes ``input_title``, ``input_message``,
+            ``error_title``, ``error_message``, ``error_style``
+            (``stop``, ``warning``, ``information``), ``ignore_blank`` and
+            ``show_dropdown``. Rules cover the data rows only, never the
+            header. An unknown column warns and is skipped; an unknown type or
+            criteria raises.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -330,6 +355,7 @@ def write_worksheets(
     conditional_formats: Optional[Dict[str, ConditionalFormats]] = None,
     sheet_view: Optional[Dict[str, SheetView]] = None,
     ignore_errors: Optional[Dict[str, IgnoreErrors]] = None,
+    data_validations: Optional[Dict[str, DataValidations]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -417,6 +443,27 @@ def write_worksheets(
             One name per column, never a list: Excel allows a single ignore
             rule per cell. Covers the data rows only, and an unknown column
             warns and is skipped.
+        data_validations: Per-column data validation, as ``{column: rule}``.
+            A rule is a dict with a ``type``:
+
+            - ``list`` — ``values``, a list of strings; this is the dropdown,
+              and the reason most people want the feature. Excel caps the
+              inline list at 255 characters including separators, and a longer
+              one raises rather than producing a file Excel refuses to open
+            - ``whole_number`` / ``decimal`` / ``text_length`` — ``criteria``
+              (``==``, ``!=``, ``>``, ``>=``, ``<``, ``<=``, ``between``,
+              ``not_between``) with ``value``, or ``min`` and ``max`` for the
+              two range criteria. A fraction given to ``whole_number`` or
+              ``text_length`` raises instead of being truncated
+            - ``custom`` — ``formula``
+            - ``any`` — accepts anything, useful only to carry a message
+
+            Any rule also takes ``input_title``, ``input_message``,
+            ``error_title``, ``error_message``, ``error_style``
+            (``stop``, ``warning``, ``information``), ``ignore_blank`` and
+            ``show_dropdown``. Rules cover the data rows only, never the
+            header. An unknown column warns and is skipped; an unknown type or
+            criteria raises.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

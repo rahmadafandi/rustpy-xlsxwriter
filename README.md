@@ -146,6 +146,7 @@ build is younger — treat it as the newer option it is.
 - Freeze panes (rows, columns, per-sheet overrides)
 - Page and print setup (`page_setup=`): orientation, margins, repeat rows, fit-to-pages, headers/footers
 - Conditional formatting (`conditional_formats=`): data bars, colour scales, cell/text/top/average rules
+- Data validation (`data_validations=`): dropdowns, numeric and text-length rules
 - Sheet view (`sheet_view=`): tab colour, gridlines, zoom, hidden
 - Suppress error triangles (`ignore_errors=`), e.g. numbers stored as text
 
@@ -455,6 +456,32 @@ write_worksheet(
 
 An unknown display-text column warns and falls back to showing the URL, so a
 typo costs a label rather than the export.
+
+### Data Validation
+
+```python
+write_worksheet(
+    rows,
+    "out.xlsx",
+    data_validations={
+        "status": {"type": "list", "values": ["open", "closed", "blocked"],
+                   "input_message": "Pick one"},
+        "qty":    {"type": "whole_number", "criteria": ">=", "value": 0,
+                   "error_message": "Quantity cannot be negative"},
+        "score":  {"type": "decimal", "criteria": "between", "min": 0, "max": 100},
+    },
+)
+```
+
+Types: `list` (the dropdown), `whole_number`, `decimal`, `text_length`,
+`custom`, `any`. Every rule also takes `input_title`, `input_message`,
+`error_title`, `error_message`, `error_style` (`stop`, `warning`,
+`information`), `ignore_blank` and `show_dropdown`.
+
+Rules cover the column's data rows, never the header. Two limits Excel
+imposes are raised rather than written into a file it would refuse to open: an
+inline `list` is capped at 255 characters including separators, and a fraction
+given to `whole_number` or `text_length` is rejected instead of truncated.
 
 ### Sheet View and Error Indicators
 
@@ -795,6 +822,7 @@ python benchmark.py
 | `test_page_setup.py` | Page and print settings, and their validation |
 | `test_conditional_formats.py` | Rule types, ranges, and validation |
 | `test_sheet_view.py` | Screen presentation and error indicators |
+| `test_data_validation.py` | Dropdowns, numeric rules, messages, limits |
 | `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
 
 </details>

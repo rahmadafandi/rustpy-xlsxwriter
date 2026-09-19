@@ -4,6 +4,7 @@ mod cell;
 mod conditional_format;
 mod csv_writer;
 mod data_types;
+mod data_validation;
 mod format;
 mod helpers;
 mod ignore_errors;

@@ -108,6 +108,8 @@ pub struct SheetLayout {
     pub conditional: crate::conditional_format::ConditionalFormats,
     /// Error indicators to suppress; see [`crate::ignore_errors`].
     pub ignore: crate::ignore_errors::IgnoreErrors,
+    /// Per-column data validation; see [`crate::data_validation`].
+    pub validations: crate::data_validation::DataValidations,
 }
 
 impl SheetLayout {
@@ -474,6 +476,7 @@ pub fn resolve_layout(
     conditional_formats: Option<&Bound<'_, PyAny>>,
     sheet_view: Option<&Bound<'_, PyAny>>,
     ignore_errors: Option<&Bound<'_, PyAny>>,
+    data_validations: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<SheetLayout> {
     let mut totals = Vec::new();
     if let Some(spec) = totals_row {
@@ -587,6 +590,9 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         page: crate::page_setup::PageSetup::from_py(page_setup)?,
         view: crate::sheet_view::SheetView::from_py(sheet_view)?,
         ignore: crate::ignore_errors::IgnoreErrors::from_py(ignore_errors)?,
+        validations: crate::data_validation::DataValidations::from_py(
+            data_validations,
+        )?,
         conditional: crate::conditional_format::ConditionalFormats::from_py(
             conditional_formats,
         )?,

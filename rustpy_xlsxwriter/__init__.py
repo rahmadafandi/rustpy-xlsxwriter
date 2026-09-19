@@ -346,6 +346,7 @@ class FastExcel:
         conditional_formats: Optional[Dict[str, Any]] = None,
         sheet_view: Optional[Dict[str, Any]] = None,
         ignore_errors: Optional[Union[List[str], Dict[str, str]]] = None,
+        data_validations: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -484,6 +485,22 @@ class FastExcel:
                 one per column, never a list, since Excel allows a single
                 ignore rule per cell. Covers the data rows only; an unknown
                 column warns and is skipped.
+            data_validations: Per-column data validation, as
+                ``{column: rule}``. A rule is a dict with a ``type``:
+                ``list`` (``values``, a list of strings — the dropdown, and the
+                reason most people want this; Excel caps the inline list at 255
+                characters including separators and a longer one raises),
+                ``whole_number``/``decimal``/``text_length`` (``criteria``
+                ``==``/``!=``/``>``/``>=``/``<``/``<=`` with ``value``, or
+                ``between``/``not_between`` with ``min`` and ``max``; a
+                fraction given to the two integer kinds raises rather than
+                being truncated), ``custom`` (``formula``), or ``any``.
+
+                Any rule also accepts ``input_title``, ``input_message``,
+                ``error_title``, ``error_message``, ``error_style``
+                (``stop``, ``warning``, ``information``), ``ignore_blank`` and
+                ``show_dropdown``. Rules cover the data rows only, never the
+                header; an unknown column warns and is skipped.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -514,6 +531,7 @@ class FastExcel:
             "conditional_formats": conditional_formats,
             "sheet_view": sheet_view,
             "ignore_errors": ignore_errors,
+            "data_validations": data_validations,
         }.items():
             if value:
                 self._per_sheet.setdefault(option, {})[name] = value
