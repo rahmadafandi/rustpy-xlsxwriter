@@ -343,6 +343,7 @@ class FastExcel:
         totals_format: Optional["Format"] = None,
         formula_columns: Optional[Dict[str, str]] = None,
         page_setup: Optional[Dict[str, Any]] = None,
+        conditional_formats: Optional[Dict[str, Any]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -448,6 +449,25 @@ class FastExcel:
                 ``"&RPage &P of &N"``. An unknown key raises, as does setting
                 ``scale`` and ``fit_to_pages`` together, which Excel cannot
                 honour at once.
+            conditional_formats: Per-column conditional formatting, as
+                ``{column: rule}`` or ``{column: [rule, rule]}`` when a column
+                needs more than one. A rule is a dict with a ``type``:
+                ``cell`` (``criteria`` ``==``/``!=``/``>``/``>=``/``<``/``<=``
+                with ``value``, or ``between``/``not_between`` with ``min`` and
+                ``max``, plus a ``format``), ``data_bar`` (optional ``color``,
+                ``bar_only``), ``2_color_scale`` and ``3_color_scale``
+                (optional ``min_color``, ``mid_color``, ``max_color``),
+                ``text`` (``contains``/``does_not_contain``/``begins_with``/
+                ``ends_with`` with ``value`` and ``format``), ``top``
+                (``top``/``bottom``/``top_percent``/``bottom_percent`` with
+                ``value``, default top 10), ``average``
+                (``above``/``below``/``equal_or_above``/``equal_or_below``),
+                and ``duplicate``/``unique``.
+
+                Rules cover the column's data rows only — never the header —
+                and the range follows the rows actually written, so no manual
+                bounds. An unknown column warns and is skipped; an unknown
+                type or criteria raises.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -475,6 +495,7 @@ class FastExcel:
             "totals_format": totals_format,
             "formula_columns": formula_columns,
             "page_setup": page_setup,
+            "conditional_formats": conditional_formats,
         }.items():
             if value:
                 self._per_sheet.setdefault(option, {})[name] = value

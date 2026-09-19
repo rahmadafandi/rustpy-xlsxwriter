@@ -145,6 +145,7 @@ build is younger — treat it as the newer option it is.
 - Bold headers and bold index columns
 - Freeze panes (rows, columns, per-sheet overrides)
 - Page and print setup (`page_setup=`): orientation, margins, repeat rows, fit-to-pages, headers/footers
+- Conditional formatting (`conditional_formats=`): data bars, colour scales, cell/text/top/average rules
 
 **Output Options**
 - `.xlsx` (Excel) — auto-detected from file extension
@@ -453,6 +454,39 @@ write_worksheet(
 An unknown display-text column warns and falls back to showing the URL, so a
 typo costs a label rather than the export.
 
+### Conditional Formatting
+
+Rules are given per column and cover that column's data rows — never the
+header — with the range taken from the rows actually written, so there are no
+bounds to compute:
+
+```python
+write_worksheet(
+    rows,
+    "report.xlsx",
+    conditional_formats={
+        "revenue": {"type": "data_bar", "color": "#638EC6"},
+        "margin":  {"type": "3_color_scale"},
+        "overdue": {"type": "cell", "criteria": ">", "value": 30,
+                    "format": Format().set_background_color("#FFC7CE")},
+        "status":  {"type": "text", "criteria": "contains", "value": "FAIL",
+                    "format": Format().set_bold()},
+    },
+)
+```
+
+Types: `cell`, `data_bar`, `2_color_scale`, `3_color_scale`, `text`, `top`,
+`average`, `duplicate`, `unique`. Pass a list to stack several on one column:
+
+```python
+conditional_formats={"score": [{"type": "data_bar"},
+                               {"type": "top", "value": 3, "format": gold}]}
+```
+
+An unknown column warns and is skipped — a rule that cannot be placed costs
+shading, not the export. An unknown type or criteria raises, since that is a
+mistake in the code rather than in the data.
+
 ### Printing
 
 Excel has about twenty page-setup settings, so they arrive as one mapping
@@ -736,6 +770,7 @@ python benchmark.py
 | `test_csv_options.py` | CSV `bom`, `columns`, `header` across all four input paths |
 | `test_nan_inf.py` | `na_rep` / `inf_value` on every write path |
 | `test_page_setup.py` | Page and print settings, and their validation |
+| `test_conditional_formats.py` | Rule types, ranges, and validation |
 | `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
 
 </details>

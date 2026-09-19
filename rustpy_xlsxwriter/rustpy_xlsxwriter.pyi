@@ -59,6 +59,12 @@ MergeRange = Union[
 """One merged cell range: ``(first_row, first_col, last_row, last_col, value)``,
 optionally followed by a :class:`Format`."""
 
+ConditionalRule = Dict[str, Any]
+"""One conditional-formatting rule; see :func:`write_worksheet` for the keys."""
+
+ConditionalFormats = Dict[str, Union[ConditionalRule, List[ConditionalRule]]]
+"""Conditional formats keyed by column name."""
+
 PageSetup = Dict[str, Any]
 """Page and print settings; see :func:`write_worksheet` for the keys."""
 
@@ -173,6 +179,7 @@ def write_worksheet(
     na_rep: Optional[str] = None,
     inf_value: Optional[str] = None,
     page_setup: Optional[PageSetup] = None,
+    conditional_formats: Optional[ConditionalFormats] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -235,6 +242,27 @@ def write_worksheet(
             ``"&RPage &P of &N"``). An unknown key raises, and so does setting
             ``scale`` together with ``fit_to_pages``, which Excel cannot honour
             at once.
+        conditional_formats: Per-column conditional formatting, as
+            ``{column: rule}`` or ``{column: [rule, rule]}``. A rule is a dict
+            with a ``type``:
+
+            - ``cell`` — ``criteria`` (``==``, ``!=``, ``>``, ``>=``, ``<``,
+              ``<=``, ``between``, ``not_between``) plus ``value``, or ``min``
+              and ``max`` for the two range criteria, and a ``format``
+            - ``data_bar`` — optional ``color`` and ``bar_only``
+            - ``2_color_scale`` / ``3_color_scale`` — optional ``min_color``,
+              ``mid_color``, ``max_color``
+            - ``text`` — ``criteria`` (``contains``, ``does_not_contain``,
+              ``begins_with``, ``ends_with``), ``value``, ``format``
+            - ``top`` — ``criteria`` (``top``, ``bottom``, ``top_percent``,
+              ``bottom_percent``, default ``top``), ``value`` (default 10)
+            - ``average`` — ``criteria`` (``above``, ``below``,
+              ``equal_or_above``, ``equal_or_below``)
+            - ``duplicate`` / ``unique``
+
+            Rules cover the column's data rows only, never the header, and the
+            range follows the rows actually written. An unknown column warns
+            and is skipped; an unknown type or criteria raises.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -274,6 +302,7 @@ def write_worksheets(
     na_rep: Optional[str] = None,
     inf_value: Optional[str] = None,
     page_setup: Optional[Dict[str, PageSetup]] = None,
+    conditional_formats: Optional[Dict[str, ConditionalFormats]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -323,6 +352,27 @@ def write_worksheets(
             ``"&RPage &P of &N"``). An unknown key raises, and so does setting
             ``scale`` together with ``fit_to_pages``, which Excel cannot honour
             at once.
+        conditional_formats: Per-column conditional formatting, as
+            ``{column: rule}`` or ``{column: [rule, rule]}``. A rule is a dict
+            with a ``type``:
+
+            - ``cell`` — ``criteria`` (``==``, ``!=``, ``>``, ``>=``, ``<``,
+              ``<=``, ``between``, ``not_between``) plus ``value``, or ``min``
+              and ``max`` for the two range criteria, and a ``format``
+            - ``data_bar`` — optional ``color`` and ``bar_only``
+            - ``2_color_scale`` / ``3_color_scale`` — optional ``min_color``,
+              ``mid_color``, ``max_color``
+            - ``text`` — ``criteria`` (``contains``, ``does_not_contain``,
+              ``begins_with``, ``ends_with``), ``value``, ``format``
+            - ``top`` — ``criteria`` (``top``, ``bottom``, ``top_percent``,
+              ``bottom_percent``, default ``top``), ``value`` (default 10)
+            - ``average`` — ``criteria`` (``above``, ``below``,
+              ``equal_or_above``, ``equal_or_below``)
+            - ``duplicate`` / ``unique``
+
+            Rules cover the column's data rows only, never the header, and the
+            range follows the rows actually written. An unknown column warns
+            and is skipped; an unknown type or criteria raises.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

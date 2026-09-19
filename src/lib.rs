@@ -1,6 +1,7 @@
 mod arrow_ffi;
 mod arrow_writer;
 mod cell;
+mod conditional_format;
 mod csv_writer;
 mod data_types;
 mod format;

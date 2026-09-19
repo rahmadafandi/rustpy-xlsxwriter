@@ -101,6 +101,9 @@ pub struct SheetLayout {
     pub inf_text: Option<String>,
     /// Page and print setup; see [`crate::page_setup`].
     pub page: crate::page_setup::PageSetup,
+    /// Per-column conditional formats. Applied after the data, like the
+    /// autofilter, since the range depends on the final row count.
+    pub conditional: crate::conditional_format::ConditionalFormats,
 }
 
 impl SheetLayout {
@@ -463,6 +466,7 @@ pub fn resolve_layout(
     na_text: Option<String>,
     inf_text: Option<String>,
     page_setup: Option<&Bound<'_, PyAny>>,
+    conditional_formats: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<SheetLayout> {
     let mut totals = Vec::new();
     if let Some(spec) = totals_row {
@@ -574,6 +578,9 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         na_text,
         inf_text,
         page: crate::page_setup::PageSetup::from_py(page_setup)?,
+        conditional: crate::conditional_format::ConditionalFormats::from_py(
+            conditional_formats,
+        )?,
     })
 }
 
