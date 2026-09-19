@@ -208,6 +208,8 @@ jobs:
       - name: Clippy
         # 3.5k lines of FFI and parsing that CodeQL's Python analysis cannot see.
         run: cargo clippy --all-targets -- -D warnings
+      - name: Rustfmt
+        run: cargo fmt --check
 
   sdist:
     runs-on: ubuntu-latest
