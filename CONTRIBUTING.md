@@ -6,7 +6,7 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.9+
 - Rust (latest stable)
 - [maturin](https://github.com/PyO3/maturin)
 

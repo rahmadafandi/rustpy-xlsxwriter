@@ -165,7 +165,7 @@ build is younger — treat it as the newer option it is.
 - Multiple sheets in a single file (Excel only)
 
 **Runtime**
-- CPython 3.8+ — prebuilt wheels for Linux (glibc/musl), macOS, Windows
+- CPython 3.9+ — prebuilt wheels for Linux (glibc/musl), macOS, Windows
 - Free-threaded builds (`python3.14t`) — parallel writes, see [Concurrency](#concurrency)
 
 **API**
