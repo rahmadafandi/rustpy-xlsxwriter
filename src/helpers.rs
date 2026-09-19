@@ -116,6 +116,8 @@ pub struct SheetLayout {
     pub notes: crate::notes::Notes,
     /// Images anchored to cells; see [`crate::images`].
     pub images: crate::images::Images,
+    /// Per-row trend charts; see [`crate::sparklines`].
+    pub sparklines: crate::sparklines::Sparklines,
 }
 
 impl SheetLayout {
@@ -488,6 +490,7 @@ pub fn resolve_layout(
     outline: Option<&Bound<'_, PyAny>>,
     notes: Option<&Bound<'_, PyAny>>,
     images: Option<&Bound<'_, PyAny>>,
+    sparklines: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<SheetLayout> {
     let mut totals = Vec::new();
     if let Some(spec) = totals_row {
@@ -607,6 +610,7 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         outline: crate::outline::Outline::from_py(outline)?,
         notes: crate::notes::Notes::from_py(notes)?,
         images: crate::images::Images::from_py(images)?,
+        sparklines: crate::sparklines::Sparklines::from_py(sparklines)?,
         conditional: crate::conditional_format::ConditionalFormats::from_py(
             conditional_formats,
         )?,

@@ -149,6 +149,7 @@ build is younger — treat it as the newer option it is.
 - Data validation (`data_validations=`): dropdowns, numeric and text-length rules
 - Outline grouping (`outline=`): collapsible row and column groups
 - Header notes (`notes=`) and cell-anchored images (`images=`, path or bytes)
+- Sparklines (`sparklines=`): a one-cell trend chart per row
 - Sheet view (`sheet_view=`): tab colour, gridlines, zoom, hidden
 - Suppress error triangles (`ignore_errors=`), e.g. numbers stored as text
 
@@ -458,6 +459,31 @@ write_worksheet(
 
 An unknown display-text column warns and falls back to showing the URL, so a
 typo costs a label rather than the export.
+
+### Sparklines
+
+A one-cell chart per data row. Leave a column empty in the records and point
+it at the span it should summarise:
+
+```python
+rows = [{"name": "a", "q1": 1, "q2": 5, "q3": 3, "q4": 8, "trend": None}, ...]
+
+write_worksheet(
+    rows,
+    "report.xlsx",
+    sparklines={"trend": {"from": "q1", "to": "q4", "type": "column",
+                          "high_point": True}},
+)
+```
+
+Types: `line` (default), `column`, `win_lose`. Also takes `color`, `style` and
+the toggles `high_point`, `low_point`, `first_point`, `last_point`, `markers`,
+`negative_points`, `axis`, `right_to_left`.
+
+The target column has to be one that already exists — appending one would mean
+reaching into the header assembly and column accounting that `formula_columns`
+uses, in both row loops, which costs far more than leaving a key out of your
+records does.
 
 ### Notes and Images
 
@@ -871,6 +897,7 @@ python benchmark.py
 | `test_data_validation.py` | Dropdowns, numeric rules, messages, limits |
 | `test_outline.py` | Row and column groups, and the constant-memory swap |
 | `test_notes_images.py` | Header notes, images from path or bytes |
+| `test_sparklines.py` | Per-row trend charts and their ranges |
 | `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
 
 </details>

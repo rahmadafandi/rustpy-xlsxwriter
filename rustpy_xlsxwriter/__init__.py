@@ -350,6 +350,7 @@ class FastExcel:
         outline: Optional[Dict[str, Any]] = None,
         notes: Optional[Dict[str, Any]] = None,
         images: Optional[List[Dict[str, Any]]] = None,
+        sparklines: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -532,6 +533,23 @@ class FastExcel:
                 index rather than by column name, since an image floats above
                 the grid instead of belonging to a column. Identical images are
                 stored once.
+            sparklines: A one-cell chart per data row, as ``{column: rule}``.
+                The column is one left empty in the records; ``from`` and
+                ``to`` name the span each row summarises::
+
+                    rows = [{"q1": 1, "q2": 5, "q3": 3, "q4": 8, "trend": None}]
+                    sparklines={"trend": {"from": "q1", "to": "q4"}}
+
+                Also takes ``type`` (``line``, ``column``, ``win_lose``),
+                ``color``, ``style`` and the toggles ``high_point``,
+                ``low_point``, ``first_point``, ``last_point``, ``markers``,
+                ``negative_points``, ``axis`` and ``right_to_left``.
+
+                The target column must already exist: appending one would mean
+                reaching into the header assembly and column accounting that
+                ``formula_columns`` uses, in both row loops, for far more cost
+                than the feature is worth. An unknown column warns and is
+                skipped.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -566,6 +584,7 @@ class FastExcel:
             "outline": outline,
             "notes": notes,
             "images": images,
+            "sparklines": sparklines,
         }.items():
             if value:
                 self._per_sheet.setdefault(option, {})[name] = value

@@ -65,6 +65,9 @@ ConditionalRule = Dict[str, Any]
 ConditionalFormats = Dict[str, Union[ConditionalRule, List[ConditionalRule]]]
 """Conditional formats keyed by column name."""
 
+Sparklines = Dict[str, Dict[str, Any]]
+"""Per-row trend charts, by the column they are drawn in."""
+
 Notes = Dict[str, Union[str, Dict[str, Any]]]
 """Header-cell notes, by column name."""
 
@@ -204,6 +207,7 @@ def write_worksheet(
     outline: Optional[Outline] = None,
     notes: Optional[Notes] = None,
     images: Optional[Images] = None,
+    sparklines: Optional[Sparklines] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -354,6 +358,22 @@ def write_worksheet(
             by index rather than by column name, since they float above the
             grid instead of belonging to a column. Identical images are stored
             once.
+        sparklines: A one-cell chart per data row, as ``{column: rule}``.
+            The column is one you left empty in the records, and ``from`` and
+            ``to`` name the span each row summarises::
+
+                rows = [{"q1": 1, "q2": 5, "q3": 3, "q4": 8, "trend": None}]
+                sparklines={"trend": {"from": "q1", "to": "q4"}}
+
+            Also takes ``type`` (``line``, ``column``, ``win_lose``),
+            ``color``, ``style``, and the toggles ``high_point``,
+            ``low_point``, ``first_point``, ``last_point``, ``markers``,
+            ``negative_points``, ``axis`` and ``right_to_left``.
+
+            The target column has to exist already: appending one would mean
+            reaching into the header assembly and column accounting that
+            ``formula_columns`` uses, in both row loops, which is far more than
+            the feature is worth. An unknown column warns and is skipped.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -400,6 +420,7 @@ def write_worksheets(
     outline: Optional[Dict[str, Outline]] = None,
     notes: Optional[Dict[str, Notes]] = None,
     images: Optional[Dict[str, Images]] = None,
+    sparklines: Optional[Dict[str, Sparklines]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -537,6 +558,22 @@ def write_worksheets(
             by index rather than by column name, since they float above the
             grid instead of belonging to a column. Identical images are stored
             once.
+        sparklines: A one-cell chart per data row, as ``{column: rule}``.
+            The column is one you left empty in the records, and ``from`` and
+            ``to`` name the span each row summarises::
+
+                rows = [{"q1": 1, "q2": 5, "q3": 3, "q4": 8, "trend": None}]
+                sparklines={"trend": {"from": "q1", "to": "q4"}}
+
+            Also takes ``type`` (``line``, ``column``, ``win_lose``),
+            ``color``, ``style``, and the toggles ``high_point``,
+            ``low_point``, ``first_point``, ``last_point``, ``markers``,
+            ``negative_points``, ``axis`` and ``right_to_left``.
+
+            The target column has to exist already: appending one would mean
+            reaching into the header assembly and column accounting that
+            ``formula_columns`` uses, in both row loops, which is far more than
+            the feature is worth. An unknown column warns and is skipped.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

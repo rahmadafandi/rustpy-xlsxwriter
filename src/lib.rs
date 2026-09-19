@@ -13,6 +13,7 @@ mod ignore_errors;
 mod images;
 mod page_setup;
 mod sheet_view;
+mod sparklines;
 mod utils;
 mod worksheet;
 
