@@ -3,6 +3,8 @@
 #
 #    maturin generate-ci github -o .github/workflows/CI.yml
 #
+# The `test` job is hand-added — regenerating this file discards it.
+#
 name: CI
 
 on:
@@ -188,6 +190,25 @@ jobs:
           name: wheels-freethreaded-${{ matrix.platform.runner }}-${{ matrix.platform.target }}
           path: dist
 
+  test:
+    # Every other job only proves the extension compiles. This one is the only
+    # place the 400+ tests and clippy actually run.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install
+        # Builds the extension through the maturin backend and pulls the
+        # DataFrame backends the Arrow paths are exercised against.
+        run: pip install -e ".[tests]"
+      - name: Test
+        run: pytest tests/ -m "not benchmark" -ra
+      - name: Clippy
+        # 3.5k lines of FFI and parsing that CodeQL's Python analysis cannot see.
+        run: cargo clippy --all-targets -- -D warnings
+
   sdist:
     runs-on: ubuntu-latest
     steps:
@@ -207,7 +228,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [linux, musllinux, windows, macos, freethreaded, sdist]
+    needs: [test, linux, musllinux, windows, macos, freethreaded, sdist]
     permissions:
       # Use to sign the release artifacts
       id-token: write
