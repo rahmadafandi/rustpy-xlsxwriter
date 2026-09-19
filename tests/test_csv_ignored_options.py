@@ -7,6 +7,8 @@ instead of quietly producing a plain file.
 """
 
 import contextlib
+import inspect
+import io
 import warnings
 
 import pytest
@@ -128,3 +130,26 @@ def test_xlsx_never_warns(tmp_path):
             .sheet("S", ROWS, banded_rows="#EEEEEE")
             .save()
         )
+
+
+def test_every_sheet_option_reaches_the_store():
+    """A kwarg added to ``sheet()`` must also join its recording mapping.
+
+    ``sheet()`` names its options twice — once in the signature, once in the
+    mapping it records them through — and a name present in the first but
+    missing from the second is accepted and then silently dropped, which no
+    output assertion would catch. Comparing the two is the only thing that
+    does. (A name in the mapping but not the signature cannot happen: it is a
+    NameError when the module is imported.)
+    """
+    options = [
+        p.name
+        for p in inspect.signature(FastExcel.sheet).parameters.values()
+        if p.kind is inspect.Parameter.KEYWORD_ONLY
+    ]
+    writer = FastExcel(io.BytesIO())
+    # sheet() only records; validation happens at save(), so any truthy value
+    # exercises the plumbing.
+    writer.sheet("S", ROWS, **{name: 1 for name in options})
+
+    assert set(writer._per_sheet) == set(options)

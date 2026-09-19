@@ -156,28 +156,6 @@ def _detect_format(target: Any) -> str:
     return "xlsx"
 
 
-#: Options ``sheet()`` records per sheet and forwards to the writers. Both save
-#: paths iterate this, so adding an option means touching only ``sheet()``.
-_PER_SHEET_OPTIONS = (
-    "column_width",
-    "column_widths",
-    "column_formats",
-    "header_format",
-    "dedupe_strings",
-    "header_row",
-    "merge_ranges",
-    "row_heights",
-    "row_formats",
-    "banded_rows",
-    "autofilter",
-    "url_columns",
-    "totals_row",
-    "totals_label",
-    "totals_format",
-    "formula_columns",
-)
-
-
 class FastExcel:
     """Fluent builder for creating Excel files.
 
@@ -249,10 +227,9 @@ class FastExcel:
         self._index_columns: Optional[List[str]] = None
         self._bold_headers: bool = False
         self._freeze_panes: Dict[str, Dict[str, int]] = {}
-        # {option: {sheet_name: value}} — see _PER_SHEET_OPTIONS.
-        self._per_sheet: Dict[str, Dict[str, Any]] = {
-            option: {} for option in _PER_SHEET_OPTIONS
-        }
+        # {option: {sheet_name: value}}, filled by sheet() as options are
+        # given. Keyed lazily so the option names live in one place only.
+        self._per_sheet: Dict[str, Dict[str, Any]] = {}
 
     def __enter__(self) -> "FastExcel":
         return self
@@ -451,7 +428,7 @@ class FastExcel:
             "formula_columns": formula_columns,
         }.items():
             if value:
-                self._per_sheet[option][name] = value
+                self._per_sheet.setdefault(option, {})[name] = value
         return self
 
     # -- output -------------------------------------------------------------
@@ -471,9 +448,7 @@ class FastExcel:
             "freeze": self._freeze_panes,
         }
         names = [name for name, value in workbook_wide.items() if value]
-        names += [
-            option for option in _PER_SHEET_OPTIONS if self._per_sheet[option]
-        ]
+        names += [option for option, values in self._per_sheet.items() if values]
         return names
 
     def save(self) -> None:
