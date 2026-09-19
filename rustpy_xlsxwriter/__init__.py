@@ -344,6 +344,8 @@ class FastExcel:
         formula_columns: Optional[Dict[str, str]] = None,
         page_setup: Optional[Dict[str, Any]] = None,
         conditional_formats: Optional[Dict[str, Any]] = None,
+        sheet_view: Optional[Dict[str, Any]] = None,
+        ignore_errors: Optional[Union[List[str], Dict[str, str]]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -468,6 +470,20 @@ class FastExcel:
                 and the range follows the rows actually written, so no manual
                 bounds. An unknown column warns and is skipped; an unknown
                 type or criteria raises.
+            sheet_view: How the sheet presents on screen, as one mapping:
+                ``tab_color``, ``gridlines`` (on screen), ``zoom``,
+                ``right_to_left``, ``hidden``, ``selected``. Separate from
+                ``page_setup``, which is about paper. An unknown key raises, as
+                does ``hidden`` with ``selected`` — Excel rejects a workbook
+                whose active sheet is hidden.
+            ignore_errors: Suppress Excel's green error triangles on a column.
+                A list of column names means ``number_stored_as_text`` — the
+                reason anyone wants this, since an ID, SKU or postcode column
+                is digits stored as text on purpose and Excel flags every cell
+                of it. A dict maps a column to another error name instead —
+                one per column, never a list, since Excel allows a single
+                ignore rule per cell. Covers the data rows only; an unknown
+                column warns and is skipped.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -496,6 +512,8 @@ class FastExcel:
             "formula_columns": formula_columns,
             "page_setup": page_setup,
             "conditional_formats": conditional_formats,
+            "sheet_view": sheet_view,
+            "ignore_errors": ignore_errors,
         }.items():
             if value:
                 self._per_sheet.setdefault(option, {})[name] = value

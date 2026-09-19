@@ -146,6 +146,8 @@ build is younger — treat it as the newer option it is.
 - Freeze panes (rows, columns, per-sheet overrides)
 - Page and print setup (`page_setup=`): orientation, margins, repeat rows, fit-to-pages, headers/footers
 - Conditional formatting (`conditional_formats=`): data bars, colour scales, cell/text/top/average rules
+- Sheet view (`sheet_view=`): tab colour, gridlines, zoom, hidden
+- Suppress error triangles (`ignore_errors=`), e.g. numbers stored as text
 
 **Output Options**
 - `.xlsx` (Excel) — auto-detected from file extension
@@ -453,6 +455,27 @@ write_worksheet(
 
 An unknown display-text column warns and falls back to showing the URL, so a
 typo costs a label rather than the export.
+
+### Sheet View and Error Indicators
+
+```python
+write_worksheet(
+    rows,
+    "out.xlsx",
+    sheet_view={"tab_color": "#C00000", "gridlines": False, "zoom": 120},
+    ignore_errors=["sku"],
+)
+```
+
+`sheet_view` covers the screen — `tab_color`, `gridlines`, `zoom`,
+`right_to_left`, `hidden`, `selected` — and is kept apart from `page_setup`,
+which covers paper.
+
+`ignore_errors` removes Excel's green triangles. A list of column names means
+`number_stored_as_text`, which is why anyone wants it: an ID, SKU or postcode
+column is digits stored as text on purpose and Excel flags every cell. Pass a
+dict to name another error — one per column, since Excel allows a single
+ignore rule per cell.
 
 ### Conditional Formatting
 
@@ -771,6 +794,7 @@ python benchmark.py
 | `test_nan_inf.py` | `na_rep` / `inf_value` on every write path |
 | `test_page_setup.py` | Page and print settings, and their validation |
 | `test_conditional_formats.py` | Rule types, ranges, and validation |
+| `test_sheet_view.py` | Screen presentation and error indicators |
 | `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
 
 </details>

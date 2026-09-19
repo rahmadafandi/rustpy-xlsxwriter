@@ -101,9 +101,13 @@ pub struct SheetLayout {
     pub inf_text: Option<String>,
     /// Page and print setup; see [`crate::page_setup`].
     pub page: crate::page_setup::PageSetup,
+    /// Screen presentation; see [`crate::sheet_view`].
+    pub view: crate::sheet_view::SheetView,
     /// Per-column conditional formats. Applied after the data, like the
     /// autofilter, since the range depends on the final row count.
     pub conditional: crate::conditional_format::ConditionalFormats,
+    /// Error indicators to suppress; see [`crate::ignore_errors`].
+    pub ignore: crate::ignore_errors::IgnoreErrors,
 }
 
 impl SheetLayout {
@@ -317,6 +321,7 @@ impl SheetLayout {
     /// Emit merges, row heights and row formats. Must run before data rows.
     pub fn apply(&self, worksheet: &mut Worksheet) -> PyResult<()> {
         self.page.apply(worksheet)?;
+        self.view.apply(worksheet);
         for (r1, c1, r2, c2, value, fmt) in &self.merges {
             let blank = Format::new();
             worksheet
@@ -467,6 +472,8 @@ pub fn resolve_layout(
     inf_text: Option<String>,
     page_setup: Option<&Bound<'_, PyAny>>,
     conditional_formats: Option<&Bound<'_, PyAny>>,
+    sheet_view: Option<&Bound<'_, PyAny>>,
+    ignore_errors: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<SheetLayout> {
     let mut totals = Vec::new();
     if let Some(spec) = totals_row {
@@ -578,6 +585,8 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         na_text,
         inf_text,
         page: crate::page_setup::PageSetup::from_py(page_setup)?,
+        view: crate::sheet_view::SheetView::from_py(sheet_view)?,
+        ignore: crate::ignore_errors::IgnoreErrors::from_py(ignore_errors)?,
         conditional: crate::conditional_format::ConditionalFormats::from_py(
             conditional_formats,
         )?,

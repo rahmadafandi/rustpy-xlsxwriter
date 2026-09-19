@@ -65,6 +65,12 @@ ConditionalRule = Dict[str, Any]
 ConditionalFormats = Dict[str, Union[ConditionalRule, List[ConditionalRule]]]
 """Conditional formats keyed by column name."""
 
+SheetView = Dict[str, Any]
+"""Screen presentation; see :func:`write_worksheet` for the keys."""
+
+IgnoreErrors = Union[List[str], Dict[str, str]]
+"""Error indicators to suppress, by column."""
+
 PageSetup = Dict[str, Any]
 """Page and print settings; see :func:`write_worksheet` for the keys."""
 
@@ -180,6 +186,8 @@ def write_worksheet(
     inf_value: Optional[str] = None,
     page_setup: Optional[PageSetup] = None,
     conditional_formats: Optional[ConditionalFormats] = None,
+    sheet_view: Optional[SheetView] = None,
+    ignore_errors: Optional[IgnoreErrors] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -263,6 +271,23 @@ def write_worksheet(
             Rules cover the column's data rows only, never the header, and the
             range follows the rows actually written. An unknown column warns
             and is skipped; an unknown type or criteria raises.
+        sheet_view: How the sheet presents on screen, as one mapping:
+            ``tab_color``, ``gridlines`` (show them on screen), ``zoom``,
+            ``right_to_left``, ``hidden``, ``selected``. Kept apart from
+            ``page_setup``, which is about paper. An unknown key raises, as
+            does ``hidden`` together with ``selected`` — Excel rejects a
+            workbook whose active sheet is hidden.
+        ignore_errors: Suppress Excel's green error triangles on a column.
+            A list of column names means ``number_stored_as_text``, which is
+            the reason anyone reaches for this: an ID, SKU or postcode column
+            is digits stored as text on purpose. A dict maps a column to one
+            error name instead — ``formula_error``, ``formula_differs``,
+            ``formula_refers_to_empty_cells``, ``formula_omits_cells``,
+            ``data_validation_error``, ``two_digit_text_year``,
+            ``unlocked_cells_with_formula``, ``inconsistent_column_formula``.
+            One name per column, never a list: Excel allows a single ignore
+            rule per cell. Covers the data rows only, and an unknown column
+            warns and is skipped.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -303,6 +328,8 @@ def write_worksheets(
     inf_value: Optional[str] = None,
     page_setup: Optional[Dict[str, PageSetup]] = None,
     conditional_formats: Optional[Dict[str, ConditionalFormats]] = None,
+    sheet_view: Optional[Dict[str, SheetView]] = None,
+    ignore_errors: Optional[Dict[str, IgnoreErrors]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -373,6 +400,23 @@ def write_worksheets(
             Rules cover the column's data rows only, never the header, and the
             range follows the rows actually written. An unknown column warns
             and is skipped; an unknown type or criteria raises.
+        sheet_view: How the sheet presents on screen, as one mapping:
+            ``tab_color``, ``gridlines`` (show them on screen), ``zoom``,
+            ``right_to_left``, ``hidden``, ``selected``. Kept apart from
+            ``page_setup``, which is about paper. An unknown key raises, as
+            does ``hidden`` together with ``selected`` — Excel rejects a
+            workbook whose active sheet is hidden.
+        ignore_errors: Suppress Excel's green error triangles on a column.
+            A list of column names means ``number_stored_as_text``, which is
+            the reason anyone reaches for this: an ID, SKU or postcode column
+            is digits stored as text on purpose. A dict maps a column to one
+            error name instead — ``formula_error``, ``formula_differs``,
+            ``formula_refers_to_empty_cells``, ``formula_omits_cells``,
+            ``data_validation_error``, ``two_digit_text_year``,
+            ``unlocked_cells_with_formula``, ``inconsistent_column_formula``.
+            One name per column, never a list: Excel allows a single ignore
+            rule per cell. Covers the data rows only, and an unknown column
+            warns and is skipped.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

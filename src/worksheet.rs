@@ -549,6 +549,9 @@ fn write_worksheet_content(
     layout
         .conditional
         .apply(worksheet, &final_headers, layout.header_row, data_rows, py)?;
+    layout
+        .ignore
+        .apply(worksheet, &final_headers, layout.header_row, data_rows, py)?;
     layout.apply_totals(worksheet, &final_headers, data_rows, py)?;
 
     if freeze_row.is_some() || freeze_col.is_some() {
@@ -909,7 +912,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -941,6 +944,8 @@ pub fn write_worksheets(
     inf_value: Option<String>,
     page_setup: Option<Bound<'_, pyo3::types::PyDict>>,
     conditional_formats: Option<Bound<'_, pyo3::types::PyDict>>,
+    sheet_view: Option<Bound<'_, pyo3::types::PyDict>>,
+    ignore_errors: Option<Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
@@ -988,6 +993,8 @@ pub fn write_worksheets(
             inf_value.clone(),
             keyed_get(page_setup.as_ref(), &sheet_name)?.as_ref(),
             keyed_get(conditional_formats.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(sheet_view.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(ignore_errors.as_ref(), &sheet_name)?.as_ref(),
         )?;
 
         let sheet_urls = keyed_get(url_columns.as_ref(), &sheet_name)?;
@@ -1020,7 +1027,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -1054,6 +1061,8 @@ pub fn write_worksheet(
     inf_value: Option<String>,
     page_setup: Option<Bound<'_, PyAny>>,
     conditional_formats: Option<Bound<'_, PyAny>>,
+    sheet_view: Option<Bound<'_, PyAny>>,
+    ignore_errors: Option<Bound<'_, PyAny>>,
 ) -> PyResult<()> {
     let layout = crate::helpers::resolve_layout(
         header_row,
@@ -1069,6 +1078,8 @@ pub fn write_worksheet(
         inf_value,
         page_setup.as_ref(),
         conditional_formats.as_ref(),
+        sheet_view.as_ref(),
+        ignore_errors.as_ref(),
     )?;
     let mut workbook = Workbook::new();
     let worksheet = if dedupe_strings {
