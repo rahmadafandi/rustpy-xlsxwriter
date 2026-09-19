@@ -1,3 +1,14 @@
+//! How an incoming Python object is classified into a write path.
+//!
+//! Detection is by duck-typing, and the order matters: it runs cheapest and
+//! most specific first. Anything exposing `__arrow_c_stream__` takes the
+//! zero-copy Arrow path, including modern pandas and polars. Polars is checked
+//! before pandas because a polars frame has `columns` too, so the pandas test
+//! would swallow it. Everything unrecognised falls through to Records, which
+//! accepts any iterable of dicts.
+//!
+//! Add a new frame type by inserting its check above `Records`, never below.
+
 use indexmap::IndexMap;
 use pyo3::conversion::{FromPyObject, IntoPyObjectExt};
 use pyo3::prelude::*;
