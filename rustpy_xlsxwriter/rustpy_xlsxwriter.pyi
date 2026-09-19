@@ -65,6 +65,12 @@ ConditionalRule = Dict[str, Any]
 ConditionalFormats = Dict[str, Union[ConditionalRule, List[ConditionalRule]]]
 """Conditional formats keyed by column name."""
 
+Notes = Dict[str, Union[str, Dict[str, Any]]]
+"""Header-cell notes, by column name."""
+
+Images = List[Dict[str, Any]]
+"""Images anchored to cells."""
+
 Outline = Dict[str, Any]
 """Row and column grouping; see :func:`write_worksheet` for the keys."""
 
@@ -196,6 +202,8 @@ def write_worksheet(
     ignore_errors: Optional[IgnoreErrors] = None,
     data_validations: Optional[DataValidations] = None,
     outline: Optional[Outline] = None,
+    notes: Optional[Notes] = None,
+    images: Optional[Images] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -333,6 +341,19 @@ def write_worksheet(
             collapsed group there would leave hidden rows with no bracket to
             reopen them. Column groups carry no such cost. An unknown column
             name warns and is skipped.
+        notes: Notes on header cells, as ``{column: text}`` — where you say
+            what a column means without widening it or adding a legend sheet.
+            The value may instead be a dict with ``text`` plus any of
+            ``author``, ``width``, ``height``, ``visible`` and
+            ``background_color``. An unknown column warns and is skipped.
+        images: Images anchored to cells, as a list of dicts. Each needs
+            ``path`` or ``data`` (raw bytes, for a logo already in memory),
+            and takes ``row`` and ``col`` (0-based, default 0), ``scale`` or
+            the per-axis ``scale_x``/``scale_y``, ``fit_to_cell`` with
+            ``keep_aspect_ratio``, ``alt_text`` and ``url``. Images are placed
+            by index rather than by column name, since they float above the
+            grid instead of belonging to a column. Identical images are stored
+            once.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -377,6 +398,8 @@ def write_worksheets(
     ignore_errors: Optional[Dict[str, IgnoreErrors]] = None,
     data_validations: Optional[Dict[str, DataValidations]] = None,
     outline: Optional[Dict[str, Outline]] = None,
+    notes: Optional[Dict[str, Notes]] = None,
+    images: Optional[Dict[str, Images]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -501,6 +524,19 @@ def write_worksheets(
             collapsed group there would leave hidden rows with no bracket to
             reopen them. Column groups carry no such cost. An unknown column
             name warns and is skipped.
+        notes: Notes on header cells, as ``{column: text}`` — where you say
+            what a column means without widening it or adding a legend sheet.
+            The value may instead be a dict with ``text`` plus any of
+            ``author``, ``width``, ``height``, ``visible`` and
+            ``background_color``. An unknown column warns and is skipped.
+        images: Images anchored to cells, as a list of dicts. Each needs
+            ``path`` or ``data`` (raw bytes, for a logo already in memory),
+            and takes ``row`` and ``col`` (0-based, default 0), ``scale`` or
+            the per-axis ``scale_x``/``scale_y``, ``fit_to_cell`` with
+            ``keep_aspect_ratio``, ``alt_text`` and ``url``. Images are placed
+            by index rather than by column name, since they float above the
+            grid instead of belonging to a column. Identical images are stored
+            once.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

@@ -556,6 +556,9 @@ fn write_worksheet_content(
         .validations
         .apply(worksheet, &final_headers, layout.header_row, data_rows, py)?;
     layout.outline.apply_columns(worksheet, &final_headers, py)?;
+    layout
+        .notes
+        .apply(worksheet, &final_headers, layout.header_row, py)?;
     layout.apply_totals(worksheet, &final_headers, data_rows, py)?;
 
     if freeze_row.is_some() || freeze_col.is_some() {
@@ -916,7 +919,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -952,6 +955,8 @@ pub fn write_worksheets(
     ignore_errors: Option<Bound<'_, pyo3::types::PyDict>>,
     data_validations: Option<Bound<'_, pyo3::types::PyDict>>,
     outline: Option<Bound<'_, pyo3::types::PyDict>>,
+    notes: Option<Bound<'_, pyo3::types::PyDict>>,
+    images: Option<Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
@@ -983,10 +988,13 @@ pub fn write_worksheets(
             keyed_get(ignore_errors.as_ref(), &sheet_name)?.as_ref(),
             keyed_get(data_validations.as_ref(), &sheet_name)?.as_ref(),
             keyed_get(outline.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(notes.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(images.as_ref(), &sheet_name)?.as_ref(),
         )?;
 
         // Row groups need the buffered writer; see `needs_buffered_rows`.
-        let worksheet = if dedupe || layout.outline.needs_buffered_rows() {
+        let worksheet = if dedupe || layout.outline.needs_buffered_rows()
+            {
             workbook.add_worksheet()
         } else {
             workbook.add_worksheet_with_constant_memory()
@@ -1036,7 +1044,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -1074,6 +1082,8 @@ pub fn write_worksheet(
     ignore_errors: Option<Bound<'_, PyAny>>,
     data_validations: Option<Bound<'_, PyAny>>,
     outline: Option<Bound<'_, PyAny>>,
+    notes: Option<Bound<'_, PyAny>>,
+    images: Option<Bound<'_, PyAny>>,
 ) -> PyResult<()> {
     let layout = crate::helpers::resolve_layout(
         header_row,
@@ -1093,6 +1103,8 @@ pub fn write_worksheet(
         ignore_errors.as_ref(),
         data_validations.as_ref(),
         outline.as_ref(),
+        notes.as_ref(),
+        images.as_ref(),
     )?;
     let mut workbook = Workbook::new();
     // Row groups need the buffered writer; see `needs_buffered_rows`.

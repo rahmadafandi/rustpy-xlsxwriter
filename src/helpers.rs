@@ -112,6 +112,10 @@ pub struct SheetLayout {
     pub validations: crate::data_validation::DataValidations,
     /// Collapsible row/column groups; see [`crate::outline`].
     pub outline: crate::outline::Outline,
+    /// Notes on header cells; see [`crate::notes`].
+    pub notes: crate::notes::Notes,
+    /// Images anchored to cells; see [`crate::images`].
+    pub images: crate::images::Images,
 }
 
 impl SheetLayout {
@@ -327,6 +331,7 @@ impl SheetLayout {
         self.page.apply(worksheet)?;
         self.view.apply(worksheet);
         self.outline.apply_rows(worksheet)?;
+        self.images.apply(worksheet)?;
         for (r1, c1, r2, c2, value, fmt) in &self.merges {
             let blank = Format::new();
             worksheet
@@ -481,6 +486,8 @@ pub fn resolve_layout(
     ignore_errors: Option<&Bound<'_, PyAny>>,
     data_validations: Option<&Bound<'_, PyAny>>,
     outline: Option<&Bound<'_, PyAny>>,
+    notes: Option<&Bound<'_, PyAny>>,
+    images: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<SheetLayout> {
     let mut totals = Vec::new();
     if let Some(spec) = totals_row {
@@ -598,6 +605,8 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
             data_validations,
         )?,
         outline: crate::outline::Outline::from_py(outline)?,
+        notes: crate::notes::Notes::from_py(notes)?,
+        images: crate::images::Images::from_py(images)?,
         conditional: crate::conditional_format::ConditionalFormats::from_py(
             conditional_formats,
         )?,

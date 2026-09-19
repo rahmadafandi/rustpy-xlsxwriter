@@ -148,6 +148,7 @@ build is younger — treat it as the newer option it is.
 - Conditional formatting (`conditional_formats=`): data bars, colour scales, cell/text/top/average rules
 - Data validation (`data_validations=`): dropdowns, numeric and text-length rules
 - Outline grouping (`outline=`): collapsible row and column groups
+- Header notes (`notes=`) and cell-anchored images (`images=`, path or bytes)
 - Sheet view (`sheet_view=`): tab colour, gridlines, zoom, hidden
 - Suppress error triangles (`ignore_errors=`), e.g. numbers stored as text
 
@@ -457,6 +458,26 @@ write_worksheet(
 
 An unknown display-text column warns and falls back to showing the URL, so a
 typo costs a label rather than the export.
+
+### Notes and Images
+
+```python
+write_worksheet(
+    rows,
+    "report.xlsx",
+    notes={"revenue": "Net of returns and credit notes"},
+    images=[{"path": "logo.png", "row": 0, "col": 5, "scale": 0.5}],
+)
+```
+
+A note lands on the column's **header** cell — where you say what a column
+means without widening it or adding a legend sheet. Pass a dict instead of a
+string for `author`, `width`, `height`, `visible` or `background_color`.
+
+An image is placed by `row`/`col` rather than by column name, since it floats
+above the grid. Give it a `path` or raw `data` — the second is what a web
+handler has, a logo already in memory. Identical images are stored once.
+Neither costs constant-memory mode.
 
 ### Outline Grouping
 
@@ -849,6 +870,7 @@ python benchmark.py
 | `test_sheet_view.py` | Screen presentation and error indicators |
 | `test_data_validation.py` | Dropdowns, numeric rules, messages, limits |
 | `test_outline.py` | Row and column groups, and the constant-memory swap |
+| `test_notes_images.py` | Header notes, images from path or bytes |
 | `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
 
 </details>
