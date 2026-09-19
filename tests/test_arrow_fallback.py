@@ -32,7 +32,14 @@ class _Dtype:
         self.kind = kind
 
     def __str__(self):
-        return {"i": "Int64", "f": "Float64", "O": "String", "M": "Datetime"}[self.kind]
+        return {
+            "i": "Int64",
+            "u": "UInt64",
+            "f": "Float64",
+            "b": "Boolean",
+            "O": "String",
+            "M": "Datetime",
+        }[self.kind]
 
 
 class _BrokenArrowFrame:
@@ -188,3 +195,72 @@ def test_generator_input_is_still_accepted(tmp_path):
     path = tmp_path / "gen.xlsx"
     write_worksheet((r for r in [{"a": 1}, {"a": 2}]), str(path))
     assert openpyxl.load_workbook(path).active.max_row == 3
+
+
+# --- the column kinds the fallback had never been handed -------------------
+#
+# `classify_scalar` maps a dtype letter onto a ScalarKind, and each kind picks
+# a different writer. Only 'O', 'f', 'i' and — on the pandas stub alone — 'M'
+# had ever reached it, so booleans went through code no test ran, and the
+# polars branch had never seen a datetime.
+
+
+@pytest.mark.parametrize(
+    "frame_cls", [_BrokenArrowFrame, _BrokenArrowPolarsFrame], ids=["pandas", "polars"]
+)
+def test_fallback_handles_booleans(tmp_path, frame_cls):
+    path = tmp_path / "bools.xlsx"
+    write_worksheet(frame_cls({"flag": [True, False, True]}, ["b"]), str(path))
+
+    ws = openpyxl.load_workbook(path).active
+    assert [ws.cell(r, 1).value for r in (2, 3, 4)] == [True, False, True]
+
+
+@pytest.mark.parametrize(
+    "frame_cls", [_BrokenArrowFrame, _BrokenArrowPolarsFrame], ids=["pandas", "polars"]
+)
+def test_fallback_handles_datetimes_on_both_shapes(tmp_path, frame_cls):
+    """The polars branch reads through get_column, so it needs its own pass."""
+    path = tmp_path / "dates2.xlsx"
+    frame = frame_cls({"when": [datetime.datetime(2026, 3, d) for d in (4, 5)]}, ["M"])
+    write_worksheet(frame, str(path))
+
+    ws = openpyxl.load_workbook(path).active
+    assert ws["A2"].value == datetime.datetime(2026, 3, 4)
+    assert ws["A3"].value == datetime.datetime(2026, 3, 5)
+
+
+@pytest.mark.parametrize(
+    "frame_cls", [_BrokenArrowFrame, _BrokenArrowPolarsFrame], ids=["pandas", "polars"]
+)
+def test_fallback_handles_plain_dates(tmp_path, frame_cls):
+    """A date is not a datetime; it takes the other branch of the same arm."""
+    path = tmp_path / "plaindates.xlsx"
+    frame = frame_cls({"d": [datetime.date(2026, 3, 4), datetime.date(2026, 3, 5)]}, ["M"])
+    write_worksheet(frame, str(path))
+
+    ws = openpyxl.load_workbook(path).active
+    assert ws["A2"].value == datetime.datetime(2026, 3, 4)
+
+
+@pytest.mark.parametrize(
+    "frame_cls", [_BrokenArrowFrame, _BrokenArrowPolarsFrame], ids=["pandas", "polars"]
+)
+def test_fallback_handles_unsigned_integers(tmp_path, frame_cls):
+    """'u' and 'i' share an arm; only 'i' had ever been through it."""
+    path = tmp_path / "unsigned.xlsx"
+    write_worksheet(frame_cls({"n": [1, 2, 3]}, ["u"]), str(path))
+
+    ws = openpyxl.load_workbook(path).active
+    assert [ws.cell(r, 1).value for r in (2, 3, 4)] == [1, 2, 3]
+
+
+@pytest.mark.parametrize(
+    "frame_cls", [_BrokenArrowFrame, _BrokenArrowPolarsFrame], ids=["pandas", "polars"]
+)
+def test_fallback_handles_none(tmp_path, frame_cls):
+    path = tmp_path / "nones.xlsx"
+    write_worksheet(frame_cls({"v": [1, None, 3]}, ["O"]), str(path))
+
+    ws = openpyxl.load_workbook(path).active
+    assert [ws.cell(r, 1).value for r in (2, 3, 4)] == [1, None, 3]

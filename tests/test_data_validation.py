@@ -209,3 +209,54 @@ def test_builder(tmp_path):
     ).save()
     ws = openpyxl.load_workbook(path).active
     assert len(list(ws.data_validations.dataValidation)) == 1
+
+
+# --- every criteria -------------------------------------------------------
+#
+# Each maps a string onto a DataValidationRule variant and nothing else. Before
+# this, only `>=` and `between` had ever been executed, so six of the eight
+# could have been wired to the wrong variant and still compiled.
+
+
+@pytest.mark.parametrize(
+    "criteria,operator",
+    [
+        ("==", "equal"),
+        ("equal_to", "equal"),
+        ("!=", "notEqual"),
+        ("not_equal_to", "notEqual"),
+        (">", "greaterThan"),
+        ("greater_than", "greaterThan"),
+        (">=", "greaterThanOrEqual"),
+        ("<", "lessThan"),
+        ("less_than", "lessThan"),
+        ("<=", "lessThanOrEqual"),
+    ],
+)
+def test_every_numeric_criteria(tmp_path, criteria, operator):
+    (dv,) = _validations(
+        tmp_path, {"qty": {"type": "whole_number", "criteria": criteria, "value": 5}}
+    )
+    assert dv.operator == operator
+    assert dv.formula1 == "5"
+
+
+def test_not_between(tmp_path):
+    (dv,) = _validations(
+        tmp_path,
+        {"qty": {"type": "decimal", "criteria": "not_between", "min": 1, "max": 9}},
+    )
+    assert dv.operator == "notBetween"
+    assert (dv.formula1, dv.formula2) == ("1", "9")
+
+
+def test_ignore_blank_and_show_dropdown(tmp_path):
+    """Both default on, so turning them off is what proves they are wired."""
+    (dv,) = _validations(
+        tmp_path,
+        {"status": {"type": "list", "values": ["open"],
+                    "ignore_blank": False, "show_dropdown": False}},
+    )
+    assert dv.allowBlank is False
+    # Excel stores the dropdown inverted: showDropDown="1" hides it.
+    assert dv.showDropDown is True
