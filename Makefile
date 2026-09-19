@@ -14,7 +14,7 @@ publish:
 	maturin publish
 
 install-development:
-	pip install .
+	pip install -e ".[dev]"
 
 install-production:
 	pip install dist/rustpy_xlsxwriter-*.whl
@@ -35,5 +35,3 @@ clean:
 cleanup:
 	autoflake --remove-unused-variables --remove-all-unused-imports -i --recursive . && black . && isort --profile black . && pyclean .
 
-requirements:
-	pip freeze > requirements.txt

@@ -34,7 +34,28 @@ Repository = "https://github.com/rahmadafandi/rustpy-xlsxwriter"
 Issues = "https://github.com/rahmadafandi/rustpy-xlsxwriter/issues"
 
 [project.optional-dependencies]
-tests = ["pytest", "XlsxWriter", "pytest-codspeed", "faker", "openpyxl", "pandas", "polars"]
+# Everything the test suite imports, including the optional DataFrame backends
+# the Arrow path is exercised against.
+tests = [
+    "pytest",
+    "pytest-codspeed",
+    "XlsxWriter",
+    "faker",
+    "openpyxl",
+    "pandas",
+    "polars",
+    "pyarrow",
+    "numpy",
+]
+# Tests plus the build and formatting tools the Makefile drives.
+dev = [
+    "rustpy-xlsxwriter[tests]",
+    "maturin>=1.8,<2.0",
+    "autoflake",
+    "black",
+    "isort",
+    "pyclean",
+]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

@@ -17,8 +17,7 @@ git clone https://github.com/rahmadafandi/rustpy-xlsxwriter.git
 cd rustpy-xlsxwriter
 python -m venv .venv
 source .venv/bin/activate
-pip install maturin
-pip install -e ".[tests]"
+pip install -e ".[dev]"   # tests + maturin + formatters
 ```
 
 ### Build

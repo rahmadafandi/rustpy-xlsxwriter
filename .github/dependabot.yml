@@ -23,7 +23,7 @@ updates:
       github-actions:
         patterns: ["*"]
 
-  # Python deps (requirements.txt + pyproject test extras) — batch everything.
+  # Python deps (pyproject optional-dependencies) — batch everything.
   - package-ecosystem: pip
     directory: "/"
     schedule:
