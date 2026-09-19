@@ -7,7 +7,7 @@ use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyInt, PyTimeAccess};
 use pyo3::Py;
 
 use crate::cell::{classify_and_write, try_cached, CellWriter};
-use crate::helpers::{write_bytes_to_target, write_csv_escaped_guarded, ColType};
+use crate::helpers::{write_bytes_to_target, write_csv_escaped_guarded, ColType, NumReps};
 
 /// Turn a failed `try_iter` into a clear message. Skipping the loop instead
 /// would write an empty file and report success.
@@ -38,6 +38,8 @@ fn not_iterable(_: PyErr) -> PyErr {
     bom = false,
     columns = None,
     header = true,
+    na_rep = None,
+    inf_value = None,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn write_csv(
@@ -49,6 +51,8 @@ pub fn write_csv(
     bom: bool,
     columns: Option<Vec<String>>,
     header: bool,
+    na_rep: Option<String>,
+    inf_value: Option<String>,
 ) -> PyResult<()> {
     let delim = delimiter.unwrap_or_else(|| ",".to_string());
     let delim_bytes = delim.as_bytes();
@@ -66,6 +70,10 @@ pub fn write_csv(
         output.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
     }
     let selection = columns.as_ref();
+    let reps = NumReps {
+        na: na_rep.as_deref(),
+        inf: inf_value.as_deref(),
+    };
 
     // Fast path: Arrow zero-copy if the object exposes `__arrow_c_stream__`
     // (Pandas ≥2.0, Polars). Falls back to the per-object paths below on
@@ -79,6 +87,7 @@ pub fn write_csv(
             sanitize_formulas,
             selection,
             header,
+            reps,
         ) {
             Ok(()) => return write_bytes_to_target(py, &output, file_name),
             // A bad `columns` is the caller's mistake, not a quirk of this
@@ -117,7 +126,7 @@ pub fn write_csv(
                         output.push(delim_byte);
                     }
                     let item = col_list.get_item(row)?;
-                    let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                    let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
                     classify_and_write(&item, &mut sink)?;
                 }
                 output.push(b'\n');
@@ -138,7 +147,7 @@ pub fn write_csv(
                                 output.push(delim_byte);
                             }
                             let item = row.get_item(i)?;
-                            let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                            let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
                             classify_and_write(&item, &mut sink)?;
                         }
                     }
@@ -150,7 +159,7 @@ pub fn write_csv(
                                 output.push(delim_byte);
                             }
                             first = false;
-                            let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                            let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
                             classify_and_write(&item, &mut sink)?;
                         }
                     }
@@ -198,7 +207,7 @@ pub fn write_csv(
                     if col > 0 {
                         output.push(delim_byte);
                     }
-                    let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                    let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
                     // A later row missing the key writes an empty field rather
                     // than shifting every column after it.
                     if let Some(value) = row_dict.get_item(name)? {
@@ -219,7 +228,7 @@ pub fn write_csv(
                         output.push(delim_byte);
                     }
                     let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
-                    let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                    let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
                     if !try_cached(&value, cached, &mut sink)? {
                         let detected = classify_and_write(&value, &mut sink)?;
                         if col < col_types.len() && col_types[col] == ColType::Unknown {
@@ -236,6 +245,7 @@ pub fn write_csv(
     write_bytes_to_target(py, &output, file_name)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_csv_via_arrow(
     records: &Py<PyAny>,
     py: Python,
@@ -244,6 +254,7 @@ fn write_csv_via_arrow(
     sanitize: bool,
     columns: Option<&Vec<String>>,
     header: bool,
+    reps: NumReps<'_>,
 ) -> PyResult<()> {
     let reader = crate::arrow_ffi::stream_to_reader(records, py)?;
     let schema = reader.schema();
@@ -265,9 +276,9 @@ fn write_csv_via_arrow(
             // stays zero-copy.
             Some(ix) => {
                 let projected = batch.project(ix).map_err(crate::arrow_ffi::batch_read_err)?;
-                crate::arrow_writer::write_arrow_batch_csv(output, &projected, delim, sanitize)?;
+                crate::arrow_writer::write_arrow_batch_csv(output, &projected, delim, sanitize, reps)?;
             }
-            None => crate::arrow_writer::write_arrow_batch_csv(output, &batch, delim, sanitize)?,
+            None => crate::arrow_writer::write_arrow_batch_csv(output, &batch, delim, sanitize, reps)?,
         }
     }
     Ok(())
@@ -349,17 +360,25 @@ fn emit_date(output: &mut Vec<u8>, d: &Bound<PyDate>) {
 struct CsvCell<'a> {
     output: &'a mut Vec<u8>,
     sanitize: bool,
+    reps: NumReps<'a>,
 }
 
 impl<'a> CsvCell<'a> {
-    fn new(output: &'a mut Vec<u8>, sanitize: bool) -> Self {
-        CsvCell { output, sanitize }
+    fn new(output: &'a mut Vec<u8>, sanitize: bool, reps: NumReps<'a>) -> Self {
+        CsvCell {
+            output,
+            sanitize,
+            reps,
+        }
     }
 }
 
 impl CellWriter for CsvCell<'_> {
     fn write_none(&mut self) -> PyResult<()> {
-        // CSV: a null is an empty field — emit nothing.
+        // A null is an empty field unless the caller named a representation.
+        if let Some(text) = self.reps.na {
+            write_csv_escaped_guarded(self.output, text, self.sanitize);
+        }
         Ok(())
     }
 
@@ -375,10 +394,15 @@ impl CellWriter for CsvCell<'_> {
     }
 
     fn write_float(&mut self, f: f64) -> PyResult<()> {
-        if !f.is_nan() && !f.is_infinite() {
-            let mut buf = ryu::Buffer::new();
-            self.output.extend_from_slice(buf.format(f).as_bytes());
+        if f.is_nan() || f.is_infinite() {
+            // Without a representation the field stays empty, as it always has.
+            if let Some(text) = self.reps.text_for(f) {
+                write_csv_escaped_guarded(self.output, &text, self.sanitize);
+            }
+            return Ok(());
         }
+        let mut buf = ryu::Buffer::new();
+        self.output.extend_from_slice(buf.format(f).as_bytes());
         Ok(())
     }
 

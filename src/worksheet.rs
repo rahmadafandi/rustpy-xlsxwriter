@@ -34,6 +34,8 @@ struct ExcelCell<'a> {
     datetime_fmt: &'a Format,
     datetime_cols_set: &'a mut HashSet<u16>,
     col_override: Option<&'a Format>,
+    /// Text for NaN and the infinities; see [`crate::helpers::NumReps`].
+    reps: crate::helpers::NumReps<'a>,
     /// When banding is on, datetimes are formatted per cell instead of via a
     /// one-shot column format — a column format is fixed for every row and so
     /// cannot alternate.
@@ -89,7 +91,7 @@ impl ExcelCell<'_> {
 
 impl CellWriter for ExcelCell<'_> {
     fn write_none(&mut self) -> PyResult<()> {
-        self.put_string("")
+        self.put_string(self.reps.na_text())
     }
 
     fn write_str(&mut self, s: &str) -> PyResult<()> {
@@ -117,6 +119,7 @@ impl CellWriter for ExcelCell<'_> {
             self.col,
             f,
             self.col_override.or(self.float_fmt),
+            self.reps,
         )
     }
 
@@ -423,6 +426,7 @@ fn write_worksheet_content(
                     datetime_fmt: &pal.datetime,
                     datetime_cols_set: &mut datetime_cols_set,
                     col_override: None,
+                    reps: layout.reps(),
                     per_cell_datetime: banding,
                     is_url: false,
                 };
@@ -655,6 +659,7 @@ where
                         col_u16,
                         val,
                         col_override.or(pal.float.as_ref()),
+                        layout.reps(),
                     )?;
                 }
                 ScalarKind::Bool => {
@@ -691,6 +696,7 @@ where
                         datetime_fmt: &pal.datetime,
                         datetime_cols_set: &mut *datetime_cols_set,
                         col_override,
+                        reps: layout.reps(),
                         per_cell_datetime: banding,
                         is_url: url_cols.get(col_idx).copied().unwrap_or(false),
                     };
@@ -862,7 +868,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -890,6 +896,8 @@ pub fn write_worksheets(
     totals_label: Option<Bound<'_, pyo3::types::PyDict>>,
     totals_format: Option<Bound<'_, pyo3::types::PyDict>>,
     formula_columns: Option<Bound<'_, pyo3::types::PyDict>>,
+    na_rep: Option<String>,
+    inf_value: Option<String>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
@@ -931,6 +939,10 @@ pub fn write_worksheets(
             keyed_get(totals_row.as_ref(), &sheet_name)?.as_ref(),
             keyed_extract::<String>(totals_label.as_ref(), &sheet_name)?,
             keyed_format(totals_format.as_ref(), &sheet_name)?.map(|f| f.inner),
+            // Workbook-wide, like float_format: cloned per sheet because the
+            // layout owns its strings.
+            na_rep.clone(),
+            inf_value.clone(),
         )?;
 
         let sheet_urls = keyed_extract::<Vec<String>>(url_columns.as_ref(), &sheet_name)?;
@@ -963,7 +975,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -993,6 +1005,8 @@ pub fn write_worksheet(
     totals_label: Option<String>,
     totals_format: Option<Bound<'_, crate::format::Format>>,
     formula_columns: Option<Bound<'_, PyAny>>,
+    na_rep: Option<String>,
+    inf_value: Option<String>,
 ) -> PyResult<()> {
     let layout = crate::helpers::resolve_layout(
         header_row,
@@ -1004,6 +1018,8 @@ pub fn write_worksheet(
         totals_row.as_ref(),
         totals_label,
         totals_format.map(|f| f.borrow().inner.clone()),
+        na_rep,
+        inf_value,
     )?;
     let mut workbook = Workbook::new();
     let worksheet = if dedupe_strings {

@@ -3,6 +3,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyDict, PyList, PyTimeAccess};
 use pyo3::Py;
+use std::borrow::Cow;
 use std::path::PathBuf;
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, Worksheet};
 
@@ -93,6 +94,21 @@ pub struct SheetLayout {
     pub totals: Vec<(String, TotalsCell)>,
     pub totals_label: Option<String>,
     pub totals_format: Option<Format>,
+    /// Text for missing values and the infinities. Not geometry like the rest of this
+    /// struct, but it is resolved per sheet and every write path already
+    /// carries the layout, which beats a parameter on four more functions.
+    pub na_text: Option<String>,
+    pub inf_text: Option<String>,
+}
+
+impl SheetLayout {
+    /// Borrow the non-finite representations for the write paths.
+    pub fn reps(&self) -> NumReps<'_> {
+        NumReps {
+            na: self.na_text.as_deref(),
+            inf: self.inf_text.as_deref(),
+        }
+    }
 }
 
 /// A computed column: a header and a formula template appended after the data
@@ -441,6 +457,8 @@ pub fn resolve_layout(
     totals_row: Option<&Bound<'_, PyAny>>,
     totals_label: Option<String>,
     totals_format: Option<Format>,
+    na_text: Option<String>,
+    inf_text: Option<String>,
 ) -> PyResult<SheetLayout> {
     let mut totals = Vec::new();
     if let Some(spec) = totals_row {
@@ -549,6 +567,8 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         totals,
         totals_label,
         totals_format,
+        na_text,
+        inf_text,
     })
 }
 
@@ -615,17 +635,66 @@ pub fn write_all_headers(
     Ok(())
 }
 
-/// Write a numeric cell with optional float format. NaN/Inf → empty string.
+/// How missing values and the infinities are rendered.
+///
+/// `None` writes an empty cell, which is what every version before this did,
+/// so the default keeps existing files byte-identical. The reason to set one
+/// is that a blank and a missing value are indistinguishable once written.
+///
+/// `na` deliberately covers `None`, an Arrow null *and* a float NaN together,
+/// the way `pandas.to_csv(na_rep=...)` does. Keeping them apart would be a
+/// trap: pandas turns NaN in a float column into an Arrow null, so a knob that
+/// only caught true NaN would do nothing on the most common input of all.
+#[derive(Clone, Copy, Default)]
+pub struct NumReps<'a> {
+    pub na: Option<&'a str>,
+    pub inf: Option<&'a str>,
+}
+
+impl<'a> NumReps<'a> {
+    /// Text for a missing value, or `""` when none was set.
+    ///
+    /// Takes `self` by value — the struct is `Copy`, and the borrow must be of
+    /// the caller's strings rather than of `self`, or a sink holding a
+    /// `NumReps` could not pass the text to its own `&mut self` method.
+    pub fn na_text(self) -> &'a str {
+        self.na.unwrap_or("")
+    }
+
+    /// Text for a non-finite `val`, or `None` to leave the cell empty.
+    ///
+    /// Negative infinity takes `inf` with a `-` in front, matching what
+    /// `rust_xlsxwriter` and Excel use themselves ("INF" / "-INF").
+    pub fn text_for(self, val: f64) -> Option<Cow<'a, str>> {
+        if val.is_nan() {
+            self.na.map(Cow::Borrowed)
+        } else if val.is_infinite() {
+            self.inf.map(|t| {
+                if val.is_sign_negative() {
+                    Cow::Owned(format!("-{t}"))
+                } else {
+                    Cow::Borrowed(t)
+                }
+            })
+        } else {
+            None
+        }
+    }
+}
+
+/// Write a numeric cell with optional float format. NaN/Inf follow `reps`.
 pub fn write_num(
     worksheet: &mut Worksheet,
     row: u32,
     col: u16,
     val: f64,
     float_fmt: Option<&Format>,
+    reps: NumReps<'_>,
 ) -> PyResult<()> {
     if val.is_nan() || val.is_infinite() {
-        // Keep the format on the blank so a banded row has no unshaded hole.
-        write_string_opt(worksheet, row, col, "", float_fmt)?;
+        // Keep the format on the text so a banded row has no unshaded hole.
+        let text = reps.text_for(val).unwrap_or(Cow::Borrowed(""));
+        write_string_opt(worksheet, row, col, &text, float_fmt)?;
     } else if let Some(fmt) = float_fmt {
         worksheet
             .write_number_with_format(row, col, val, fmt)

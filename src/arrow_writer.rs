@@ -137,7 +137,7 @@ pub fn write_arrow_batch(
             let col_override = overrides[col_idx].or(text_fmt);
 
             if column.is_null(row) {
-                write_string_opt(worksheet, row_u32, col_u16, "", text_fmt)?;
+                write_string_opt(worksheet, row_u32, col_u16, layout.reps().na_text(), text_fmt)?;
                 continue;
             }
 
@@ -184,6 +184,7 @@ pub fn write_arrow_batch(
                         col_u16,
                         val,
                         overrides[col_idx].or(pal.float.as_ref()),
+                        layout.reps(),
                     )?;
                 }
                 ColKind::Float64 => {
@@ -194,6 +195,7 @@ pub fn write_arrow_batch(
                         col_u16,
                         val,
                         overrides[col_idx].or(pal.float.as_ref()),
+                        layout.reps(),
                     )?;
                 }
                 ColKind::Bool => {
@@ -274,6 +276,7 @@ pub fn write_arrow_batch_csv(
     batch: &RecordBatch,
     delim: u8,
     sanitize: bool,
+    reps: crate::helpers::NumReps<'_>,
 ) -> PyResult<()> {
     let num_cols = batch.num_columns();
     let num_rows = batch.num_rows();
@@ -288,9 +291,12 @@ pub fn write_arrow_batch_csv(
             }
             let column = &columns[col_idx];
             if column.is_null(row) {
+                if let Some(text) = reps.na {
+                    crate::helpers::write_csv_escaped_guarded(output, text, sanitize);
+                }
                 continue;
             }
-            emit_arrow_cell_csv(output, column, kinds[col_idx], row, sanitize);
+            emit_arrow_cell_csv(output, column, kinds[col_idx], row, sanitize, reps);
         }
         output.push(b'\n');
     }
@@ -303,6 +309,7 @@ fn emit_arrow_cell_csv(
     kind: ColKind,
     row: usize,
     sanitize: bool,
+    reps: crate::helpers::NumReps<'_>,
 ) {
     use std::io::Write;
 
@@ -317,7 +324,13 @@ fn emit_arrow_cell_csv(
     macro_rules! emit_float {
         ($val:expr) => {{
             let v = $val;
-            if !v.is_nan() && !v.is_infinite() {
+            if v.is_nan() || v.is_infinite() {
+                // Without a representation the field stays empty, as it always
+                // has — matching the Records path exactly.
+                if let Some(text) = reps.text_for(v) {
+                    crate::helpers::write_csv_escaped_guarded(output, &text, sanitize);
+                }
+            } else {
                 let mut buf = ryu::Buffer::new();
                 output.extend_from_slice(buf.format(v).as_bytes());
             }

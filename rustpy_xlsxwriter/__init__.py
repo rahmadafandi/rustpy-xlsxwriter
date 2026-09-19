@@ -239,6 +239,8 @@ class FastExcel:
         self._datetime_format: Optional[str] = None
         self._index_columns: Optional[List[str]] = None
         self._bold_headers: bool = False
+        self._na_rep: Optional[str] = None
+        self._inf_value: Optional[str] = None
         self._freeze_panes: Dict[str, Dict[str, int]] = {}
         # {option: {sheet_name: value}}, filled by sheet() as options are
         # given. Keyed lazily so the option names live in one place only.
@@ -260,6 +262,8 @@ class FastExcel:
         datetime_format: Optional[str] = None,
         index_columns: Optional[List[str]] = None,
         bold_headers: Optional[bool] = None,
+        na_rep: Optional[str] = None,
+        inf_value: Optional[str] = None,
     ) -> "FastExcel":
         """Set number formatting and column styling.
 
@@ -269,6 +273,12 @@ class FastExcel:
                 (default ``"yyyy-mm-ddThh:mm:ss"``).
             index_columns: Column names to render **bold**.
             bold_headers: Whether to render header row in **bold**.
+            na_rep: Text written for ``NaN``. Left unset, the cell is empty —
+                which is what every earlier version did, so a column of NaN
+                arrives as a column of blanks that cannot be told apart from
+                missing data. Applies to Excel and CSV alike.
+            inf_value: Text written for ``inf``; ``-inf`` gets the same text
+                with a ``-`` in front, matching Excel's ``INF``/``-INF``.
         """
         if float_format is not None:
             self._float_format = float_format
@@ -278,6 +288,10 @@ class FastExcel:
             self._index_columns = index_columns
         if bold_headers is not None:
             self._bold_headers = bold_headers
+        if na_rep is not None:
+            self._na_rep = na_rep
+        if inf_value is not None:
+            self._inf_value = inf_value
         return self
 
     def freeze(
@@ -503,6 +517,8 @@ class FastExcel:
                 bom=self._bom,
                 columns=self._columns,
                 header=self._header,
+                na_rep=self._na_rep,
+                inf_value=self._inf_value,
             )
             return
 
@@ -531,6 +547,8 @@ class FastExcel:
                 index_columns=self._index_columns,
                 autofit=self._autofit,
                 bold_headers=self._bold_headers,
+                na_rep=self._na_rep,
+                inf_value=self._inf_value,
                 **{
                     option: values[sheet_name]
                     for option, values in self._per_sheet.items()
@@ -549,6 +567,8 @@ class FastExcel:
                 index_columns=self._index_columns,
                 autofit=self._autofit,
                 bold_headers=self._bold_headers,
+                na_rep=self._na_rep,
+                inf_value=self._inf_value,
                 **{
                     option: values
                     for option, values in self._per_sheet.items()

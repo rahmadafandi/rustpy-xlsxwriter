@@ -164,6 +164,8 @@ def write_worksheet(
     totals_label: Optional[str] = None,
     totals_format: Optional[Format] = None,
     formula_columns: Optional[Dict[str, str]] = None,
+    na_rep: Optional[str] = None,
+    inf_value: Optional[str] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -201,6 +203,14 @@ def write_worksheet(
         totals_format: Format applied to the whole totals row.
         formula_columns: ``{header: formula}`` appended after the data, one
             formula per row. ``{row}``/``{first}`` are substituted.
+        na_rep: Text written for a missing value — ``None``, an Arrow null, or
+            a float ``NaN``, which are deliberately one knob: pandas turns NaN
+            in a float column into an Arrow null, so a setting that caught only
+            true NaN would do nothing on the most common input there is.
+            Default ``None`` leaves the cell empty, as every earlier version
+            did, which makes a missing value indistinguishable from a blank.
+        inf_value: Text written for ``inf``; ``-inf`` gets the same text with a
+            ``-`` in front, matching Excel's own ``INF``/``-INF``.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -237,6 +247,8 @@ def write_worksheets(
     totals_label: Optional[Dict[str, str]] = None,
     totals_format: Optional[Dict[str, Format]] = None,
     formula_columns: Optional[Dict[str, Dict[str, str]]] = None,
+    na_rep: Optional[str] = None,
+    inf_value: Optional[str] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -264,6 +276,14 @@ def write_worksheets(
         totals_label: Per-sheet totals label — dict keyed by sheet name.
         totals_format: Per-sheet totals row format — dict keyed by sheet name.
         formula_columns: Per-sheet computed columns — dict keyed by sheet name.
+        na_rep: Text written for a missing value — ``None``, an Arrow null, or
+            a float ``NaN``, which are deliberately one knob: pandas turns NaN
+            in a float column into an Arrow null, so a setting that caught only
+            true NaN would do nothing on the most common input there is.
+            Default ``None`` leaves the cell empty, as every earlier version
+            did, which makes a missing value indistinguishable from a blank.
+        inf_value: Text written for ``inf``; ``-inf`` gets the same text with a
+            ``-`` in front, matching Excel's own ``INF``/``-INF``.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -289,6 +309,8 @@ def write_csv(
     bom: bool = False,
     columns: Optional[List[str]] = None,
     header: bool = True,
+    na_rep: Optional[str] = None,
+    inf_value: Optional[str] = None,
 ) -> None:
     """Write data to a CSV file.
 
@@ -311,6 +333,14 @@ def write_csv(
             and stays zero-copy on the Arrow path.
         header: Write the header row. Set ``False`` to append to an existing
             file or to feed a reader that supplies its own names.
+        na_rep: Text written for a missing value — ``None``, an Arrow null, or
+            a float ``NaN``, which are deliberately one knob: pandas turns NaN
+            in a float column into an Arrow null, so a setting that caught only
+            true NaN would do nothing on the most common input there is.
+            Default ``None`` leaves the cell empty, as every earlier version
+            did, which makes a missing value indistinguishable from a blank.
+        inf_value: Text written for ``inf``; ``-inf`` gets the same text with a
+            ``-`` in front, matching Excel's own ``INF``/``-INF``.
 
     Examples:
         >>> write_csv([{"Name": "Alice", "Age": 30}], "out.csv")
