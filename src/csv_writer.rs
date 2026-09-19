@@ -23,14 +23,32 @@ fn not_iterable(_: PyErr) -> PyErr {
 /// `= + - @` are prefixed with a single quote so spreadsheet apps treat them
 /// as text rather than executable formulas (CSV-injection mitigation). It is
 /// off by default to keep output byte-identical for existing callers.
+///
+/// `bom` prefixes the UTF-8 byte order mark, which is what makes Excel on
+/// Windows read the file as UTF-8 instead of the system code page.
+///
+/// `columns` selects and orders the output columns; `header` writes the header
+/// row. Both apply to every input path.
 #[pyfunction]
-#[pyo3(signature = (records, file_name, delimiter = None, sanitize_formulas = false))]
+#[pyo3(signature = (
+    records,
+    file_name,
+    delimiter = None,
+    sanitize_formulas = false,
+    bom = false,
+    columns = None,
+    header = true,
+))]
+#[allow(clippy::too_many_arguments)]
 pub fn write_csv(
     py: Python,
     records: Py<PyAny>,
     file_name: Py<PyAny>,
     delimiter: Option<String>,
     sanitize_formulas: bool,
+    bom: bool,
+    columns: Option<Vec<String>>,
+    header: bool,
 ) -> PyResult<()> {
     let delim = delimiter.unwrap_or_else(|| ",".to_string());
     let delim_bytes = delim.as_bytes();
@@ -44,20 +62,41 @@ pub fn write_csv(
     let bound = records.bind(py);
     // Heuristic: 16 bytes per cell is a decent starting point.
     let mut output: Vec<u8> = Vec::with_capacity(4096);
+    if bom {
+        output.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    }
+    let selection = columns.as_ref();
 
     // Fast path: Arrow zero-copy if the object exposes `__arrow_c_stream__`
     // (Pandas ≥2.0, Polars). Falls back to the per-object paths below on
     // failure (e.g. empty Null-typed columns).
     if bound.hasattr("__arrow_c_stream__")? {
-        if write_csv_via_arrow(&records, py, &mut output, delim_byte, sanitize_formulas).is_ok() {
-            return write_bytes_to_target(py, &output, file_name);
+        match write_csv_via_arrow(
+            &records,
+            py,
+            &mut output,
+            delim_byte,
+            sanitize_formulas,
+            selection,
+            header,
+        ) {
+            Ok(()) => return write_bytes_to_target(py, &output, file_name),
+            // A bad `columns` is the caller's mistake, not a quirk of this
+            // path, so it must not fall through to a slower one that would
+            // raise the same error later.
+            Err(e) if e.is_instance_of::<pyo3::exceptions::PyValueError>(py) => return Err(e),
+            Err(_) => {}
         }
-        output.clear();
+        output.truncate(if bom { 3 } else { 0 });
     }
 
     if bound.hasattr("columns")? {
-        let columns: Vec<String> = bound.getattr("columns")?.extract()?;
-        write_csv_row_strings(&mut output, &columns, delim_byte, sanitize_formulas);
+        let all_columns: Vec<String> = bound.getattr("columns")?.extract()?;
+        let indices = select_indices(&all_columns, selection)?;
+        let columns = apply_selection(all_columns, indices.as_ref());
+        if header {
+            write_csv_row_strings(&mut output, &columns, delim_byte, sanitize_formulas);
+        }
 
         if bound.hasattr("get_column")? {
             // Polars
@@ -90,15 +129,31 @@ pub fn write_csv(
             // worse than saying the input could not be iterated.
             for row_res in values.bind(py).try_iter()? {
                 let row = row_res?;
-                let mut first = true;
-                for item_res in row.try_iter()? {
-                    let item = item_res?;
-                    if !first {
-                        output.push(delim_byte);
+                match &indices {
+                    // `.values` rows are positional, so a selection indexes
+                    // into them rather than filtering names.
+                    Some(ix) => {
+                        for (n, &i) in ix.iter().enumerate() {
+                            if n > 0 {
+                                output.push(delim_byte);
+                            }
+                            let item = row.get_item(i)?;
+                            let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                            classify_and_write(&item, &mut sink)?;
+                        }
                     }
-                    first = false;
-                    let mut sink = CsvCell::new(&mut output, sanitize_formulas);
-                    classify_and_write(&item, &mut sink)?;
+                    None => {
+                        let mut first = true;
+                        for item_res in row.try_iter()? {
+                            let item = item_res?;
+                            if !first {
+                                output.push(delim_byte);
+                            }
+                            first = false;
+                            let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                            classify_and_write(&item, &mut sink)?;
+                        }
+                    }
                 }
                 output.push(b'\n');
             }
@@ -122,26 +177,54 @@ pub fn write_csv(
             })?;
 
             if !headers_written {
+                let mut keys: Vec<String> = Vec::new();
                 for key in row_dict.keys().iter() {
-                    headers.push(key.extract::<String>()?);
+                    keys.push(key.extract::<String>()?);
                 }
-                write_csv_row_strings(&mut output, &headers, delim_byte, sanitize_formulas);
+                // Validated against the first row, which is the only row whose
+                // keys are known before the stream is consumed.
+                headers = apply_selection(keys.clone(), select_indices(&keys, selection)?.as_ref());
+                if header {
+                    write_csv_row_strings(&mut output, &headers, delim_byte, sanitize_formulas);
+                }
                 col_types.resize(headers.len(), ColType::Unknown);
                 headers_written = true;
             }
 
-            // Iterate the dict directly (insertion order == header order)
-            // to avoid allocating a fresh `values()` list per row.
-            for (col, (_key, value)) in row_dict.iter().enumerate() {
-                if col > 0 {
-                    output.push(delim_byte);
+            if selection.is_some() {
+                // Selected: look each column up by name, since the dict's own
+                // order is no longer the output order.
+                for (col, name) in headers.iter().enumerate() {
+                    if col > 0 {
+                        output.push(delim_byte);
+                    }
+                    let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                    // A later row missing the key writes an empty field rather
+                    // than shifting every column after it.
+                    if let Some(value) = row_dict.get_item(name)? {
+                        let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
+                        if !try_cached(&value, cached, &mut sink)? {
+                            let detected = classify_and_write(&value, &mut sink)?;
+                            if col_types[col] == ColType::Unknown {
+                                col_types[col] = detected;
+                            }
+                        }
+                    }
                 }
-                let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
-                let mut sink = CsvCell::new(&mut output, sanitize_formulas);
-                if !try_cached(&value, cached, &mut sink)? {
-                    let detected = classify_and_write(&value, &mut sink)?;
-                    if col < col_types.len() && col_types[col] == ColType::Unknown {
-                        col_types[col] = detected;
+            } else {
+                // Iterate the dict directly (insertion order == header order)
+                // to avoid allocating a fresh `values()` list per row.
+                for (col, (_key, value)) in row_dict.iter().enumerate() {
+                    if col > 0 {
+                        output.push(delim_byte);
+                    }
+                    let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
+                    let mut sink = CsvCell::new(&mut output, sanitize_formulas);
+                    if !try_cached(&value, cached, &mut sink)? {
+                        let detected = classify_and_write(&value, &mut sink)?;
+                        if col < col_types.len() && col_types[col] == ColType::Unknown {
+                            col_types[col] = detected;
+                        }
                     }
                 }
             }
@@ -159,6 +242,8 @@ fn write_csv_via_arrow(
     output: &mut Vec<u8>,
     delim: u8,
     sanitize: bool,
+    columns: Option<&Vec<String>>,
+    header: bool,
 ) -> PyResult<()> {
     let reader = crate::arrow_ffi::stream_to_reader(records, py)?;
     let schema = reader.schema();
@@ -167,13 +252,61 @@ fn write_csv_via_arrow(
         .iter()
         .map(|f| f.name().clone())
         .collect();
-    write_csv_row_strings(output, &headers, delim, sanitize);
+    let indices = select_indices(&headers, columns)?;
+    if header {
+        let out = apply_selection(headers, indices.as_ref());
+        write_csv_row_strings(output, &out, delim, sanitize);
+    }
 
     for batch_result in reader {
         let batch = batch_result.map_err(crate::arrow_ffi::batch_read_err)?;
-        crate::arrow_writer::write_arrow_batch_csv(output, &batch, delim, sanitize)?;
+        match &indices {
+            // Projection is an Arc clone per column, so the zero-copy path
+            // stays zero-copy.
+            Some(ix) => {
+                let projected = batch.project(ix).map_err(crate::arrow_ffi::batch_read_err)?;
+                crate::arrow_writer::write_arrow_batch_csv(output, &projected, delim, sanitize)?;
+            }
+            None => crate::arrow_writer::write_arrow_batch_csv(output, &batch, delim, sanitize)?,
+        }
     }
     Ok(())
+}
+
+/// Positions of `columns` within `headers`, in the order asked for.
+///
+/// `None` means every column, as they come. An unknown name is an error rather
+/// than a warning: `columns` decides the shape of the output, so dropping one
+/// quietly would hand back a file that looks complete but is not.
+fn select_indices(
+    headers: &[String],
+    columns: Option<&Vec<String>>,
+) -> PyResult<Option<Vec<usize>>> {
+    let Some(names) = columns else {
+        return Ok(None);
+    };
+    let mut indices = Vec::with_capacity(names.len());
+    for name in names {
+        match headers.iter().position(|h| h == name) {
+            Some(idx) => indices.push(idx),
+            None => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "columns: '{}' is not in the data (available: {})",
+                    name,
+                    headers.join(", ")
+                )))
+            }
+        }
+    }
+    Ok(Some(indices))
+}
+
+/// Apply a selection to a header list, or hand it back untouched.
+fn apply_selection(headers: Vec<String>, indices: Option<&Vec<usize>>) -> Vec<String> {
+    match indices {
+        Some(ix) => ix.iter().map(|&i| headers[i].clone()).collect(),
+        None => headers,
+    }
 }
 
 fn write_csv_row_strings(output: &mut Vec<u8>, values: &[String], delim: u8, sanitize: bool) {

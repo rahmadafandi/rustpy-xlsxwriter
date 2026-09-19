@@ -286,6 +286,9 @@ def write_csv(
     file_name: FileTarget,
     delimiter: Optional[str] = None,
     sanitize_formulas: bool = False,
+    bom: bool = False,
+    columns: Optional[List[str]] = None,
+    header: bool = True,
 ) -> None:
     """Write data to a CSV file.
 
@@ -297,6 +300,17 @@ def write_csv(
         sanitize_formulas: When ``True``, string fields starting with
             ``= + - @`` are prefixed with ``'`` to neutralize CSV formula
             injection. Off by default (output stays byte-identical).
+        bom: Prefix the UTF-8 byte order mark. Excel on Windows reads a BOM-less
+            UTF-8 file as the system code page, which turns non-ASCII text into
+            mojibake; this is the fix. Off by default so output stays
+            byte-identical for pipelines that parse it.
+        columns: Select and order the output columns by name. A name that is
+            not in the data raises ``ValueError`` — unlike the styling options,
+            this one decides the shape of the file, so a silent drop would hand
+            back something that looks complete. Works on every input type,
+            and stays zero-copy on the Arrow path.
+        header: Write the header row. Set ``False`` to append to an existing
+            file or to feed a reader that supplies its own names.
 
     Examples:
         >>> write_csv([{"Name": "Alice", "Age": 30}], "out.csv")

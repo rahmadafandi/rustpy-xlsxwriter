@@ -183,6 +183,9 @@ class FastExcel:
         password: Optional[str] = None,
         autofit: bool = True,
         sanitize_formulas: bool = False,
+        bom: bool = False,
+        columns: Optional[List[str]] = None,
+        header: bool = True,
     ) -> None:
         """Create a new writer.
 
@@ -211,6 +214,13 @@ class FastExcel:
                 formulas (CSV-injection mitigation). Off by default to keep
                 output byte-identical. Has no effect on ``.xlsx`` output, where
                 values are already written as text cells.
+            bom: CSV/TSV only. Prefix the UTF-8 byte order mark, which is what
+                makes Excel on Windows read the file as UTF-8 rather than the
+                system code page. Off by default so output stays
+                byte-identical.
+            columns: CSV/TSV only. Select and order the output columns by name.
+                An unknown name raises ``ValueError``.
+            header: CSV/TSV only. Write the header row (default ``True``).
         """
         if output_format is not None and output_format not in _FORMATS:
             raise ValueError(
@@ -221,6 +231,9 @@ class FastExcel:
         self._password = password
         self._autofit = autofit
         self._sanitize_formulas = sanitize_formulas
+        self._bom = bom
+        self._columns = columns
+        self._header = header
         self._sheets: List[Tuple[str, Any]] = []
         self._float_format: Optional[str] = None
         self._datetime_format: Optional[str] = None
@@ -487,6 +500,9 @@ class FastExcel:
                 self._target,
                 delimiter=delimiter,
                 sanitize_formulas=self._sanitize_formulas,
+                bom=self._bom,
+                columns=self._columns,
+                header=self._header,
             )
             return
 
