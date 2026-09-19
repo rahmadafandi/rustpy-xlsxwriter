@@ -82,3 +82,9 @@ docs/_build/
 
 # Brainstorming / design specs (local only)
 docs/superpowers/site/
+
+# Coverage instrumentation droppings
+*.profraw
+prof/
+cov.profdata
+lcov.info

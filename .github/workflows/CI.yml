@@ -210,6 +210,73 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Rustfmt
         run: cargo fmt --check
+      - name: Examples
+        # 16 scripts and a notebook ship in the repo; nothing ran them, so
+        # nothing would have noticed them rotting against an API change.
+        run: |
+          for f in examples/*.py; do
+            echo "--- $f"
+            python "$f" >/dev/null
+          done
+
+  msrv:
+    # rust-version in Cargo.toml is a promise; this is what keeps it one.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+      - run: cargo check --all-targets
+
+  coverage:
+    # Measures the Rust, which is the library — pytest-cov would only see the
+    # ~130 statements of the Python wrapper and report a number that flatters.
+    # The extension is built with coverage instrumentation and then exercised
+    # by the ordinary Python suite.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - name: Install
+        run: pip install -e ".[tests]"
+        env:
+          RUSTFLAGS: "-Cinstrument-coverage"
+          LLVM_PROFILE_FILE: "${{ github.workspace }}/prof/%p-%m.profraw"
+      - name: Run the suite under instrumentation
+        run: pytest tests/ -m "not benchmark" -q
+        env:
+          LLVM_PROFILE_FILE: "${{ github.workspace }}/prof/%p-%m.profraw"
+      - name: Report
+        run: |
+          LLVM=$(dirname "$(find "$(rustc --print sysroot)" -name llvm-profdata | head -1)")
+          "$LLVM/llvm-profdata" merge -sparse prof/*.profraw -o cov.profdata
+          SO=$(ls rustpy_xlsxwriter/*.so)
+          IGNORE='(cargo/registry|rustc|/rustlib/)'
+          "$LLVM/llvm-cov" report "$SO" -instr-profile=cov.profdata \
+            -ignore-filename-regex="$IGNORE"
+          "$LLVM/llvm-cov" export "$SO" -instr-profile=cov.profdata \
+            -ignore-filename-regex="$IGNORE" --format=lcov > lcov.info
+      - name: Upload to Codecov
+        # Inert until a token is set, so the job is useful either way: the
+        # table above is printed in the log regardless. The condition reads
+        # `env` rather than `secrets` — the secrets context is not available
+        # to `if`.
+        env:
+          TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        if: env.TOKEN != ''
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   sdist:
     runs-on: ubuntu-latest
@@ -230,7 +297,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [test, linux, musllinux, windows, macos, freethreaded, sdist]
+    needs: [test, msrv, coverage, linux, musllinux, windows, macos, freethreaded, sdist]
     permissions:
       # Use to sign the release artifacts
       id-token: write
