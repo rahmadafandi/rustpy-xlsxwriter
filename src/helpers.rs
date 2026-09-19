@@ -3,6 +3,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyDict, PyList, PyTimeAccess};
 use pyo3::Py;
+use std::path::PathBuf;
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, Worksheet};
 
 use crate::worksheet::xlsx_err;
@@ -799,8 +800,8 @@ pub fn save_workbook(
     workbook: &mut Workbook,
     file_or_buffer: Py<PyAny>,
 ) -> PyResult<()> {
-    if let Ok(file_name) = file_or_buffer.extract::<String>(py) {
-        workbook.save(&file_name).map_err(|e| {
+    if let Ok(path) = file_or_buffer.extract::<PathBuf>(py) {
+        workbook.save(&path).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
                 "Failed to save workbook: {}",
                 e
@@ -826,8 +827,8 @@ pub fn write_bytes_to_target(
     bytes: &[u8],
     file_or_buffer: Py<PyAny>,
 ) -> PyResult<()> {
-    if let Ok(file_name) = file_or_buffer.extract::<String>(py) {
-        std::fs::write(&file_name, bytes).map_err(|e| {
+    if let Ok(path) = file_or_buffer.extract::<PathBuf>(py) {
+        std::fs::write(&path, bytes).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write file: {}", e))
         })?;
         return Ok(());
@@ -840,7 +841,7 @@ pub fn write_bytes_to_target(
     }
 
     Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-        "Argument must be a string path or a file-like object with a 'write' method",
+        "Argument must be a path (str or os.PathLike) or a file-like object with a 'write' method",
     ))
 }
 

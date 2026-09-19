@@ -68,35 +68,16 @@ import warnings as _warnings
 from importlib.metadata import metadata as _metadata
 from importlib.metadata import version as _version
 
+# Re-exported unchanged: the extension resolves str and os.PathLike targets
+# itself, so wrapping these in Python would only hide their signatures from
+# type checkers, which read them from ``rustpy_xlsxwriter.pyi``.
 from .rustpy_xlsxwriter import (
     Format,
     validate_sheet_name,
+    write_csv,
+    write_worksheet,
+    write_worksheets,
 )
-from .rustpy_xlsxwriter import write_csv as _write_csv_rs
-from .rustpy_xlsxwriter import write_worksheet as _write_worksheet_rs
-from .rustpy_xlsxwriter import write_worksheets as _write_worksheets_rs
-
-
-def _coerce_target(target: Any) -> Any:
-    """Accept str, bytes, or any os.PathLike as a file path; pass other
-    objects (file-like buffers) through unchanged."""
-    if isinstance(target, _os.PathLike):
-        return _os.fspath(target)
-    return target
-
-
-def write_worksheet(records, file_name, *args, **kwargs):
-    return _write_worksheet_rs(records, _coerce_target(file_name), *args, **kwargs)
-
-
-def write_worksheets(records_with_sheet_name, file_name, *args, **kwargs):
-    return _write_worksheets_rs(
-        records_with_sheet_name, _coerce_target(file_name), *args, **kwargs
-    )
-
-
-def write_csv(records, file_name, *args, **kwargs):
-    return _write_csv_rs(records, _coerce_target(file_name), *args, **kwargs)
 
 _PKG = "rustpy-xlsxwriter"
 _META = _metadata(_PKG)
@@ -152,6 +133,29 @@ __version__ = get_version()
 # Builder-style class wrapper
 # ---------------------------------------------------------------------------
 
+#: Output formats ``save()`` can produce, mapped to their CSV delimiter.
+#: ``xlsx`` has none — it does not go through the CSV writer.
+_FORMATS = {"xlsx": None, "csv": ",", "tsv": "\t"}
+
+
+def _detect_format(target: Any) -> str:
+    """Output format implied by *target*'s file extension.
+
+    A buffer has no extension, so it falls back to ``xlsx`` — pass
+    ``output_format`` explicitly to write CSV or TSV into one.
+    """
+    if isinstance(target, (str, _os.PathLike)):
+        name = _os.fspath(target)
+        if isinstance(name, bytes):
+            name = name.decode("utf-8", "replace")
+        name = name.lower()
+        if name.endswith(".csv"):
+            return "csv"
+        if name.endswith(".tsv"):
+            return "tsv"
+    return "xlsx"
+
+
 #: Options ``sheet()`` records per sheet and forwards to the writers. Both save
 #: paths iterate this, so adding an option means touching only ``sheet()``.
 _PER_SHEET_OPTIONS = (
@@ -197,6 +201,7 @@ class FastExcel:
         self,
         target: Union[str, _os.PathLike, BinaryIO],
         *,
+        output_format: Optional[str] = None,
         password: Optional[str] = None,
         autofit: bool = True,
         sanitize_formulas: bool = False,
@@ -207,6 +212,11 @@ class FastExcel:
             target: File path (``str`` or :class:`os.PathLike`, e.g.
                 ``pathlib.Path``) or writable binary buffer
                 (e.g. ``io.BytesIO``).
+            output_format: ``"xlsx"``, ``"csv"`` or ``"tsv"``. Defaults to the
+                target's file extension, and to ``"xlsx"`` for a buffer, which
+                has none — so this is what writes CSV into an
+                :class:`io.BytesIO`. For a delimiter other than ``,`` or tab,
+                call :func:`write_csv` directly.
             password: Optional worksheet-protection password. NOTE: this sets
                 Excel's *sheet protection* flag only — it does **not** encrypt
                 the file. The cell data is stored in plaintext and the
@@ -224,7 +234,12 @@ class FastExcel:
                 output byte-identical. Has no effect on ``.xlsx`` output, where
                 values are already written as text cells.
         """
-        self._target = _coerce_target(target)
+        if output_format is not None and output_format not in _FORMATS:
+            raise ValueError(
+                f"output_format must be one of {sorted(_FORMATS)}; got {output_format!r}"
+            )
+        self._target = target
+        self._output_format = output_format
         self._password = password
         self._autofit = autofit
         self._sanitize_formulas = sanitize_formulas
@@ -464,10 +479,9 @@ class FastExcel:
     def save(self) -> None:
         """Write all sheets to the target file or buffer.
 
-        Automatically detects output format from file extension:
-        - ``.xlsx`` → Excel (default)
-        - ``.csv`` → CSV
-        - ``.tsv`` → TSV (tab-separated)
+        Writes the format given as ``output_format``, or the one implied by the
+        target's extension: ``.csv`` → CSV, ``.tsv`` → TSV, anything else
+        (including a buffer) → Excel.
 
         Raises:
             ValueError: If no sheets have been added.
@@ -476,32 +490,30 @@ class FastExcel:
         if not self._sheets:
             raise ValueError("No sheets added. Call .sheet() before .save().")
 
-        # Auto-detect CSV/TSV from file extension
-        if isinstance(self._target, str):
-            lower = self._target.lower()
-            if lower.endswith(".csv") or lower.endswith(".tsv"):
-                if len(self._sheets) > 1:
-                    raise ValueError(
-                        f"CSV/TSV output supports a single sheet; got {len(self._sheets)}."
-                    )
-                delimiter = "\t" if lower.endswith(".tsv") else ","
-                _, data = self._sheets[0]
-                ignored = self._excel_only_options()
-                if ignored:
-                    _warnings.warn(
-                        "CSV/TSV output ignores Excel-only options: "
-                        f"{', '.join(ignored)}. "
-                        "The file will contain unformatted values; write to "
-                        "'.xlsx' if you need them.",
-                        stacklevel=2,
-                    )
-                write_csv(
-                    data,
-                    self._target,
-                    delimiter=delimiter,
-                    sanitize_formulas=self._sanitize_formulas,
+        output_format = self._output_format or _detect_format(self._target)
+        delimiter = _FORMATS[output_format]
+        if delimiter is not None:
+            if len(self._sheets) > 1:
+                raise ValueError(
+                    f"CSV/TSV output supports a single sheet; got {len(self._sheets)}."
                 )
-                return
+            _, data = self._sheets[0]
+            ignored = self._excel_only_options()
+            if ignored:
+                _warnings.warn(
+                    "CSV/TSV output ignores Excel-only options: "
+                    f"{', '.join(ignored)}. "
+                    "The file will contain unformatted values; write to "
+                    "'.xlsx' if you need them.",
+                    stacklevel=2,
+                )
+            write_csv(
+                data,
+                self._target,
+                delimiter=delimiter,
+                sanitize_formulas=self._sanitize_formulas,
+            )
+            return
 
         if len(self._sheets) == 1:
             sheet_name, data = self._sheets[0]
