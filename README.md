@@ -492,6 +492,11 @@ FastExcel(buf).sheet("Sheet1", records).save()
 xlsx_bytes = buf.getvalue()  # send as HTTP response
 ```
 
+### Type checking
+
+The package ships `py.typed`, so mypy and Pyright check calls into it without
+any extra stub package.
+
 ### CSV / TSV Output
 
 ```python
@@ -499,12 +504,21 @@ xlsx_bytes = buf.getvalue()  # send as HTTP response
 FastExcel("output.csv").sheet("Sheet1", records).save()
 FastExcel("output.tsv").sheet("Sheet1", records).save()
 
+# A buffer has no extension, so name the format — this is how you get CSV
+# out of a web handler without touching the filesystem
+buf = io.BytesIO()
+FastExcel(buf, output_format="csv").sheet("Sheet1", records).save()
+
 # Or use write_csv directly
 from rustpy_xlsxwriter import write_csv
 
 write_csv(records, "output.csv")
 write_csv(records, "output.csv", delimiter=";")  # custom delimiter
 ```
+
+`output_format` accepts `"xlsx"`, `"csv"` or `"tsv"` and overrides the
+extension, so a `.txt` target can hold CSV. For any other delimiter, call
+`write_csv` directly.
 
 CSV carries no formatting, so every Excel-only option is dropped —
 `float_format`, `column_formats`, `header_format`, freeze panes, merges,
@@ -540,7 +554,7 @@ write_worksheets(
 
 | Method | Description |
 |---|---|
-| `FastExcel(target, *, password=None, autofit=True)` | Create writer for file path or `BytesIO` buffer |
+| `FastExcel(target, *, output_format=None, password=None, autofit=True, sanitize_formulas=False)` | Create writer for file path or `BytesIO` buffer |
 | `.format(*, float_format, datetime_format, index_columns, bold_headers)` | Set number/datetime format and styling |
 | `.freeze(*, row=None, col=None, sheet=None)` | Configure freeze panes (general or per-sheet) |
 | `.sheet(name, data)` | Add a worksheet (list of dicts, generator, or DataFrame) |
@@ -610,7 +624,7 @@ python benchmark.py
 ```
 
 <details>
-<summary>Test structure (86 tests)</summary>
+<summary>Test structure</summary>
 
 | File | Coverage |
 |---|---|
@@ -625,6 +639,8 @@ python benchmark.py
 | `test_dataframe.py` | Pandas DataFrame, numpy scalar types |
 | `test_polars.py` | Polars DataFrame: types, datetime, date, null, styling |
 | `test_styling.py` | Float format, datetime format, bold headers, index columns |
+| `test_output_format.py` | Explicit `output_format`, CSV/TSV into a buffer |
+| `test_type_stubs.py` | `.pyi` kept in step with the compiled extension |
 | `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
 
 </details>
