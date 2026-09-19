@@ -399,7 +399,9 @@ def write_worksheet(
             chart lands one column clear of the data and level with the header
             rather than on top of the table. Series cover the data rows only.
             An unknown column warns and skips that chart, since a chart missing
-            a series draws a misleading picture.
+            a series draws a misleading picture. A scatter chart is refused
+            without ``categories`` — they are its x values rather than labels,
+            so there is nothing to default them to.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -622,7 +624,9 @@ def write_worksheets(
             chart lands one column clear of the data and level with the header
             rather than on top of the table. Series cover the data rows only.
             An unknown column warns and skips that chart, since a chart missing
-            a series draws a misleading picture.
+            a series draws a misleading picture. A scatter chart is refused
+            without ``categories`` — they are its x values rather than labels,
+            so there is nothing to default them to.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

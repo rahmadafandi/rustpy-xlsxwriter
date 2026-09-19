@@ -81,4 +81,4 @@ docs/_build/
 .codspeed
 
 # Brainstorming / design specs (local only)
-docs/superpowers/
+docs/superpowers/site/

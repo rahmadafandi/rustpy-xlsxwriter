@@ -6,7 +6,8 @@ on:
     paths:
       - "rustpy_xlsxwriter/**"
       - "src/**"
-      - "README.md"
+      - "docs/**"
+      - "mkdocs.yml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -32,13 +33,15 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # `pip install .` builds the extension through the maturin backend,
-      # so pdoc can import the real module and read its docstrings + .pyi.
-      - name: Build & install package + pdoc
-        run: pip install . pdoc
+      # `pip install .` builds the extension through the maturin backend so
+      # mkdocstrings can resolve the package; griffe then reads the prose from
+      # `rustpy_xlsxwriter.pyi`, which is where it lives — the compiled
+      # functions carry no `__doc__` of their own.
+      - name: Build & install package + docs toolchain
+        run: pip install . mkdocs-material "mkdocstrings[python]"
 
-      - name: Generate API docs
-        run: pdoc -o site rustpy_xlsxwriter
+      - name: Build site
+        run: mkdocs build --strict -d site
 
       - uses: actions/upload-pages-artifact@v5
         with:

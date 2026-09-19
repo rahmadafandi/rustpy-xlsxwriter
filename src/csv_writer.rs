@@ -17,18 +17,21 @@ fn not_iterable(_: PyErr) -> PyErr {
     )
 }
 
-/// Write data to CSV (file path or buffer).
-///
-/// When `sanitize_formulas` is `true`, string fields that begin with
-/// `= + - @` are prefixed with a single quote so spreadsheet apps treat them
-/// as text rather than executable formulas (CSV-injection mitigation). It is
-/// off by default to keep output byte-identical for existing callers.
-///
-/// `bom` prefixes the UTF-8 byte order mark, which is what makes Excel on
-/// Windows read the file as UTF-8 instead of the system code page.
-///
-/// `columns` selects and orders the output columns; `header` writes the header
-/// row. Both apply to every input path.
+// Not a `///` doc comment: pyo3 turns those into `__doc__`, which then
+// shadows the richer stub entry in `rustpy_xlsxwriter.pyi` — the one
+// mypy, IDEs and the docs site all read. Keep the prose in one place.
+// Write data to CSV (file path or buffer).
+//
+// When `sanitize_formulas` is `true`, string fields that begin with
+// `= + - @` are prefixed with a single quote so spreadsheet apps treat them
+// as text rather than executable formulas (CSV-injection mitigation). It is
+// off by default to keep output byte-identical for existing callers.
+//
+// `bom` prefixes the UTF-8 byte order mark, which is what makes Excel on
+// Windows read the file as UTF-8 instead of the system code page.
+//
+// `columns` selects and orders the output columns; `header` writes the header
+// row. Both apply to every input path.
 #[pyfunction]
 #[pyo3(signature = (
     records,

@@ -1,0 +1,58 @@
+site_name: RustPy-XlsxWriter
+site_description: High-performance Excel and CSV generation for Python, powered by Rust
+site_url: https://rahmadafandi.github.io/rustpy-xlsxwriter/
+repo_url: https://github.com/rahmadafandi/rustpy-xlsxwriter
+repo_name: rahmadafandi/rustpy-xlsxwriter
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      toggle: { icon: material/weather-sunny, name: Light mode }
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            heading_level: 3
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - tables
+  - toc: { permalink: true }
+
+nav:
+  - Home: index.md
+  - Guide:
+      - Data sources: guide/dataframes.md
+      - Formatting: guide/formatting.md
+      - Formulas and links: guide/formulas.md
+      - Charts and visuals: guide/visuals.md
+      - Sheet layout: guide/layout.md
+      - Data integrity: guide/data-integrity.md
+      - CSV and TSV: guide/csv.md
+  - API reference: api.md

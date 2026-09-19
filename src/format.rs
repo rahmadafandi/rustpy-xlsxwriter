@@ -181,7 +181,10 @@ fn parse_font_scheme(s: &str) -> PyResult<FontScheme> {
     })
 }
 
-/// Python-facing cell format. Chainable; each setter returns `self`.
+// Not a `///` doc comment: pyo3 turns those into `__doc__`, which then
+// shadows the richer stub entry in `rustpy_xlsxwriter.pyi` — the one
+// mypy, IDEs and the docs site all read. Keep the prose in one place.
+// Python-facing cell format. Chainable; each setter returns `self`.
 #[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct Format {

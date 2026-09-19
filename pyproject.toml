@@ -54,6 +54,8 @@ dev = [
     "black",
     "isort",
     "pyclean",
+    "mkdocs-material",
+    "mkdocstrings[python]",
 ]
 
 [tool.maturin]
