@@ -13,6 +13,7 @@ mod ignore_errors;
 mod images;
 mod layout;
 mod notes;
+mod options;
 mod outline;
 mod page_setup;
 mod sheet_view;

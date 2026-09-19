@@ -9,6 +9,7 @@ use pyo3::types::{PyAnyMethods, PyDict};
 use rust_xlsxwriter::{Color, Worksheet};
 
 use crate::format::parse_color;
+use crate::options::value_err;
 
 const KEYS: [&str; 6] = [
     "tab_color",
@@ -27,10 +28,6 @@ pub struct SheetView {
     right_to_left: Option<bool>,
     hidden: Option<bool>,
     selected: Option<bool>,
-}
-
-fn value_err(msg: String) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
 }
 
 impl SheetView {

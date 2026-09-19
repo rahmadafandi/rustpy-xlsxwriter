@@ -9,11 +9,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyDict};
 use rust_xlsxwriter::{Format, Worksheet};
 
+use crate::options::value_err;
 use crate::worksheet::xlsx_err;
-
-fn value_err(msg: String) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
-}
 
 /// A computed column: a header and a formula template appended after the data
 /// columns. `{row}` is replaced with the current row's 1-based sheet row and
