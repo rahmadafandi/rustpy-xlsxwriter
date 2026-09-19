@@ -342,6 +342,7 @@ class FastExcel:
         totals_label: Optional[str] = None,
         totals_format: Optional["Format"] = None,
         formula_columns: Optional[Dict[str, str]] = None,
+        page_setup: Optional[Dict[str, Any]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -431,6 +432,22 @@ class FastExcel:
                 There is no ``{last}``: rows are still
                 streaming when these are written, so the final row is unknown;
                 use ``totals_row`` for whole-column formulas.
+            page_setup: Page and print settings as one mapping, because Excel
+                has about twenty of them and a keyword each would double this
+                signature. Keys: ``landscape``, ``paper_size``, ``margins``
+                (a dict of ``left``/``right``/``top``/``bottom``/``header``/
+                ``footer``; anything omitted keeps Excel's default),
+                ``print_area`` as ``(first_row, first_col, last_row,
+                last_col)``, ``repeat_rows`` and ``repeat_columns`` (an index
+                or a ``(first, last)`` pair — this is what puts the header on
+                every printed page), ``fit_to_pages`` as ``(width, height)``
+                with ``0`` letting that dimension run on, ``scale``,
+                ``center_horizontally``, ``center_vertically``,
+                ``print_gridlines``, ``print_headings``, ``first_page_number``,
+                and ``header``/``footer`` using Excel's ``&``-codes such as
+                ``"&RPage &P of &N"``. An unknown key raises, as does setting
+                ``scale`` and ``fit_to_pages`` together, which Excel cannot
+                honour at once.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -457,6 +474,7 @@ class FastExcel:
             "totals_label": totals_label,
             "totals_format": totals_format,
             "formula_columns": formula_columns,
+            "page_setup": page_setup,
         }.items():
             if value:
                 self._per_sheet.setdefault(option, {})[name] = value

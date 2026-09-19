@@ -5,6 +5,7 @@ mod csv_writer;
 mod data_types;
 mod format;
 mod helpers;
+mod page_setup;
 mod utils;
 mod worksheet;
 

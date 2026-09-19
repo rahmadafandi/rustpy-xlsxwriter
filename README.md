@@ -144,6 +144,7 @@ build is younger — treat it as the newer option it is.
 - Custom datetime format (e.g. `"dd/mm/yyyy"`)
 - Bold headers and bold index columns
 - Freeze panes (rows, columns, per-sheet overrides)
+- Page and print setup (`page_setup=`): orientation, margins, repeat rows, fit-to-pages, headers/footers
 
 **Output Options**
 - `.xlsx` (Excel) — auto-detected from file extension
@@ -452,6 +453,35 @@ write_worksheet(
 An unknown display-text column warns and falls back to showing the URL, so a
 typo costs a label rather than the export.
 
+### Printing
+
+Excel has about twenty page-setup settings, so they arrive as one mapping
+rather than twenty keywords:
+
+```python
+write_worksheet(
+    rows,
+    "report.xlsx",
+    page_setup={
+        "landscape": True,
+        "fit_to_pages": (1, 0),      # one page wide, as many tall as needed
+        "repeat_rows": 0,            # header on every printed page
+        "margins": {"left": 0.5},    # omitted sides keep Excel's defaults
+        "footer": "&RPage &P of &N",
+    },
+)
+```
+
+Keys: `landscape`, `paper_size`, `margins`, `print_area`, `repeat_rows`,
+`repeat_columns`, `fit_to_pages`, `scale`, `center_horizontally`,
+`center_vertically`, `print_gridlines`, `print_headings`,
+`first_page_number`, `header`, `footer`.
+
+`repeat_rows` and `repeat_columns` take an index or a `(first, last)` pair —
+the first is what stops a long report losing its header after page one. An
+unknown key raises, and so does `scale` together with `fit_to_pages`, which
+Excel cannot honour at once.
+
 ### String Deduplication
 
 By default every sheet is written in constant-memory mode: strings go inline
@@ -705,6 +735,7 @@ python benchmark.py
 | `test_type_stubs.py` | `.pyi` kept in step with the compiled extension |
 | `test_csv_options.py` | CSV `bom`, `columns`, `header` across all four input paths |
 | `test_nan_inf.py` | `na_rep` / `inf_value` on every write path |
+| `test_page_setup.py` | Page and print settings, and their validation |
 | `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
 
 </details>

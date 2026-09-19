@@ -59,6 +59,9 @@ MergeRange = Union[
 """One merged cell range: ``(first_row, first_col, last_row, last_col, value)``,
 optionally followed by a :class:`Format`."""
 
+PageSetup = Dict[str, Any]
+"""Page and print settings; see :func:`write_worksheet` for the keys."""
+
 UrlColumns = Union[List[str], Dict[str, str]]
 """Link columns — a list of column names, or ``{url column: display-text column}``."""
 
@@ -169,6 +172,7 @@ def write_worksheet(
     formula_columns: Optional[Dict[str, str]] = None,
     na_rep: Optional[str] = None,
     inf_value: Optional[str] = None,
+    page_setup: Optional[PageSetup] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -217,6 +221,20 @@ def write_worksheet(
             did, which makes a missing value indistinguishable from a blank.
         inf_value: Text written for ``inf``; ``-inf`` gets the same text with a
             ``-`` in front, matching Excel's own ``INF``/``-INF``.
+        page_setup: Page and print settings, as one mapping — Excel has about
+            twenty of them and a keyword each would double this signature.
+            Keys: ``landscape``, ``paper_size``, ``margins`` (a dict of
+            ``left``/``right``/``top``/``bottom``/``header``/``footer``, any
+            omitted one keeping Excel's default), ``print_area``
+            (``(first_row, first_col, last_row, last_col)``), ``repeat_rows``
+            and ``repeat_columns`` (an index or a ``(first, last)`` pair),
+            ``fit_to_pages`` (``(width, height)``; ``0`` lets that dimension
+            run on), ``scale``, ``center_horizontally``, ``center_vertically``,
+            ``print_gridlines``, ``print_headings``, ``first_page_number``,
+            ``header`` and ``footer`` (Excel's ``&``-codes, e.g.
+            ``"&RPage &P of &N"``). An unknown key raises, and so does setting
+            ``scale`` together with ``fit_to_pages``, which Excel cannot honour
+            at once.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -255,6 +273,7 @@ def write_worksheets(
     formula_columns: Optional[Dict[str, Dict[str, str]]] = None,
     na_rep: Optional[str] = None,
     inf_value: Optional[str] = None,
+    page_setup: Optional[Dict[str, PageSetup]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -290,6 +309,20 @@ def write_worksheets(
             did, which makes a missing value indistinguishable from a blank.
         inf_value: Text written for ``inf``; ``-inf`` gets the same text with a
             ``-`` in front, matching Excel's own ``INF``/``-INF``.
+        page_setup: Page and print settings, as one mapping — Excel has about
+            twenty of them and a keyword each would double this signature.
+            Keys: ``landscape``, ``paper_size``, ``margins`` (a dict of
+            ``left``/``right``/``top``/``bottom``/``header``/``footer``, any
+            omitted one keeping Excel's default), ``print_area``
+            (``(first_row, first_col, last_row, last_col)``), ``repeat_rows``
+            and ``repeat_columns`` (an index or a ``(first, last)`` pair),
+            ``fit_to_pages`` (``(width, height)``; ``0`` lets that dimension
+            run on), ``scale``, ``center_horizontally``, ``center_vertically``,
+            ``print_gridlines``, ``print_headings``, ``first_page_number``,
+            ``header`` and ``footer`` (Excel's ``&``-codes, e.g.
+            ``"&RPage &P of &N"``). An unknown key raises, and so does setting
+            ``scale`` together with ``fit_to_pages``, which Excel cannot honour
+            at once.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

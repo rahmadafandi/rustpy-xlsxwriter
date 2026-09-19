@@ -99,6 +99,8 @@ pub struct SheetLayout {
     /// carries the layout, which beats a parameter on four more functions.
     pub na_text: Option<String>,
     pub inf_text: Option<String>,
+    /// Page and print setup; see [`crate::page_setup`].
+    pub page: crate::page_setup::PageSetup,
 }
 
 impl SheetLayout {
@@ -311,6 +313,7 @@ impl SheetLayout {
 
     /// Emit merges, row heights and row formats. Must run before data rows.
     pub fn apply(&self, worksheet: &mut Worksheet) -> PyResult<()> {
+        self.page.apply(worksheet)?;
         for (r1, c1, r2, c2, value, fmt) in &self.merges {
             let blank = Format::new();
             worksheet
@@ -459,6 +462,7 @@ pub fn resolve_layout(
     totals_format: Option<Format>,
     na_text: Option<String>,
     inf_text: Option<String>,
+    page_setup: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<SheetLayout> {
     let mut totals = Vec::new();
     if let Some(spec) = totals_row {
@@ -569,6 +573,7 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         totals_format,
         na_text,
         inf_text,
+        page: crate::page_setup::PageSetup::from_py(page_setup)?,
     })
 }
 
