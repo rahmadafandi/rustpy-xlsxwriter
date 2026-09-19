@@ -7,6 +7,7 @@ mod data_types;
 mod data_validation;
 mod format;
 mod helpers;
+mod outline;
 mod ignore_errors;
 mod page_setup;
 mod sheet_view;

@@ -347,6 +347,7 @@ class FastExcel:
         sheet_view: Optional[Dict[str, Any]] = None,
         ignore_errors: Optional[Union[List[str], Dict[str, str]]] = None,
         data_validations: Optional[Dict[str, Dict[str, Any]]] = None,
+        outline: Optional[Dict[str, Any]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -501,6 +502,21 @@ class FastExcel:
                 (``stop``, ``warning``, ``information``), ``ignore_blank`` and
                 ``show_dropdown``. Rules cover the data rows only, never the
                 header; an unknown column warns and is skipped.
+            outline: Collapsible row and column groups — the ``+``/``-``
+                brackets in Excel's margin — as one mapping. ``rows`` takes a
+                list of ``{"from": int, "to": int}`` by 0-based sheet row
+                (matching ``row_heights``), ``columns`` a list of
+                ``{"from": name, "to": name}`` by header name, both with an
+                optional ``collapsed``. ``symbols_above`` and
+                ``symbols_to_left`` choose which side the summary sits on.
+
+                NOTE: a row group takes this sheet out of constant-memory
+                mode, the same trade-off as ``dedupe_strings``. The
+                constant-memory row writer emits ``hidden`` but not
+                ``outlineLevel``, so a collapsed group there would leave hidden
+                rows with no bracket to reopen them — worse than not offering
+                it. Column groups carry no such cost. An unknown column name
+                warns and is skipped.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -532,6 +548,7 @@ class FastExcel:
             "sheet_view": sheet_view,
             "ignore_errors": ignore_errors,
             "data_validations": data_validations,
+            "outline": outline,
         }.items():
             if value:
                 self._per_sheet.setdefault(option, {})[name] = value

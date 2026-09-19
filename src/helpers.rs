@@ -110,6 +110,8 @@ pub struct SheetLayout {
     pub ignore: crate::ignore_errors::IgnoreErrors,
     /// Per-column data validation; see [`crate::data_validation`].
     pub validations: crate::data_validation::DataValidations,
+    /// Collapsible row/column groups; see [`crate::outline`].
+    pub outline: crate::outline::Outline,
 }
 
 impl SheetLayout {
@@ -324,6 +326,7 @@ impl SheetLayout {
     pub fn apply(&self, worksheet: &mut Worksheet) -> PyResult<()> {
         self.page.apply(worksheet)?;
         self.view.apply(worksheet);
+        self.outline.apply_rows(worksheet)?;
         for (r1, c1, r2, c2, value, fmt) in &self.merges {
             let blank = Format::new();
             worksheet
@@ -477,6 +480,7 @@ pub fn resolve_layout(
     sheet_view: Option<&Bound<'_, PyAny>>,
     ignore_errors: Option<&Bound<'_, PyAny>>,
     data_validations: Option<&Bound<'_, PyAny>>,
+    outline: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<SheetLayout> {
     let mut totals = Vec::new();
     if let Some(spec) = totals_row {
@@ -593,6 +597,7 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         validations: crate::data_validation::DataValidations::from_py(
             data_validations,
         )?,
+        outline: crate::outline::Outline::from_py(outline)?,
         conditional: crate::conditional_format::ConditionalFormats::from_py(
             conditional_formats,
         )?,

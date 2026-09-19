@@ -65,6 +65,9 @@ ConditionalRule = Dict[str, Any]
 ConditionalFormats = Dict[str, Union[ConditionalRule, List[ConditionalRule]]]
 """Conditional formats keyed by column name."""
 
+Outline = Dict[str, Any]
+"""Row and column grouping; see :func:`write_worksheet` for the keys."""
+
 DataValidations = Dict[str, Dict[str, Any]]
 """Data validation rules keyed by column name."""
 
@@ -192,6 +195,7 @@ def write_worksheet(
     sheet_view: Optional[SheetView] = None,
     ignore_errors: Optional[IgnoreErrors] = None,
     data_validations: Optional[DataValidations] = None,
+    outline: Optional[Outline] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -313,6 +317,22 @@ def write_worksheet(
             ``show_dropdown``. Rules cover the data rows only, never the
             header. An unknown column warns and is skipped; an unknown type or
             criteria raises.
+        outline: Collapsible row and column groups — the +/- brackets in
+            Excel's margin — as one mapping:
+
+            - ``rows`` — a list of ``{"from": int, "to": int}`` by 0-based
+              sheet row, matching ``row_heights``, plus optional ``collapsed``
+            - ``columns`` — a list of ``{"from": name, "to": name}`` by header
+              name, plus optional ``collapsed``
+            - ``symbols_above`` / ``symbols_to_left`` — which side the summary
+              row or column sits on
+
+            NOTE: asking for a row group takes the sheet out of constant-memory
+            mode, the same trade-off as ``dedupe_strings``. The constant-memory
+            row writer emits ``hidden`` but not ``outlineLevel``, so a
+            collapsed group there would leave hidden rows with no bracket to
+            reopen them. Column groups carry no such cost. An unknown column
+            name warns and is skipped.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -356,6 +376,7 @@ def write_worksheets(
     sheet_view: Optional[Dict[str, SheetView]] = None,
     ignore_errors: Optional[Dict[str, IgnoreErrors]] = None,
     data_validations: Optional[Dict[str, DataValidations]] = None,
+    outline: Optional[Dict[str, Outline]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -464,6 +485,22 @@ def write_worksheets(
             ``show_dropdown``. Rules cover the data rows only, never the
             header. An unknown column warns and is skipped; an unknown type or
             criteria raises.
+        outline: Collapsible row and column groups — the +/- brackets in
+            Excel's margin — as one mapping:
+
+            - ``rows`` — a list of ``{"from": int, "to": int}`` by 0-based
+              sheet row, matching ``row_heights``, plus optional ``collapsed``
+            - ``columns`` — a list of ``{"from": name, "to": name}`` by header
+              name, plus optional ``collapsed``
+            - ``symbols_above`` / ``symbols_to_left`` — which side the summary
+              row or column sits on
+
+            NOTE: asking for a row group takes the sheet out of constant-memory
+            mode, the same trade-off as ``dedupe_strings``. The constant-memory
+            row writer emits ``hidden`` but not ``outlineLevel``, so a
+            collapsed group there would leave hidden rows with no bracket to
+            reopen them. Column groups carry no such cost. An unknown column
+            name warns and is skipped.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

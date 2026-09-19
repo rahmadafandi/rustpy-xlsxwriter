@@ -147,6 +147,7 @@ build is younger — treat it as the newer option it is.
 - Page and print setup (`page_setup=`): orientation, margins, repeat rows, fit-to-pages, headers/footers
 - Conditional formatting (`conditional_formats=`): data bars, colour scales, cell/text/top/average rules
 - Data validation (`data_validations=`): dropdowns, numeric and text-length rules
+- Outline grouping (`outline=`): collapsible row and column groups
 - Sheet view (`sheet_view=`): tab colour, gridlines, zoom, hidden
 - Suppress error triangles (`ignore_errors=`), e.g. numbers stored as text
 
@@ -456,6 +457,30 @@ write_worksheet(
 
 An unknown display-text column warns and falls back to showing the URL, so a
 typo costs a label rather than the export.
+
+### Outline Grouping
+
+The collapsible `+`/`-` brackets in Excel's margin:
+
+```python
+write_worksheet(
+    rows,
+    "out.xlsx",
+    outline={
+        "columns": [{"from": "q1", "to": "q3", "collapsed": True}],
+        "rows": [{"from": 2, "to": 8}],
+    },
+)
+```
+
+Rows are given by 0-based sheet index, like `row_heights`; columns by header
+name, like everything else keyed by column. `symbols_above` and
+`symbols_to_left` choose which side the summary sits on.
+
+> **A row group turns off constant-memory mode for that sheet**, the same
+> trade-off as `dedupe_strings`. The constant-memory row writer emits `hidden`
+> but not `outlineLevel`, so a collapsed group there would leave hidden rows
+> with no bracket to reopen them. Column groups carry no such cost.
 
 ### Data Validation
 
@@ -823,6 +848,7 @@ python benchmark.py
 | `test_conditional_formats.py` | Rule types, ranges, and validation |
 | `test_sheet_view.py` | Screen presentation and error indicators |
 | `test_data_validation.py` | Dropdowns, numeric rules, messages, limits |
+| `test_outline.py` | Row and column groups, and the constant-memory swap |
 | `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
 
 </details>
