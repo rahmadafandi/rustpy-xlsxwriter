@@ -40,7 +40,7 @@ Nothing in the API changes. See [Concurrency](#concurrency) for what it buys.
 
 ## Performance
 
-Benchmarked via [`benchmark.py`](benchmark.py) — run `python benchmark.py` to reproduce:
+Benchmarked via [`benchmark.py`](https://github.com/rahmadafandi/rustpy-xlsxwriter/blob/master/benchmark.py) — run `python benchmark.py` to reproduce:
 
 | Output | Input type | Records | RustPy | Baseline | Speedup |
 |---|---|---|---|---|---|
