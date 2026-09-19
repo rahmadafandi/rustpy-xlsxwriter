@@ -1,6 +1,6 @@
 [package]
 name = "rustpy-xlsxwriter"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2021"
 # Floor set by rust_xlsxwriter 0.99 (1.88); pyo3 needs 1.83 and arrow 1.85.
 # Verified by the msrv job in CI, not just declared.

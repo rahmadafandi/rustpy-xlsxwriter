@@ -11,10 +11,17 @@ Usage:
     python benchmark.py              # the comparison above
     python benchmark.py --concurrent # 1M rows split across 1/2/4/8 threads
 
-The concurrency run is the interesting one on a free-threaded build
-(``python3.14t``): with the GIL the total time is flat no matter how many
-threads, without it the work actually spreads. Run it under both interpreters
-to see the difference.
+Run the concurrency benchmark under both interpreters to see the difference.
+With the GIL, RustPy still gains from more workers — it releases the GIL
+around the XML assembly and the deflate, which is about two thirds of a write
+— but the rows themselves are read through Python objects and stay
+serialised. Without the GIL that part spreads too, so the gain is much
+larger.
+
+Note when comparing: xlsxwriter holds the whole worksheet in memory, so its
+concurrent numbers say more about the machine's RAM than about the library
+once the workers multiply. RustPy writes in constant-memory mode and does
+not.
 """
 
 import os
@@ -210,7 +217,11 @@ def bench_concurrent() -> None:
             cleanup(os.path.join(TMP_DIR, f"conc_x{w}.xlsx"))
     print("=" * 62)
     if gil:
-        print("Flat: the GIL serialises both writers.")
+        print(
+            "With the GIL: RustPy still spreads, because it releases the GIL "
+            "for the\nXML and the deflate — about two thirds of a write. "
+            "xlsxwriter is pure Python\nand takes turns."
+        )
     else:
         print("Free-threaded: both spread across threads — the ratio is the honest gain.")
 

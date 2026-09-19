@@ -397,20 +397,34 @@ pub fn save_workbook(
     workbook: &mut Workbook,
     file_or_buffer: Py<PyAny>,
 ) -> PyResult<()> {
+    // The save is where the XML is assembled and the zip is deflated — about
+    // two thirds of a write, and none of it touches a Python object. Holding
+    // the GIL through it means concurrent writers cannot overlap at all,
+    // which is why more threads never made a standard build any faster.
+    // Resolving the target is the only part that needs the GIL, so it happens
+    // first and the rest runs detached.
     if let Ok(path) = file_or_buffer.extract::<PathBuf>(py) {
-        workbook.save(&path).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))
-        })?;
-        return Ok(());
+        return py.detach(|| {
+            workbook.save(&path).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                    "Failed to save workbook: {}",
+                    e
+                ))
+            })?;
+            Ok(())
+        });
     }
 
-    let buffer = workbook.save_to_buffer().map_err(|e| {
-        // Match the file-save path (PyIOError) so a save failure surfaces as
-        // OSError regardless of whether the target is a path or a buffer.
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-            "Failed to save workbook to buffer: {}",
-            e
-        ))
+    let buffer = py.detach(|| {
+        workbook.save_to_buffer().map_err(|e| {
+            // Match the file-save path (PyIOError) so a save failure surfaces
+            // as OSError regardless of whether the target is a path or a
+            // buffer.
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Failed to save workbook to buffer: {}",
+                e
+            ))
+        })
     })?;
     write_bytes_to_target(py, &buffer, file_or_buffer)
 }
