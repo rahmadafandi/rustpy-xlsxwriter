@@ -520,6 +520,49 @@ write_csv(records, "output.csv", delimiter=";")  # custom delimiter
 extension, so a `.txt` target can hold CSV. For any other delimiter, call
 `write_csv` directly.
 
+#### Excel on Windows and the byte order mark
+
+A UTF-8 CSV without a BOM opens in Excel as the system code page, which turns
+every non-ASCII character into mojibake. `bom=True` fixes it:
+
+```python
+write_csv(records, "out.csv", bom=True)      # "Café" stays "Café" in Excel
+```
+
+Off by default, so output stays byte-identical for anything that parses it.
+
+#### Selecting columns
+
+```python
+write_csv(records, "out.csv", columns=["sku", "name"])  # subset and order
+write_csv(records, "out.csv", header=False)             # no header row
+```
+
+`columns` works on every input type and stays zero-copy on the Arrow path, so
+you no longer have to slice a DataFrame in Python first — which is what threw
+away the speed this library is for. A name that is not in the data raises
+`ValueError`: unlike the styling options this one decides the shape of the
+file, so a silent drop would hand back something that looks complete.
+
+### Missing values, NaN and infinity
+
+Excel has no cell type for `NaN` or `inf`, so both are written as an **empty
+cell**. That is the default, and it means a column of missing data is
+indistinguishable from a column of blanks. Name a representation to keep them
+apart:
+
+```python
+FastExcel("out.xlsx").format(na_rep="N/A", inf_value="INF").sheet("S", df).save()
+
+write_csv(df, "out.csv", na_rep="N/A", inf_value="INF")
+```
+
+`na_rep` covers `None`, an Arrow null and a float `NaN` as one setting, on
+purpose: pandas turns `NaN` in a float column into an Arrow null, so a knob
+that caught only true `NaN` would do nothing on the most common input there is.
+`inf_value` is separate — infinity is a value, not a missing one — and `-inf`
+takes the same text with a leading `-`, matching Excel's own `INF`/`-INF`.
+
 CSV carries no formatting, so every Excel-only option is dropped —
 `float_format`, `column_formats`, `header_format`, freeze panes, merges,
 banding, row heights and formats, `password`, `dedupe_strings`. Only
@@ -554,8 +597,8 @@ write_worksheets(
 
 | Method | Description |
 |---|---|
-| `FastExcel(target, *, output_format=None, password=None, autofit=True, sanitize_formulas=False)` | Create writer for file path or `BytesIO` buffer |
-| `.format(*, float_format, datetime_format, index_columns, bold_headers)` | Set number/datetime format and styling |
+| `FastExcel(target, *, output_format=None, password=None, autofit=True, sanitize_formulas=False, bom=False, columns=None, header=True)` | Create writer for file path or `BytesIO` buffer |
+| `.format(*, float_format, datetime_format, index_columns, bold_headers, na_rep, inf_value)` | Set number/datetime format and styling |
 | `.freeze(*, row=None, col=None, sheet=None)` | Configure freeze panes (general or per-sheet) |
 | `.sheet(name, data)` | Add a worksheet (list of dicts, generator, or DataFrame) |
 | `.save()` | Write all sheets and save |
@@ -568,7 +611,7 @@ Supports context manager (`with` statement) — auto-saves on exit, skips save o
 |---|---|
 | `write_worksheet(records, file_name, ...)` | Write single Excel sheet |
 | `write_worksheets(records_with_sheet_name, file_name, ...)` | Write multiple Excel sheets |
-| `write_csv(records, file_name, delimiter=",")` | Write CSV/TSV file |
+| `write_csv(records, file_name, delimiter=",", bom=False, columns=None, header=True, na_rep=None, inf_value=None)` | Write CSV/TSV file |
 | `validate_sheet_name(name)` | Check if sheet name is valid for Excel |
 
 ### Supported Data Types
@@ -641,6 +684,8 @@ python benchmark.py
 | `test_styling.py` | Float format, datetime format, bold headers, index columns |
 | `test_output_format.py` | Explicit `output_format`, CSV/TSV into a buffer |
 | `test_type_stubs.py` | `.pyi` kept in step with the compiled extension |
+| `test_csv_options.py` | CSV `bom`, `columns`, `header` across all four input paths |
+| `test_nan_inf.py` | `na_rep` / `inf_value` on every write path |
 | `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
 
 </details>
