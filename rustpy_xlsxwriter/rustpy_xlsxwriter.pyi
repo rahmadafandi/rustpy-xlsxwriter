@@ -1,8 +1,11 @@
-"""Type stubs for rustpy_xlsxwriter – high-performance Excel writer powered by Rust."""
+"""Type stubs for the compiled extension module.
+
+Covers only what ``lib.rs`` exports. ``FastExcel`` and the metadata
+helpers live in ``__init__.py`` and are annotated inline there.
+"""
 
 from __future__ import annotations
 
-from types import TracebackType
 from typing import (
     Any,
     BinaryIO,
@@ -11,7 +14,6 @@ from typing import (
     List,
     Optional,
     Tuple,
-    Type,
     Union,
 )
 
@@ -85,43 +87,43 @@ class Format:
     # Font
     def set_bold(self) -> Format: ...
     def set_italic(self) -> Format: ...
-    def set_underline(self, style: str = "single") -> Format: ...
+    def set_underline(self, style: str = "single", /) -> Format: ...
     def set_font_strikethrough(self) -> Format: ...
-    def set_font_size(self, size: float) -> Format: ...
-    def set_font_name(self, name: str) -> Format: ...
-    def set_font_color(self, color: str) -> Format: ...
-    def set_font_script(self, script: str) -> Format: ...
-    def set_font_family(self, n: int) -> Format: ...
-    def set_font_charset(self, n: int) -> Format: ...
-    def set_font_scheme(self, scheme: str) -> Format: ...
+    def set_font_size(self, size: float, /) -> Format: ...
+    def set_font_name(self, name: str, /) -> Format: ...
+    def set_font_color(self, color: str, /) -> Format: ...
+    def set_font_script(self, script: str, /) -> Format: ...
+    def set_font_family(self, n: int, /) -> Format: ...
+    def set_font_charset(self, n: int, /) -> Format: ...
+    def set_font_scheme(self, scheme: str, /) -> Format: ...
     # Fill
-    def set_background_color(self, color: str) -> Format: ...
-    def set_foreground_color(self, color: str) -> Format: ...
-    def set_pattern(self, pattern: str) -> Format: ...
+    def set_background_color(self, color: str, /) -> Format: ...
+    def set_foreground_color(self, color: str, /) -> Format: ...
+    def set_pattern(self, pattern: str, /) -> Format: ...
     # Border
-    def set_border(self, style: str) -> Format: ...
-    def set_border_color(self, color: str) -> Format: ...
-    def set_border_top(self, style: str) -> Format: ...
-    def set_border_bottom(self, style: str) -> Format: ...
-    def set_border_left(self, style: str) -> Format: ...
-    def set_border_right(self, style: str) -> Format: ...
-    def set_border_top_color(self, color: str) -> Format: ...
-    def set_border_bottom_color(self, color: str) -> Format: ...
-    def set_border_left_color(self, color: str) -> Format: ...
-    def set_border_right_color(self, color: str) -> Format: ...
-    def set_border_diagonal(self, style: str) -> Format: ...
-    def set_border_diagonal_color(self, color: str) -> Format: ...
-    def set_border_diagonal_type(self, t: str) -> Format: ...
+    def set_border(self, style: str, /) -> Format: ...
+    def set_border_color(self, color: str, /) -> Format: ...
+    def set_border_top(self, style: str, /) -> Format: ...
+    def set_border_bottom(self, style: str, /) -> Format: ...
+    def set_border_left(self, style: str, /) -> Format: ...
+    def set_border_right(self, style: str, /) -> Format: ...
+    def set_border_top_color(self, color: str, /) -> Format: ...
+    def set_border_bottom_color(self, color: str, /) -> Format: ...
+    def set_border_left_color(self, color: str, /) -> Format: ...
+    def set_border_right_color(self, color: str, /) -> Format: ...
+    def set_border_diagonal(self, style: str, /) -> Format: ...
+    def set_border_diagonal_color(self, color: str, /) -> Format: ...
+    def set_border_diagonal_type(self, t: str, /) -> Format: ...
     # Alignment / layout
-    def set_align(self, align: str) -> Format: ...
+    def set_align(self, align: str, /) -> Format: ...
     def set_text_wrap(self) -> Format: ...
-    def set_rotation(self, degrees: int) -> Format: ...
-    def set_indent(self, n: int) -> Format: ...
+    def set_rotation(self, degrees: int, /) -> Format: ...
+    def set_indent(self, n: int, /) -> Format: ...
     def set_shrink(self) -> Format: ...
-    def set_reading_direction(self, n: int) -> Format: ...
+    def set_reading_direction(self, n: int, /) -> Format: ...
     # Number
-    def set_num_format(self, fmt: str) -> Format: ...
-    def set_num_format_index(self, i: int) -> Format: ...
+    def set_num_format(self, fmt: str, /) -> Format: ...
+    def set_num_format_index(self, i: int, /) -> Format: ...
     # Protection / misc
     def set_locked(self) -> Format: ...
     def set_unlocked(self) -> Format: ...
@@ -129,135 +131,6 @@ class Format:
     def set_quote_prefix(self) -> Format: ...
     def set_checkbox(self) -> Format: ...
     def set_hyperlink(self) -> Format: ...
-
-# ---------------------------------------------------------------------------
-# Builder class
-# ---------------------------------------------------------------------------
-
-class FastExcel:
-    """Fluent builder for creating Excel files.
-
-    Examples::
-
-        FastExcel("out.xlsx").sheet("Sheet1", records).save()
-
-        (
-            FastExcel("report.xlsx", password="s3cret")
-            .format(float_format="0.00", index_columns=["ID"])
-            .freeze(row=1)
-            .sheet("Users", user_records)
-            .sheet("Orders", order_records)
-            .save()
-        )
-
-        # Context manager (auto-saves on exit)
-        with FastExcel("out.xlsx") as f:
-            f.sheet("Sheet1", records)
-    """
-
-    def __init__(
-        self,
-        target: FileTarget,
-        *,
-        password: Optional[str] = None,
-        autofit: bool = True,
-        sanitize_formulas: bool = False,
-    ) -> None:
-        """Create a new writer.
-
-        Args:
-            target: File path or writable binary buffer (e.g. ``io.BytesIO``).
-            password: Optional worksheet-protection password. Sets Excel's sheet
-                protection flag only — it does NOT encrypt the file; data is
-                stored in plaintext.
-            autofit: Automatically adjust column widths (default ``True``).
-                Set to ``False`` for large datasets to improve performance.
-            sanitize_formulas: CSV/TSV only. When ``True``, string fields
-                starting with ``= + - @`` are prefixed with ``'`` to neutralize
-                CSV formula injection. Off by default. No effect on ``.xlsx``.
-        """
-        ...
-
-    def __enter__(self) -> FastExcel: ...
-
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> None: ...
-
-    def format(
-        self,
-        *,
-        float_format: Optional[str] = None,
-        datetime_format: Optional[str] = None,
-        index_columns: Optional[List[str]] = None,
-        bold_headers: Optional[bool] = None,
-    ) -> FastExcel:
-        """Set number formatting and column styling.
-
-        Args:
-            float_format: Excel number format for floats (e.g. ``"0.00"``).
-            datetime_format: Excel number format for datetimes
-                (default ``"yyyy-mm-ddThh:mm:ss"``).
-            index_columns: Column names to render **bold**.
-            bold_headers: Whether to render header row in **bold**.
-        """
-        ...
-
-    def freeze(
-        self,
-        *,
-        row: Optional[int] = None,
-        col: Optional[int] = None,
-        sheet: Optional[str] = None,
-    ) -> FastExcel:
-        """Configure freeze panes.
-
-        Args:
-            row: Freeze panes above this row number.
-            col: Freeze panes to the left of this column number.
-            sheet: Apply to a specific sheet. If ``None``, applies to all.
-        """
-        ...
-
-    def sheet(
-        self,
-        name: str,
-        data: SheetData,
-        *,
-        column_width: Optional[float] = None,
-        column_widths: Optional[ColumnWidths] = None,
-        column_formats: Optional[ColumnFormats] = None,
-        header_format: Optional[Format] = None,
-    ) -> FastExcel:
-        """Add a worksheet with data.
-
-        Args:
-            name: Sheet name (≤ 31 chars, no ``[ ] : * ? / \\``).
-            data: List of dicts, generator of dicts, pandas DataFrame,
-                or polars DataFrame.
-            column_width: Uniform width applied to every column of this sheet.
-            column_widths: Per-column width — a dict keyed by header name
-                or a positional list of widths.
-            column_formats: Per-column :class:`Format` — a dict keyed by header
-                name or a positional list.
-            header_format: A :class:`Format` applied to the header row.
-
-        Raises:
-            ValueError: If the sheet name is invalid.
-        """
-        ...
-
-    def save(self) -> None:
-        """Write all sheets to the target file or buffer.
-
-        Raises:
-            ValueError: If no sheets have been added.
-            OSError: File system error while writing.
-        """
-        ...
 
 # ---------------------------------------------------------------------------
 # Core write functions
@@ -446,69 +319,3 @@ def validate_sheet_name(name: str) -> bool:
         False
     """
     ...
-
-# ---------------------------------------------------------------------------
-# Package metadata
-# ---------------------------------------------------------------------------
-
-def get_version() -> str:
-    """Return the package version string (e.g. ``'0.6.1'``)."""
-    ...
-
-def get_name() -> str:
-    """Return the package name (``'rustpy-xlsxwriter'``)."""
-    ...
-
-def get_authors() -> str:
-    """Return the package authors."""
-    ...
-
-def get_description() -> str:
-    """Return the package description."""
-    ...
-
-def get_repository() -> str:
-    """Return the repository URL."""
-    ...
-
-def get_homepage() -> str:
-    """Return the homepage URL."""
-    ...
-
-def get_license() -> str:
-    """Return the license identifier (``'MIT'``)."""
-    ...
-
-__version__: str
-"""Package version string — same value as :func:`get_version`."""
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-__all__ = [
-    "FastExcel",
-    "Format",
-    "write_csv",
-    "write_worksheet",
-    "write_worksheets",
-    "validate_sheet_name",
-    "get_version",
-    "get_name",
-    "get_authors",
-    "get_description",
-    "get_repository",
-    "get_homepage",
-    "get_license",
-    "Record",
-    "Records",
-    "DataFrame",
-    "FileTarget",
-    "FreezePanesConfig",
-    "ColumnWidths",
-    "ColumnFormats",
-    "SheetData",
-    "SheetEntry",
-    "SheetMap",
-    "__version__",
-]
