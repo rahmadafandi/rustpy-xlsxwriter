@@ -666,10 +666,10 @@ where
                     // column format cannot alternate between rows.
                     let dt_fmt = banding.then(|| col_override.unwrap_or(&pal.datetime));
                     if let Ok(dt) = item.cast::<PyDateTime>() {
-                        let excel_dt = py_datetime_to_excel(&dt)?;
+                        let excel_dt = py_datetime_to_excel(dt)?;
                         write_datetime_opt(worksheet, row_u32, col_u16, &excel_dt, dt_fmt)?;
                     } else if let Ok(d) = item.cast::<PyDate>() {
-                        let excel_dt = py_date_to_excel(&d)?;
+                        let excel_dt = py_date_to_excel(d)?;
                         write_datetime_opt(worksheet, row_u32, col_u16, &excel_dt, dt_fmt)?;
                     } else {
                         write_string_opt(
@@ -898,7 +898,7 @@ pub fn write_worksheets(
         let dedupe = keyed_extract::<bool>(dedupe_strings.as_ref(), &sheet_name)?
             .unwrap_or(false);
 
-        let mut worksheet = if dedupe {
+        let worksheet = if dedupe {
             workbook.add_worksheet()
         } else {
             workbook.add_worksheet_with_constant_memory()
@@ -936,7 +936,7 @@ pub fn write_worksheets(
         let sheet_urls = keyed_extract::<Vec<String>>(url_columns.as_ref(), &sheet_name)?;
 
         write_worksheet_content(
-            &mut worksheet,
+            worksheet,
             &records,
             password.as_ref(),
             pane.row,
@@ -1006,7 +1006,7 @@ pub fn write_worksheet(
         totals_format.map(|f| f.borrow().inner.clone()),
     )?;
     let mut workbook = Workbook::new();
-    let mut worksheet = if dedupe_strings {
+    let worksheet = if dedupe_strings {
         workbook.add_worksheet()
     } else {
         workbook.add_worksheet_with_constant_memory()
@@ -1021,7 +1021,7 @@ pub fn write_worksheet(
     let hdr_ref = hdr_borrow.as_deref();
 
     write_worksheet_content(
-        &mut worksheet,
+        worksheet,
         &records,
         password.as_ref(),
         freeze_row,

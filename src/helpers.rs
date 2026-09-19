@@ -27,8 +27,8 @@ pub enum ColType {
 pub fn py_datetime_to_excel(dt: &Bound<PyDateTime>) -> PyResult<ExcelDateTime> {
     ExcelDateTime::from_ymd(
         dt.get_year() as u16,
-        dt.get_month() as u8,
-        dt.get_day() as u8,
+        dt.get_month(),
+        dt.get_day(),
     )
     .map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -38,8 +38,8 @@ pub fn py_datetime_to_excel(dt: &Bound<PyDateTime>) -> PyResult<ExcelDateTime> {
     })?
     .and_hms(
         dt.get_hour() as u16,
-        dt.get_minute() as u8,
-        dt.get_second() as u8,
+        dt.get_minute(),
+        dt.get_second(),
     )
     .map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -53,8 +53,8 @@ pub fn py_datetime_to_excel(dt: &Bound<PyDateTime>) -> PyResult<ExcelDateTime> {
 pub fn py_date_to_excel(d: &Bound<PyDate>) -> PyResult<ExcelDateTime> {
     ExcelDateTime::from_ymd(
         d.get_year() as u16,
-        d.get_month() as u8,
-        d.get_day() as u8,
+        d.get_month(),
+        d.get_day(),
     )
     .map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(

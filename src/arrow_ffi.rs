@@ -28,7 +28,7 @@ pub fn stream_to_reader(
     let ptr = unsafe {
         let cap_ptr = pyo3::ffi::PyCapsule_GetPointer(
             capsule_bound.as_ptr(),
-            b"arrow_array_stream\0".as_ptr() as *const _,
+            c"arrow_array_stream".as_ptr(),
         );
         if cap_ptr.is_null() {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
