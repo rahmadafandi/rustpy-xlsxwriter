@@ -3,8 +3,9 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyDict, PyList, PyTimeAccess};
 use pyo3::Py;
-use std::path::PathBuf;
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, Worksheet};
+use std::borrow::Cow;
+use std::path::PathBuf;
 
 use crate::worksheet::xlsx_err;
 
@@ -25,42 +26,26 @@ pub enum ColType {
 
 /// Convert a Python `datetime` to `ExcelDateTime`.
 pub fn py_datetime_to_excel(dt: &Bound<PyDateTime>) -> PyResult<ExcelDateTime> {
-    ExcelDateTime::from_ymd(
-        dt.get_year() as u16,
-        dt.get_month(),
-        dt.get_day(),
-    )
-    .map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "Failed to create datetime: {}",
-            e
-        ))
-    })?
-    .and_hms(
-        dt.get_hour() as u16,
-        dt.get_minute(),
-        dt.get_second(),
-    )
-    .map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "Failed to create timestamp: {}",
-            e
-        ))
-    })
+    ExcelDateTime::from_ymd(dt.get_year() as u16, dt.get_month(), dt.get_day())
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Failed to create datetime: {}",
+                e
+            ))
+        })?
+        .and_hms(dt.get_hour() as u16, dt.get_minute(), dt.get_second())
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Failed to create timestamp: {}",
+                e
+            ))
+        })
 }
 
 /// Convert a Python `date` to `ExcelDateTime`.
 pub fn py_date_to_excel(d: &Bound<PyDate>) -> PyResult<ExcelDateTime> {
-    ExcelDateTime::from_ymd(
-        d.get_year() as u16,
-        d.get_month(),
-        d.get_day(),
-    )
-    .map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "Failed to create date: {}",
-            e
-        ))
+    ExcelDateTime::from_ymd(d.get_year() as u16, d.get_month(), d.get_day()).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to create date: {}", e))
     })
 }
 
@@ -93,6 +78,42 @@ pub struct SheetLayout {
     pub totals: Vec<(String, TotalsCell)>,
     pub totals_label: Option<String>,
     pub totals_format: Option<Format>,
+    /// Text for missing values and the infinities. Not geometry like the rest of this
+    /// struct, but it is resolved per sheet and every write path already
+    /// carries the layout, which beats a parameter on four more functions.
+    pub na_text: Option<String>,
+    pub inf_text: Option<String>,
+    /// Page and print setup; see [`crate::page_setup`].
+    pub page: crate::page_setup::PageSetup,
+    /// Screen presentation; see [`crate::sheet_view`].
+    pub view: crate::sheet_view::SheetView,
+    /// Per-column conditional formats. Applied after the data, like the
+    /// autofilter, since the range depends on the final row count.
+    pub conditional: crate::conditional_format::ConditionalFormats,
+    /// Error indicators to suppress; see [`crate::ignore_errors`].
+    pub ignore: crate::ignore_errors::IgnoreErrors,
+    /// Per-column data validation; see [`crate::data_validation`].
+    pub validations: crate::data_validation::DataValidations,
+    /// Collapsible row/column groups; see [`crate::outline`].
+    pub outline: crate::outline::Outline,
+    /// Notes on header cells; see [`crate::notes`].
+    pub notes: crate::notes::Notes,
+    /// Images anchored to cells; see [`crate::images`].
+    pub images: crate::images::Images,
+    /// Per-row trend charts; see [`crate::sparklines`].
+    pub sparklines: crate::sparklines::Sparklines,
+    /// Charts anchored to a cell; see [`crate::charts`].
+    pub charts: crate::charts::Charts,
+}
+
+impl SheetLayout {
+    /// Borrow the non-finite representations for the write paths.
+    pub fn reps(&self) -> NumReps<'_> {
+        NumReps {
+            na: self.na_text.as_deref(),
+            inf: self.inf_text.as_deref(),
+        }
+    }
 }
 
 /// A computed column: a header and a formula template appended after the data
@@ -193,25 +214,25 @@ pub fn formula_problem(formula: &str) -> Option<String> {
 }
 
 /// Read `formula_columns` — an ordered `{header: formula}` mapping.
-pub fn resolve_formula_columns(
-    spec: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Vec<FormulaColumn>> {
-    let Some(spec) = spec else { return Ok(Vec::new()) };
-    let dict = spec.cast::<PyDict>().map_err(|_| {
-        value_err("formula_columns must be a dict of {header: formula}".into())
-    })?;
+pub fn resolve_formula_columns(spec: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<FormulaColumn>> {
+    let Some(spec) = spec else {
+        return Ok(Vec::new());
+    };
+    let dict = spec
+        .cast::<PyDict>()
+        .map_err(|_| value_err("formula_columns must be a dict of {header: formula}".into()))?;
     let mut out = Vec::with_capacity(dict.len());
     for (key, val) in dict.iter() {
-        let header: String = key.extract().map_err(|_| {
-            value_err("formula_columns keys must be header names".into())
-        })?;
+        let header: String = key
+            .extract()
+            .map_err(|_| value_err("formula_columns keys must be header names".into()))?;
         let template: String = val.extract().map_err(|_| {
-            value_err(format!("formula_columns['{header}'] must be a formula string"))
+            value_err(format!(
+                "formula_columns['{header}'] must be a formula string"
+            ))
         })?;
         if template.trim().is_empty() {
-            return Err(value_err(format!(
-                "formula_columns['{header}'] is empty"
-            )));
+            return Err(value_err(format!("formula_columns['{header}'] is empty")));
         }
         // Placeholders expand to digits, so the structure is already final.
         if let Some(problem) = formula_problem(&template) {
@@ -295,6 +316,10 @@ impl SheetLayout {
 
     /// Emit merges, row heights and row formats. Must run before data rows.
     pub fn apply(&self, worksheet: &mut Worksheet) -> PyResult<()> {
+        self.page.apply(worksheet)?;
+        self.view.apply(worksheet);
+        self.outline.apply_rows(worksheet)?;
+        self.images.apply(worksheet)?;
         for (r1, c1, r2, c2, value, fmt) in &self.merges {
             let blank = Format::new();
             worksheet
@@ -413,15 +438,17 @@ fn row_keyed<T>(
     what: &str,
     mut convert: impl FnMut(&Bound<'_, PyAny>) -> PyResult<T>,
 ) -> PyResult<Vec<(u32, T)>> {
-    let Some(spec) = spec else { return Ok(Vec::new()) };
-    let dict = spec.cast::<PyDict>().map_err(|_| {
-        value_err(format!("{what} must be a dict keyed by row index"))
-    })?;
+    let Some(spec) = spec else {
+        return Ok(Vec::new());
+    };
+    let dict = spec
+        .cast::<PyDict>()
+        .map_err(|_| value_err(format!("{what} must be a dict keyed by row index")))?;
     let mut out = Vec::with_capacity(dict.len());
     for (key, val) in dict.iter() {
-        let row: u32 = key.extract().map_err(|_| {
-            value_err(format!("{what}: row index must be a non-negative int"))
-        })?;
+        let row: u32 = key
+            .extract()
+            .map_err(|_| value_err(format!("{what}: row index must be a non-negative int")))?;
         out.push((row, convert(&val)?));
     }
     out.sort_by_key(|(row, _)| *row);
@@ -441,6 +468,18 @@ pub fn resolve_layout(
     totals_row: Option<&Bound<'_, PyAny>>,
     totals_label: Option<String>,
     totals_format: Option<Format>,
+    na_text: Option<String>,
+    inf_text: Option<String>,
+    page_setup: Option<&Bound<'_, PyAny>>,
+    conditional_formats: Option<&Bound<'_, PyAny>>,
+    sheet_view: Option<&Bound<'_, PyAny>>,
+    ignore_errors: Option<&Bound<'_, PyAny>>,
+    data_validations: Option<&Bound<'_, PyAny>>,
+    outline: Option<&Bound<'_, PyAny>>,
+    notes: Option<&Bound<'_, PyAny>>,
+    images: Option<&Bound<'_, PyAny>>,
+    sparklines: Option<&Bound<'_, PyAny>>,
+    charts: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<SheetLayout> {
     let mut totals = Vec::new();
     if let Some(spec) = totals_row {
@@ -448,9 +487,9 @@ pub fn resolve_layout(
             value_err("totals_row must be a dict of {column name: aggregate}".into())
         })?;
         for (key, val) in dict.iter() {
-            let column: String = key.extract().map_err(|_| {
-                value_err("totals_row keys must be column names".into())
-            })?;
+            let column: String = key
+                .extract()
+                .map_err(|_| value_err("totals_row keys must be column names".into()))?;
             let name: String = val.extract().map_err(|_| {
                 value_err("totals_row values must be aggregate names or formulas".into())
             })?;
@@ -524,9 +563,9 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
     }
 
     let heights = row_keyed(row_heights, "row_heights", |v| {
-        let h: f64 = v.extract().map_err(|_| {
-            value_err("row_heights values must be numbers".into())
-        })?;
+        let h: f64 = v
+            .extract()
+            .map_err(|_| value_err("row_heights values must be numbers".into()))?;
         if h < 0.0 {
             return Err(value_err("row_heights values must not be negative".into()));
         }
@@ -549,6 +588,18 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         totals,
         totals_label,
         totals_format,
+        na_text,
+        inf_text,
+        page: crate::page_setup::PageSetup::from_py(page_setup)?,
+        view: crate::sheet_view::SheetView::from_py(sheet_view)?,
+        ignore: crate::ignore_errors::IgnoreErrors::from_py(ignore_errors)?,
+        validations: crate::data_validation::DataValidations::from_py(data_validations)?,
+        outline: crate::outline::Outline::from_py(outline)?,
+        notes: crate::notes::Notes::from_py(notes)?,
+        images: crate::images::Images::from_py(images)?,
+        sparklines: crate::sparklines::Sparklines::from_py(sparklines)?,
+        charts: crate::charts::Charts::from_py(charts)?,
+        conditional: crate::conditional_format::ConditionalFormats::from_py(conditional_formats)?,
     })
 }
 
@@ -577,13 +628,13 @@ pub fn write_header(
             .write_string_with_format(row, col, header, bold_fmt)
             .map_err(xlsx_err)?;
     } else {
-        worksheet
-            .write_string(row, col, header)
-            .map_err(xlsx_err)?;
+        worksheet.write_string(row, col, header).map_err(xlsx_err)?;
     }
     if let Some(cols) = index_columns {
         if cols.iter().any(|c| c == header) {
-            worksheet.set_column_format(col, bold_fmt).map_err(xlsx_err)?;
+            worksheet
+                .set_column_format(col, bold_fmt)
+                .map_err(xlsx_err)?;
         }
     }
     Ok(())
@@ -615,17 +666,66 @@ pub fn write_all_headers(
     Ok(())
 }
 
-/// Write a numeric cell with optional float format. NaN/Inf → empty string.
+/// How missing values and the infinities are rendered.
+///
+/// `None` writes an empty cell, which is what every version before this did,
+/// so the default keeps existing files byte-identical. The reason to set one
+/// is that a blank and a missing value are indistinguishable once written.
+///
+/// `na` deliberately covers `None`, an Arrow null *and* a float NaN together,
+/// the way `pandas.to_csv(na_rep=...)` does. Keeping them apart would be a
+/// trap: pandas turns NaN in a float column into an Arrow null, so a knob that
+/// only caught true NaN would do nothing on the most common input of all.
+#[derive(Clone, Copy, Default)]
+pub struct NumReps<'a> {
+    pub na: Option<&'a str>,
+    pub inf: Option<&'a str>,
+}
+
+impl<'a> NumReps<'a> {
+    /// Text for a missing value, or `""` when none was set.
+    ///
+    /// Takes `self` by value — the struct is `Copy`, and the borrow must be of
+    /// the caller's strings rather than of `self`, or a sink holding a
+    /// `NumReps` could not pass the text to its own `&mut self` method.
+    pub fn na_text(self) -> &'a str {
+        self.na.unwrap_or("")
+    }
+
+    /// Text for a non-finite `val`, or `None` to leave the cell empty.
+    ///
+    /// Negative infinity takes `inf` with a `-` in front, matching what
+    /// `rust_xlsxwriter` and Excel use themselves ("INF" / "-INF").
+    pub fn text_for(self, val: f64) -> Option<Cow<'a, str>> {
+        if val.is_nan() {
+            self.na.map(Cow::Borrowed)
+        } else if val.is_infinite() {
+            self.inf.map(|t| {
+                if val.is_sign_negative() {
+                    Cow::Owned(format!("-{t}"))
+                } else {
+                    Cow::Borrowed(t)
+                }
+            })
+        } else {
+            None
+        }
+    }
+}
+
+/// Write a numeric cell with optional float format. NaN/Inf follow `reps`.
 pub fn write_num(
     worksheet: &mut Worksheet,
     row: u32,
     col: u16,
     val: f64,
     float_fmt: Option<&Format>,
+    reps: NumReps<'_>,
 ) -> PyResult<()> {
     if val.is_nan() || val.is_infinite() {
-        // Keep the format on the blank so a banded row has no unshaded hole.
-        write_string_opt(worksheet, row, col, "", float_fmt)?;
+        // Keep the format on the text so a banded row has no unshaded hole.
+        let text = reps.text_for(val).unwrap_or(Cow::Borrowed(""));
+        write_string_opt(worksheet, row, col, &text, float_fmt)?;
     } else if let Some(fmt) = float_fmt {
         worksheet
             .write_number_with_format(row, col, val, fmt)
@@ -688,10 +788,17 @@ pub fn write_url_or_text(
     col: u16,
     val: &str,
     fmt: Option<&Format>,
+    text: Option<&str>,
 ) -> PyResult<()> {
+    // Display text rides on the Url itself rather than a second write, which
+    // would overwrite the format the first one applied.
+    let link = match text {
+        Some(t) => rust_xlsxwriter::Url::new(val).set_text(t),
+        None => rust_xlsxwriter::Url::new(val),
+    };
     let wrote = match fmt {
-        Some(f) => worksheet.write_url_with_format(row, col, val, f).is_ok(),
-        None => worksheet.write_url(row, col, val).is_ok(),
+        Some(f) => worksheet.write_url_with_format(row, col, link, f).is_ok(),
+        None => worksheet.write_url(row, col, link).is_ok(),
     };
     if wrote {
         return Ok(());
@@ -699,30 +806,74 @@ pub fn write_url_or_text(
     write_string_opt(worksheet, row, col, val, fmt)
 }
 
-/// Resolve `url_columns` (column names) to their positions in `headers`.
-/// Unknown names warn and are skipped, matching `column_formats`.
+/// One column's link settings.
+#[derive(Clone, Copy, Default)]
+pub struct UrlCol {
+    /// The column was listed in `url_columns`, so its text becomes a link.
+    pub link: bool,
+    /// Index of the column supplying the display text, when the caller passed
+    /// the mapping form. `None` shows the URL itself.
+    pub text_col: Option<usize>,
+}
+
+/// Resolve `url_columns` against `headers`.
+///
+/// Two shapes, because showing the URL itself is rarely what a report wants:
+/// a list names the link columns, a dict maps each link column to the column
+/// holding its display text (`{"url": "product_name"}`).
+///
+/// Unknown names warn and are skipped, matching `column_formats` — a stray
+/// name costs a link, not the export.
 pub fn resolve_url_columns(
-    url_columns: Option<&Vec<String>>,
+    url_columns: Option<&Bound<'_, PyAny>>,
     headers: &[String],
     py: Python,
-) -> PyResult<Vec<bool>> {
-    let mut flags = vec![false; headers.len()];
-    let Some(names) = url_columns else {
-        return Ok(flags);
+) -> PyResult<Vec<UrlCol>> {
+    let mut cols = vec![UrlCol::default(); headers.len()];
+    let Some(spec) = url_columns else {
+        return Ok(cols);
     };
     let warnings = py.import("warnings")?;
-    for name in names {
-        match headers.iter().position(|h| h == name) {
-            Some(idx) => flags[idx] = true,
-            None => {
-                warnings.call_method1(
-                    "warn",
-                    (format!("url_columns: unknown column '{name}', skipped"),),
-                )?;
-            }
-        }
+    let warn = |msg: String| -> PyResult<()> {
+        warnings.call_method1("warn", (msg,))?;
+        Ok(())
+    };
+
+    let pairs: Vec<(String, Option<String>)> = if let Ok(map) = spec.cast::<PyDict>() {
+        map.iter()
+            .map(|(k, v)| Ok((k.extract::<String>()?, Some(v.extract::<String>()?))))
+            .collect::<PyResult<_>>()?
+    } else {
+        spec.extract::<Vec<String>>()?
+            .into_iter()
+            .map(|name| (name, None))
+            .collect()
+    };
+
+    for (name, text_name) in pairs {
+        let Some(idx) = headers.iter().position(|h| h == &name) else {
+            warn(format!("url_columns: unknown column '{name}', skipped"))?;
+            continue;
+        };
+        let text_col = match text_name {
+            Some(t) => match headers.iter().position(|h| h == &t) {
+                Some(ti) => Some(ti),
+                None => {
+                    warn(format!(
+                        "url_columns: unknown display-text column '{t}' for '{name}', \
+                         showing the URL instead"
+                    ))?;
+                    None
+                }
+            },
+            None => None,
+        };
+        cols[idx] = UrlCol {
+            link: true,
+            text_col,
+        };
     }
-    Ok(flags)
+    Ok(cols)
 }
 
 /// Write a boolean cell, with an optional explicit format.
@@ -802,10 +953,7 @@ pub fn save_workbook(
 ) -> PyResult<()> {
     if let Ok(path) = file_or_buffer.extract::<PathBuf>(py) {
         workbook.save(&path).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                "Failed to save workbook: {}",
-                e
-            ))
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))
         })?;
         return Ok(());
     }
@@ -822,11 +970,7 @@ pub fn save_workbook(
 }
 
 /// Write raw bytes to a file path or writable buffer.
-pub fn write_bytes_to_target(
-    py: Python,
-    bytes: &[u8],
-    file_or_buffer: Py<PyAny>,
-) -> PyResult<()> {
+pub fn write_bytes_to_target(py: Python, bytes: &[u8], file_or_buffer: Py<PyAny>) -> PyResult<()> {
     if let Ok(path) = file_or_buffer.extract::<PathBuf>(py) {
         std::fs::write(&path, bytes).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write file: {}", e))
@@ -914,9 +1058,7 @@ pub fn apply_column_widths(
             if idx as u16 >= ncols {
                 warn_py(
                     py,
-                    &format!(
-                        "column_widths: index {idx} out of range ({ncols} columns), skipped"
-                    ),
+                    &format!("column_widths: index {idx} out of range ({ncols} columns), skipped"),
                 )?;
                 continue;
             }

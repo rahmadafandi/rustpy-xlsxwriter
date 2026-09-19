@@ -183,6 +183,9 @@ class FastExcel:
         password: Optional[str] = None,
         autofit: bool = True,
         sanitize_formulas: bool = False,
+        bom: bool = False,
+        columns: Optional[List[str]] = None,
+        header: bool = True,
     ) -> None:
         """Create a new writer.
 
@@ -211,6 +214,13 @@ class FastExcel:
                 formulas (CSV-injection mitigation). Off by default to keep
                 output byte-identical. Has no effect on ``.xlsx`` output, where
                 values are already written as text cells.
+            bom: CSV/TSV only. Prefix the UTF-8 byte order mark, which is what
+                makes Excel on Windows read the file as UTF-8 rather than the
+                system code page. Off by default so output stays
+                byte-identical.
+            columns: CSV/TSV only. Select and order the output columns by name.
+                An unknown name raises ``ValueError``.
+            header: CSV/TSV only. Write the header row (default ``True``).
         """
         if output_format is not None and output_format not in _FORMATS:
             raise ValueError(
@@ -221,11 +231,16 @@ class FastExcel:
         self._password = password
         self._autofit = autofit
         self._sanitize_formulas = sanitize_formulas
+        self._bom = bom
+        self._columns = columns
+        self._header = header
         self._sheets: List[Tuple[str, Any]] = []
         self._float_format: Optional[str] = None
         self._datetime_format: Optional[str] = None
         self._index_columns: Optional[List[str]] = None
         self._bold_headers: bool = False
+        self._na_rep: Optional[str] = None
+        self._inf_value: Optional[str] = None
         self._freeze_panes: Dict[str, Dict[str, int]] = {}
         # {option: {sheet_name: value}}, filled by sheet() as options are
         # given. Keyed lazily so the option names live in one place only.
@@ -247,6 +262,8 @@ class FastExcel:
         datetime_format: Optional[str] = None,
         index_columns: Optional[List[str]] = None,
         bold_headers: Optional[bool] = None,
+        na_rep: Optional[str] = None,
+        inf_value: Optional[str] = None,
     ) -> "FastExcel":
         """Set number formatting and column styling.
 
@@ -256,6 +273,12 @@ class FastExcel:
                 (default ``"yyyy-mm-ddThh:mm:ss"``).
             index_columns: Column names to render **bold**.
             bold_headers: Whether to render header row in **bold**.
+            na_rep: Text written for ``NaN``. Left unset, the cell is empty —
+                which is what every earlier version did, so a column of NaN
+                arrives as a column of blanks that cannot be told apart from
+                missing data. Applies to Excel and CSV alike.
+            inf_value: Text written for ``inf``; ``-inf`` gets the same text
+                with a ``-`` in front, matching Excel's ``INF``/``-INF``.
         """
         if float_format is not None:
             self._float_format = float_format
@@ -265,6 +288,10 @@ class FastExcel:
             self._index_columns = index_columns
         if bold_headers is not None:
             self._bold_headers = bold_headers
+        if na_rep is not None:
+            self._na_rep = na_rep
+        if inf_value is not None:
+            self._inf_value = inf_value
         return self
 
     def freeze(
@@ -310,11 +337,21 @@ class FastExcel:
         row_formats: Optional[Dict[int, "Format"]] = None,
         banded_rows: Optional[str] = None,
         autofilter: bool = False,
-        url_columns: Optional[List[str]] = None,
+        url_columns: Optional[Union[List[str], Dict[str, str]]] = None,
         totals_row: Optional[Dict[str, str]] = None,
         totals_label: Optional[str] = None,
         totals_format: Optional["Format"] = None,
         formula_columns: Optional[Dict[str, str]] = None,
+        page_setup: Optional[Dict[str, Any]] = None,
+        conditional_formats: Optional[Dict[str, Any]] = None,
+        sheet_view: Optional[Dict[str, Any]] = None,
+        ignore_errors: Optional[Union[List[str], Dict[str, str]]] = None,
+        data_validations: Optional[Dict[str, Dict[str, Any]]] = None,
+        outline: Optional[Dict[str, Any]] = None,
+        notes: Optional[Dict[str, Any]] = None,
+        images: Optional[List[Dict[str, Any]]] = None,
+        sparklines: Optional[Dict[str, Dict[str, Any]]] = None,
+        charts: Optional[List[Dict[str, Any]]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -357,13 +394,17 @@ class FastExcel:
             autofilter: Add Excel's filter dropdowns over the header row and its
                 data. The range is computed from the rows actually written, so
                 it follows ``header_row`` and needs no manual bounds.
-            url_columns: Column names whose text cells become clickable links —
-                ``["homepage"]``. Accepts what Excel accepts: ``http(s)://``,
+            url_columns: Columns whose text cells become clickable links.
+                A list names them and each cell shows the URL —
+                ``["homepage"]``. A dict maps a link column to the column
+                holding its display text — ``{"url": "product_name"}`` shows
+                the product name and links to the URL, which is what a report
+                usually wants. Accepts what Excel accepts: ``http(s)://``,
                 ``mailto:``, and ``internal:Sheet2!A1`` for a link to another
                 sheet. A value Excel would reject (ordinary text, or a URL past
-                its 2083-character limit) is written as plain text instead, so a
-                stray non-link never aborts the export. The cell displays the
-                URL itself; per-cell display text is not supported.
+                its 2083-character limit) is written as plain text instead, so
+                a stray non-link never aborts the export. An unknown
+                display-text column warns and falls back to showing the URL.
             totals_row: ``{column_name: aggregate}`` written as Excel formulas
                 in a row below the data — ``{"amount": "sum"}`` becomes
                 ``=SUM(C2:C101)``. Valid aggregates: ``sum``, ``average``,
@@ -400,6 +441,140 @@ class FastExcel:
                 There is no ``{last}``: rows are still
                 streaming when these are written, so the final row is unknown;
                 use ``totals_row`` for whole-column formulas.
+            page_setup: Page and print settings as one mapping, because Excel
+                has about twenty of them and a keyword each would double this
+                signature. Keys: ``landscape``, ``paper_size``, ``margins``
+                (a dict of ``left``/``right``/``top``/``bottom``/``header``/
+                ``footer``; anything omitted keeps Excel's default),
+                ``print_area`` as ``(first_row, first_col, last_row,
+                last_col)``, ``repeat_rows`` and ``repeat_columns`` (an index
+                or a ``(first, last)`` pair — this is what puts the header on
+                every printed page), ``fit_to_pages`` as ``(width, height)``
+                with ``0`` letting that dimension run on, ``scale``,
+                ``center_horizontally``, ``center_vertically``,
+                ``print_gridlines``, ``print_headings``, ``first_page_number``,
+                and ``header``/``footer`` using Excel's ``&``-codes such as
+                ``"&RPage &P of &N"``. An unknown key raises, as does setting
+                ``scale`` and ``fit_to_pages`` together, which Excel cannot
+                honour at once.
+            conditional_formats: Per-column conditional formatting, as
+                ``{column: rule}`` or ``{column: [rule, rule]}`` when a column
+                needs more than one. A rule is a dict with a ``type``:
+                ``cell`` (``criteria`` ``==``/``!=``/``>``/``>=``/``<``/``<=``
+                with ``value``, or ``between``/``not_between`` with ``min`` and
+                ``max``, plus a ``format``), ``data_bar`` (optional ``color``,
+                ``bar_only``), ``2_color_scale`` and ``3_color_scale``
+                (optional ``min_color``, ``mid_color``, ``max_color``),
+                ``text`` (``contains``/``does_not_contain``/``begins_with``/
+                ``ends_with`` with ``value`` and ``format``), ``top``
+                (``top``/``bottom``/``top_percent``/``bottom_percent`` with
+                ``value``, default top 10), ``average``
+                (``above``/``below``/``equal_or_above``/``equal_or_below``),
+                and ``duplicate``/``unique``.
+
+                Rules cover the column's data rows only — never the header —
+                and the range follows the rows actually written, so no manual
+                bounds. An unknown column warns and is skipped; an unknown
+                type or criteria raises.
+            sheet_view: How the sheet presents on screen, as one mapping:
+                ``tab_color``, ``gridlines`` (on screen), ``zoom``,
+                ``right_to_left``, ``hidden``, ``selected``. Separate from
+                ``page_setup``, which is about paper. An unknown key raises, as
+                does ``hidden`` with ``selected`` — Excel rejects a workbook
+                whose active sheet is hidden.
+            ignore_errors: Suppress Excel's green error triangles on a column.
+                A list of column names means ``number_stored_as_text`` — the
+                reason anyone wants this, since an ID, SKU or postcode column
+                is digits stored as text on purpose and Excel flags every cell
+                of it. A dict maps a column to another error name instead —
+                one per column, never a list, since Excel allows a single
+                ignore rule per cell. Covers the data rows only; an unknown
+                column warns and is skipped.
+            data_validations: Per-column data validation, as
+                ``{column: rule}``. A rule is a dict with a ``type``:
+                ``list`` (``values``, a list of strings — the dropdown, and the
+                reason most people want this; Excel caps the inline list at 255
+                characters including separators and a longer one raises),
+                ``whole_number``/``decimal``/``text_length`` (``criteria``
+                ``==``/``!=``/``>``/``>=``/``<``/``<=`` with ``value``, or
+                ``between``/``not_between`` with ``min`` and ``max``; a
+                fraction given to the two integer kinds raises rather than
+                being truncated), ``custom`` (``formula``), or ``any``.
+
+                Any rule also accepts ``input_title``, ``input_message``,
+                ``error_title``, ``error_message``, ``error_style``
+                (``stop``, ``warning``, ``information``), ``ignore_blank`` and
+                ``show_dropdown``. Rules cover the data rows only, never the
+                header; an unknown column warns and is skipped.
+            outline: Collapsible row and column groups — the ``+``/``-``
+                brackets in Excel's margin — as one mapping. ``rows`` takes a
+                list of ``{"from": int, "to": int}`` by 0-based sheet row
+                (matching ``row_heights``), ``columns`` a list of
+                ``{"from": name, "to": name}`` by header name, both with an
+                optional ``collapsed``. ``symbols_above`` and
+                ``symbols_to_left`` choose which side the summary sits on.
+
+                NOTE: a row group takes this sheet out of constant-memory
+                mode, the same trade-off as ``dedupe_strings``. The
+                constant-memory row writer emits ``hidden`` but not
+                ``outlineLevel``, so a collapsed group there would leave hidden
+                rows with no bracket to reopen them — worse than not offering
+                it. Column groups carry no such cost. An unknown column name
+                warns and is skipped.
+            notes: Notes on header cells, as ``{column: text}`` — where to say
+                what a column means without widening it or adding a legend
+                sheet. The value may instead be a dict with ``text`` plus any
+                of ``author``, ``width``, ``height``, ``visible`` and
+                ``background_color``. An unknown column warns and is skipped.
+            images: Images anchored to cells, as a list of dicts. Each needs
+                ``path`` or ``data`` (raw bytes, for a logo already in memory)
+                and takes ``row``/``col`` (0-based, default 0), ``scale`` or
+                the per-axis ``scale_x``/``scale_y``, ``fit_to_cell`` with
+                ``keep_aspect_ratio``, ``alt_text`` and ``url``. Placed by
+                index rather than by column name, since an image floats above
+                the grid instead of belonging to a column. Identical images are
+                stored once.
+            sparklines: A one-cell chart per data row, as ``{column: rule}``.
+                The column is one left empty in the records; ``from`` and
+                ``to`` name the span each row summarises::
+
+                    rows = [{"q1": 1, "q2": 5, "q3": 3, "q4": 8, "trend": None}]
+                    sparklines={"trend": {"from": "q1", "to": "q4"}}
+
+                Also takes ``type`` (``line``, ``column``, ``win_lose``),
+                ``color``, ``style`` and the toggles ``high_point``,
+                ``low_point``, ``first_point``, ``last_point``, ``markers``,
+                ``negative_points``, ``axis`` and ``right_to_left``.
+
+                The target column must already exist: appending one would mean
+                reaching into the header assembly and column accounting that
+                ``formula_columns`` uses, in both row loops, for far more cost
+                than the feature is worth. An unknown column warns and is
+                skipped.
+            charts: Charts anchored to a cell, as a list of dicts. Each needs a
+                ``type`` and a ``series``::
+
+                    charts=[{"type": "column", "series": ["q1", "q2"],
+                             "categories": "region", "title": "Quarterly"}]
+
+                ``series`` is a list of column names, or of dicts with
+                ``values`` and an optional ``name`` — left out, the series name
+                links to that column's header cell so the legend follows the
+                header. ``categories`` names the column used for axis labels.
+
+                Types: ``area``, ``bar``, ``column``, ``line`` (each also with
+                ``_stacked`` and ``_percent_stacked``), ``pie``, ``doughnut``,
+                ``radar``, ``radar_with_markers``, ``radar_filled``,
+                ``scatter``, ``scatter_smooth``, ``stock``.
+
+                Also takes ``row``/``col``, ``title``, ``x_axis``, ``y_axis``,
+                ``width``, ``height``, ``style`` and ``legend``. Left unplaced,
+                a chart lands one column clear of the data and level with the
+                header rather than on top of the table. Series cover the data
+                rows only. An unknown column warns and skips that chart, since
+                a chart missing a series draws a misleading picture. A scatter
+                chart is refused without ``categories`` — they are its x values
+                rather than labels, so there is nothing to default them to.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -426,6 +601,16 @@ class FastExcel:
             "totals_label": totals_label,
             "totals_format": totals_format,
             "formula_columns": formula_columns,
+            "page_setup": page_setup,
+            "conditional_formats": conditional_formats,
+            "sheet_view": sheet_view,
+            "ignore_errors": ignore_errors,
+            "data_validations": data_validations,
+            "outline": outline,
+            "notes": notes,
+            "images": images,
+            "sparklines": sparklines,
+            "charts": charts,
         }.items():
             if value:
                 self._per_sheet.setdefault(option, {})[name] = value
@@ -487,6 +672,11 @@ class FastExcel:
                 self._target,
                 delimiter=delimiter,
                 sanitize_formulas=self._sanitize_formulas,
+                bom=self._bom,
+                columns=self._columns,
+                header=self._header,
+                na_rep=self._na_rep,
+                inf_value=self._inf_value,
             )
             return
 
@@ -515,6 +705,8 @@ class FastExcel:
                 index_columns=self._index_columns,
                 autofit=self._autofit,
                 bold_headers=self._bold_headers,
+                na_rep=self._na_rep,
+                inf_value=self._inf_value,
                 **{
                     option: values[sheet_name]
                     for option, values in self._per_sheet.items()
@@ -533,6 +725,8 @@ class FastExcel:
                 index_columns=self._index_columns,
                 autofit=self._autofit,
                 bold_headers=self._bold_headers,
+                na_rep=self._na_rep,
+                inf_value=self._inf_value,
                 **{
                     option: values
                     for option, values in self._per_sheet.items()

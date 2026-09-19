@@ -80,13 +80,9 @@ fn write_temporal(
     text_fmt: Option<&Format>,
 ) -> PyResult<()> {
     match value {
-        Some(dt) => crate::helpers::write_datetime_opt(
-            worksheet,
-            row,
-            col,
-            &dt,
-            banding.then_some(dt_fmt),
-        ),
+        Some(dt) => {
+            crate::helpers::write_datetime_opt(worksheet, row, col, &dt, banding.then_some(dt_fmt))
+        }
         None => write_string_opt(worksheet, row, col, "", text_fmt),
     }
 }
@@ -99,7 +95,7 @@ pub fn write_arrow_batch(
     plain: &crate::format::RowPalette,
     banded: Option<&crate::format::RowPalette>,
     layout: &crate::helpers::SheetLayout,
-    url_cols: &[bool],
+    url_cols: &[crate::helpers::UrlCol],
     formula_cols: &[crate::helpers::FormulaColumn],
     n_data_cols: usize,
 ) -> PyResult<()> {
@@ -121,7 +117,11 @@ pub fn write_arrow_batch(
     for row in 0..num_rows {
         let row_u32 = start_row + row as u32;
         let use_band = layout.is_banded(row_u32);
-        let pal = if use_band { banded.unwrap_or(plain) } else { plain };
+        let pal = if use_band {
+            banded.unwrap_or(plain)
+        } else {
+            plain
+        };
         let overrides = if use_band && banded.is_some() {
             &banded_cols
         } else {
@@ -137,7 +137,13 @@ pub fn write_arrow_batch(
             let col_override = overrides[col_idx].or(text_fmt);
 
             if column.is_null(row) {
-                write_string_opt(worksheet, row_u32, col_u16, "", text_fmt)?;
+                write_string_opt(
+                    worksheet,
+                    row_u32,
+                    col_u16,
+                    layout.reps().na_text(),
+                    text_fmt,
+                )?;
                 continue;
             }
 
@@ -149,13 +155,36 @@ pub fn write_arrow_batch(
             }
             // A url_columns entry turns text cells into links; anything that
             // is not a valid URL falls back to plain text.
-            let as_url = url_cols.get(col_idx).copied().unwrap_or(false);
+            let url_col = url_cols.get(col_idx).copied().unwrap_or_default();
+            let as_url = url_col.link;
+            // The display text is another column of this same row; only a
+            // string column can supply one, anything else shows the URL.
+            let url_text = url_col.text_col.and_then(|ti| {
+                let c = columns.get(ti)?;
+                if c.is_null(row) {
+                    return None;
+                }
+                // Only a string column can supply display text, and which
+                // string kind depends on the producer: polars gives Utf8,
+                // pandas gives Utf8View.
+                match kinds.get(ti)? {
+                    ColKind::Utf8 => Some(c.as_string::<i32>().value(row)),
+                    ColKind::LargeUtf8 => Some(c.as_string::<i64>().value(row)),
+                    ColKind::Utf8View => Some(c.as_string_view().value(row)),
+                    _ => None,
+                }
+            });
             macro_rules! write_str {
                 ($val:expr) => {{
                     let val: &str = $val;
                     if as_url && !val.is_empty() {
                         crate::helpers::write_url_or_text(
-                            worksheet, row_u32, col_u16, val, col_override,
+                            worksheet,
+                            row_u32,
+                            col_u16,
+                            val,
+                            col_override,
+                            url_text,
                         )?
                     } else {
                         write_string_opt(worksheet, row_u32, col_u16, val, col_override)?
@@ -184,6 +213,7 @@ pub fn write_arrow_batch(
                         col_u16,
                         val,
                         overrides[col_idx].or(pal.float.as_ref()),
+                        layout.reps(),
                     )?;
                 }
                 ColKind::Float64 => {
@@ -194,6 +224,7 @@ pub fn write_arrow_batch(
                         col_u16,
                         val,
                         overrides[col_idx].or(pal.float.as_ref()),
+                        layout.reps(),
                     )?;
                 }
                 ColKind::Bool => {
@@ -274,6 +305,7 @@ pub fn write_arrow_batch_csv(
     batch: &RecordBatch,
     delim: u8,
     sanitize: bool,
+    reps: crate::helpers::NumReps<'_>,
 ) -> PyResult<()> {
     let num_cols = batch.num_columns();
     let num_rows = batch.num_rows();
@@ -288,9 +320,12 @@ pub fn write_arrow_batch_csv(
             }
             let column = &columns[col_idx];
             if column.is_null(row) {
+                if let Some(text) = reps.na {
+                    crate::helpers::write_csv_escaped_guarded(output, text, sanitize);
+                }
                 continue;
             }
-            emit_arrow_cell_csv(output, column, kinds[col_idx], row, sanitize);
+            emit_arrow_cell_csv(output, column, kinds[col_idx], row, sanitize, reps);
         }
         output.push(b'\n');
     }
@@ -303,6 +338,7 @@ fn emit_arrow_cell_csv(
     kind: ColKind,
     row: usize,
     sanitize: bool,
+    reps: crate::helpers::NumReps<'_>,
 ) {
     use std::io::Write;
 
@@ -317,7 +353,13 @@ fn emit_arrow_cell_csv(
     macro_rules! emit_float {
         ($val:expr) => {{
             let v = $val;
-            if !v.is_nan() && !v.is_infinite() {
+            if v.is_nan() || v.is_infinite() {
+                // Without a representation the field stays empty, as it always
+                // has — matching the Records path exactly.
+                if let Some(text) = reps.text_for(v) {
+                    crate::helpers::write_csv_escaped_guarded(output, &text, sanitize);
+                }
+            } else {
                 let mut buf = ryu::Buffer::new();
                 output.extend_from_slice(buf.format(v).as_bytes());
             }
@@ -377,7 +419,9 @@ fn emit_arrow_cell_csv(
 fn timestamp_to_micros(column: &ArrayRef, unit: TimeUnit, row: usize) -> i64 {
     match unit {
         TimeUnit::Second => column.as_primitive::<TimestampSecondType>().value(row) * 1_000_000,
-        TimeUnit::Millisecond => column.as_primitive::<TimestampMillisecondType>().value(row) * 1_000,
+        TimeUnit::Millisecond => {
+            column.as_primitive::<TimestampMillisecondType>().value(row) * 1_000
+        }
         TimeUnit::Microsecond => column.as_primitive::<TimestampMicrosecondType>().value(row),
         TimeUnit::Nanosecond => column.as_primitive::<TimestampNanosecondType>().value(row) / 1_000,
     }

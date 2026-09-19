@@ -59,6 +59,42 @@ MergeRange = Union[
 """One merged cell range: ``(first_row, first_col, last_row, last_col, value)``,
 optionally followed by a :class:`Format`."""
 
+ConditionalRule = Dict[str, Any]
+"""One conditional-formatting rule; see :func:`write_worksheet` for the keys."""
+
+ConditionalFormats = Dict[str, Union[ConditionalRule, List[ConditionalRule]]]
+"""Conditional formats keyed by column name."""
+
+Charts = List[Dict[str, Any]]
+"""Charts anchored to a cell."""
+
+Sparklines = Dict[str, Dict[str, Any]]
+"""Per-row trend charts, by the column they are drawn in."""
+
+Notes = Dict[str, Union[str, Dict[str, Any]]]
+"""Header-cell notes, by column name."""
+
+Images = List[Dict[str, Any]]
+"""Images anchored to cells."""
+
+Outline = Dict[str, Any]
+"""Row and column grouping; see :func:`write_worksheet` for the keys."""
+
+DataValidations = Dict[str, Dict[str, Any]]
+"""Data validation rules keyed by column name."""
+
+SheetView = Dict[str, Any]
+"""Screen presentation; see :func:`write_worksheet` for the keys."""
+
+IgnoreErrors = Union[List[str], Dict[str, str]]
+"""Error indicators to suppress, by column."""
+
+PageSetup = Dict[str, Any]
+"""Page and print settings; see :func:`write_worksheet` for the keys."""
+
+UrlColumns = Union[List[str], Dict[str, str]]
+"""Link columns — a list of column names, or ``{url column: display-text column}``."""
+
 SheetData = Union[Records, DataFrame]
 """Data accepted per sheet – either :data:`Records` or a :data:`DataFrame`."""
 
@@ -159,11 +195,23 @@ def write_worksheet(
     row_formats: Optional[Dict[int, Format]] = None,
     banded_rows: Optional[str] = None,
     autofilter: bool = False,
-    url_columns: Optional[List[str]] = None,
+    url_columns: Optional[UrlColumns] = None,
     totals_row: Optional[Dict[str, str]] = None,
     totals_label: Optional[str] = None,
     totals_format: Optional[Format] = None,
     formula_columns: Optional[Dict[str, str]] = None,
+    na_rep: Optional[str] = None,
+    inf_value: Optional[str] = None,
+    page_setup: Optional[PageSetup] = None,
+    conditional_formats: Optional[ConditionalFormats] = None,
+    sheet_view: Optional[SheetView] = None,
+    ignore_errors: Optional[IgnoreErrors] = None,
+    data_validations: Optional[DataValidations] = None,
+    outline: Optional[Outline] = None,
+    notes: Optional[Notes] = None,
+    images: Optional[Images] = None,
+    sparklines: Optional[Sparklines] = None,
+    charts: Optional[Charts] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -193,14 +241,167 @@ def write_worksheet(
         row_formats: ``{row_index: Format}`` applied to the whole row.
         banded_rows: Background colour shaded onto every other data row.
         autofilter: Add filter dropdowns over the header row and its data.
-        url_columns: Column names whose text cells become clickable links.
-            Values Excel rejects fall back to plain text.
+        url_columns: Columns whose text cells become clickable links. A list
+            names them and the cell shows the URL; a dict maps each link column
+            to the column holding its display text
+            (``{"url": "product_name"}``). Values Excel rejects fall back to
+            plain text.
         totals_row: ``{column_name: aggregate}`` written as formulas below the
             data. Valid: sum, average, count, min, max, product, stdev.
         totals_label: Text for the first column of the totals row.
         totals_format: Format applied to the whole totals row.
         formula_columns: ``{header: formula}`` appended after the data, one
             formula per row. ``{row}``/``{first}`` are substituted.
+        na_rep: Text written for a missing value — ``None``, an Arrow null, or
+            a float ``NaN``, which are deliberately one knob: pandas turns NaN
+            in a float column into an Arrow null, so a setting that caught only
+            true NaN would do nothing on the most common input there is.
+            Default ``None`` leaves the cell empty, as every earlier version
+            did, which makes a missing value indistinguishable from a blank.
+        inf_value: Text written for ``inf``; ``-inf`` gets the same text with a
+            ``-`` in front, matching Excel's own ``INF``/``-INF``.
+        page_setup: Page and print settings, as one mapping — Excel has about
+            twenty of them and a keyword each would double this signature.
+            Keys: ``landscape``, ``paper_size``, ``margins`` (a dict of
+            ``left``/``right``/``top``/``bottom``/``header``/``footer``, any
+            omitted one keeping Excel's default), ``print_area``
+            (``(first_row, first_col, last_row, last_col)``), ``repeat_rows``
+            and ``repeat_columns`` (an index or a ``(first, last)`` pair),
+            ``fit_to_pages`` (``(width, height)``; ``0`` lets that dimension
+            run on), ``scale``, ``center_horizontally``, ``center_vertically``,
+            ``print_gridlines``, ``print_headings``, ``first_page_number``,
+            ``header`` and ``footer`` (Excel's ``&``-codes, e.g.
+            ``"&RPage &P of &N"``). An unknown key raises, and so does setting
+            ``scale`` together with ``fit_to_pages``, which Excel cannot honour
+            at once.
+        conditional_formats: Per-column conditional formatting, as
+            ``{column: rule}`` or ``{column: [rule, rule]}``. A rule is a dict
+            with a ``type``:
+
+            - ``cell`` — ``criteria`` (``==``, ``!=``, ``>``, ``>=``, ``<``,
+              ``<=``, ``between``, ``not_between``) plus ``value``, or ``min``
+              and ``max`` for the two range criteria, and a ``format``
+            - ``data_bar`` — optional ``color`` and ``bar_only``
+            - ``2_color_scale`` / ``3_color_scale`` — optional ``min_color``,
+              ``mid_color``, ``max_color``
+            - ``text`` — ``criteria`` (``contains``, ``does_not_contain``,
+              ``begins_with``, ``ends_with``), ``value``, ``format``
+            - ``top`` — ``criteria`` (``top``, ``bottom``, ``top_percent``,
+              ``bottom_percent``, default ``top``), ``value`` (default 10)
+            - ``average`` — ``criteria`` (``above``, ``below``,
+              ``equal_or_above``, ``equal_or_below``)
+            - ``duplicate`` / ``unique``
+
+            Rules cover the column's data rows only, never the header, and the
+            range follows the rows actually written. An unknown column warns
+            and is skipped; an unknown type or criteria raises.
+        sheet_view: How the sheet presents on screen, as one mapping:
+            ``tab_color``, ``gridlines`` (show them on screen), ``zoom``,
+            ``right_to_left``, ``hidden``, ``selected``. Kept apart from
+            ``page_setup``, which is about paper. An unknown key raises, as
+            does ``hidden`` together with ``selected`` — Excel rejects a
+            workbook whose active sheet is hidden.
+        ignore_errors: Suppress Excel's green error triangles on a column.
+            A list of column names means ``number_stored_as_text``, which is
+            the reason anyone reaches for this: an ID, SKU or postcode column
+            is digits stored as text on purpose. A dict maps a column to one
+            error name instead — ``formula_error``, ``formula_differs``,
+            ``formula_refers_to_empty_cells``, ``formula_omits_cells``,
+            ``data_validation_error``, ``two_digit_text_year``,
+            ``unlocked_cells_with_formula``, ``inconsistent_column_formula``.
+            One name per column, never a list: Excel allows a single ignore
+            rule per cell. Covers the data rows only, and an unknown column
+            warns and is skipped.
+        data_validations: Per-column data validation, as ``{column: rule}``.
+            A rule is a dict with a ``type``:
+
+            - ``list`` — ``values``, a list of strings; this is the dropdown,
+              and the reason most people want the feature. Excel caps the
+              inline list at 255 characters including separators, and a longer
+              one raises rather than producing a file Excel refuses to open
+            - ``whole_number`` / ``decimal`` / ``text_length`` — ``criteria``
+              (``==``, ``!=``, ``>``, ``>=``, ``<``, ``<=``, ``between``,
+              ``not_between``) with ``value``, or ``min`` and ``max`` for the
+              two range criteria. A fraction given to ``whole_number`` or
+              ``text_length`` raises instead of being truncated
+            - ``custom`` — ``formula``
+            - ``any`` — accepts anything, useful only to carry a message
+
+            Any rule also takes ``input_title``, ``input_message``,
+            ``error_title``, ``error_message``, ``error_style``
+            (``stop``, ``warning``, ``information``), ``ignore_blank`` and
+            ``show_dropdown``. Rules cover the data rows only, never the
+            header. An unknown column warns and is skipped; an unknown type or
+            criteria raises.
+        outline: Collapsible row and column groups — the +/- brackets in
+            Excel's margin — as one mapping:
+
+            - ``rows`` — a list of ``{"from": int, "to": int}`` by 0-based
+              sheet row, matching ``row_heights``, plus optional ``collapsed``
+            - ``columns`` — a list of ``{"from": name, "to": name}`` by header
+              name, plus optional ``collapsed``
+            - ``symbols_above`` / ``symbols_to_left`` — which side the summary
+              row or column sits on
+
+            NOTE: asking for a row group takes the sheet out of constant-memory
+            mode, the same trade-off as ``dedupe_strings``. The constant-memory
+            row writer emits ``hidden`` but not ``outlineLevel``, so a
+            collapsed group there would leave hidden rows with no bracket to
+            reopen them. Column groups carry no such cost. An unknown column
+            name warns and is skipped.
+        notes: Notes on header cells, as ``{column: text}`` — where you say
+            what a column means without widening it or adding a legend sheet.
+            The value may instead be a dict with ``text`` plus any of
+            ``author``, ``width``, ``height``, ``visible`` and
+            ``background_color``. An unknown column warns and is skipped.
+        images: Images anchored to cells, as a list of dicts. Each needs
+            ``path`` or ``data`` (raw bytes, for a logo already in memory),
+            and takes ``row`` and ``col`` (0-based, default 0), ``scale`` or
+            the per-axis ``scale_x``/``scale_y``, ``fit_to_cell`` with
+            ``keep_aspect_ratio``, ``alt_text`` and ``url``. Images are placed
+            by index rather than by column name, since they float above the
+            grid instead of belonging to a column. Identical images are stored
+            once.
+        sparklines: A one-cell chart per data row, as ``{column: rule}``.
+            The column is one you left empty in the records, and ``from`` and
+            ``to`` name the span each row summarises::
+
+                rows = [{"q1": 1, "q2": 5, "q3": 3, "q4": 8, "trend": None}]
+                sparklines={"trend": {"from": "q1", "to": "q4"}}
+
+            Also takes ``type`` (``line``, ``column``, ``win_lose``),
+            ``color``, ``style``, and the toggles ``high_point``,
+            ``low_point``, ``first_point``, ``last_point``, ``markers``,
+            ``negative_points``, ``axis`` and ``right_to_left``.
+
+            The target column has to exist already: appending one would mean
+            reaching into the header assembly and column accounting that
+            ``formula_columns`` uses, in both row loops, which is far more than
+            the feature is worth. An unknown column warns and is skipped.
+        charts: Charts anchored to a cell, as a list of dicts. Each needs a
+            ``type`` and a ``series``::
+
+                charts=[{"type": "column", "series": ["q1", "q2"],
+                         "categories": "region", "title": "Quarterly"}]
+
+            ``series`` is a list of column names, or of dicts with ``values``
+            and an optional ``name`` — left out, the series name links to that
+            column's header cell, so the legend follows the header.
+            ``categories`` names the column used for the axis labels.
+
+            Types: ``area``, ``bar``, ``column``, ``line`` (each also with
+            ``_stacked`` and ``_percent_stacked``), ``pie``, ``doughnut``,
+            ``radar``, ``radar_with_markers``, ``radar_filled``, ``scatter``,
+            ``scatter_smooth``, ``stock``.
+
+            Also takes ``row``/``col``, ``title``, ``x_axis``, ``y_axis``,
+            ``width``, ``height``, ``style`` and ``legend``. Left unplaced, a
+            chart lands one column clear of the data and level with the header
+            rather than on top of the table. Series cover the data rows only.
+            An unknown column warns and skips that chart, since a chart missing
+            a series draws a misleading picture. A scatter chart is refused
+            without ``categories`` — they are its x values rather than labels,
+            so there is nothing to default them to.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -232,11 +433,23 @@ def write_worksheets(
     row_formats: Optional[Dict[str, Dict[int, Format]]] = None,
     banded_rows: Optional[Dict[str, str]] = None,
     autofilter: Optional[Dict[str, bool]] = None,
-    url_columns: Optional[Dict[str, List[str]]] = None,
+    url_columns: Optional[Dict[str, UrlColumns]] = None,
     totals_row: Optional[Dict[str, Dict[str, str]]] = None,
     totals_label: Optional[Dict[str, str]] = None,
     totals_format: Optional[Dict[str, Format]] = None,
     formula_columns: Optional[Dict[str, Dict[str, str]]] = None,
+    na_rep: Optional[str] = None,
+    inf_value: Optional[str] = None,
+    page_setup: Optional[Dict[str, PageSetup]] = None,
+    conditional_formats: Optional[Dict[str, ConditionalFormats]] = None,
+    sheet_view: Optional[Dict[str, SheetView]] = None,
+    ignore_errors: Optional[Dict[str, IgnoreErrors]] = None,
+    data_validations: Optional[Dict[str, DataValidations]] = None,
+    outline: Optional[Dict[str, Outline]] = None,
+    notes: Optional[Dict[str, Notes]] = None,
+    images: Optional[Dict[str, Images]] = None,
+    sparklines: Optional[Dict[str, Sparklines]] = None,
+    charts: Optional[Dict[str, Charts]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -264,6 +477,156 @@ def write_worksheets(
         totals_label: Per-sheet totals label — dict keyed by sheet name.
         totals_format: Per-sheet totals row format — dict keyed by sheet name.
         formula_columns: Per-sheet computed columns — dict keyed by sheet name.
+        na_rep: Text written for a missing value — ``None``, an Arrow null, or
+            a float ``NaN``, which are deliberately one knob: pandas turns NaN
+            in a float column into an Arrow null, so a setting that caught only
+            true NaN would do nothing on the most common input there is.
+            Default ``None`` leaves the cell empty, as every earlier version
+            did, which makes a missing value indistinguishable from a blank.
+        inf_value: Text written for ``inf``; ``-inf`` gets the same text with a
+            ``-`` in front, matching Excel's own ``INF``/``-INF``.
+        page_setup: Page and print settings, as one mapping — Excel has about
+            twenty of them and a keyword each would double this signature.
+            Keys: ``landscape``, ``paper_size``, ``margins`` (a dict of
+            ``left``/``right``/``top``/``bottom``/``header``/``footer``, any
+            omitted one keeping Excel's default), ``print_area``
+            (``(first_row, first_col, last_row, last_col)``), ``repeat_rows``
+            and ``repeat_columns`` (an index or a ``(first, last)`` pair),
+            ``fit_to_pages`` (``(width, height)``; ``0`` lets that dimension
+            run on), ``scale``, ``center_horizontally``, ``center_vertically``,
+            ``print_gridlines``, ``print_headings``, ``first_page_number``,
+            ``header`` and ``footer`` (Excel's ``&``-codes, e.g.
+            ``"&RPage &P of &N"``). An unknown key raises, and so does setting
+            ``scale`` together with ``fit_to_pages``, which Excel cannot honour
+            at once.
+        conditional_formats: Per-column conditional formatting, as
+            ``{column: rule}`` or ``{column: [rule, rule]}``. A rule is a dict
+            with a ``type``:
+
+            - ``cell`` — ``criteria`` (``==``, ``!=``, ``>``, ``>=``, ``<``,
+              ``<=``, ``between``, ``not_between``) plus ``value``, or ``min``
+              and ``max`` for the two range criteria, and a ``format``
+            - ``data_bar`` — optional ``color`` and ``bar_only``
+            - ``2_color_scale`` / ``3_color_scale`` — optional ``min_color``,
+              ``mid_color``, ``max_color``
+            - ``text`` — ``criteria`` (``contains``, ``does_not_contain``,
+              ``begins_with``, ``ends_with``), ``value``, ``format``
+            - ``top`` — ``criteria`` (``top``, ``bottom``, ``top_percent``,
+              ``bottom_percent``, default ``top``), ``value`` (default 10)
+            - ``average`` — ``criteria`` (``above``, ``below``,
+              ``equal_or_above``, ``equal_or_below``)
+            - ``duplicate`` / ``unique``
+
+            Rules cover the column's data rows only, never the header, and the
+            range follows the rows actually written. An unknown column warns
+            and is skipped; an unknown type or criteria raises.
+        sheet_view: How the sheet presents on screen, as one mapping:
+            ``tab_color``, ``gridlines`` (show them on screen), ``zoom``,
+            ``right_to_left``, ``hidden``, ``selected``. Kept apart from
+            ``page_setup``, which is about paper. An unknown key raises, as
+            does ``hidden`` together with ``selected`` — Excel rejects a
+            workbook whose active sheet is hidden.
+        ignore_errors: Suppress Excel's green error triangles on a column.
+            A list of column names means ``number_stored_as_text``, which is
+            the reason anyone reaches for this: an ID, SKU or postcode column
+            is digits stored as text on purpose. A dict maps a column to one
+            error name instead — ``formula_error``, ``formula_differs``,
+            ``formula_refers_to_empty_cells``, ``formula_omits_cells``,
+            ``data_validation_error``, ``two_digit_text_year``,
+            ``unlocked_cells_with_formula``, ``inconsistent_column_formula``.
+            One name per column, never a list: Excel allows a single ignore
+            rule per cell. Covers the data rows only, and an unknown column
+            warns and is skipped.
+        data_validations: Per-column data validation, as ``{column: rule}``.
+            A rule is a dict with a ``type``:
+
+            - ``list`` — ``values``, a list of strings; this is the dropdown,
+              and the reason most people want the feature. Excel caps the
+              inline list at 255 characters including separators, and a longer
+              one raises rather than producing a file Excel refuses to open
+            - ``whole_number`` / ``decimal`` / ``text_length`` — ``criteria``
+              (``==``, ``!=``, ``>``, ``>=``, ``<``, ``<=``, ``between``,
+              ``not_between``) with ``value``, or ``min`` and ``max`` for the
+              two range criteria. A fraction given to ``whole_number`` or
+              ``text_length`` raises instead of being truncated
+            - ``custom`` — ``formula``
+            - ``any`` — accepts anything, useful only to carry a message
+
+            Any rule also takes ``input_title``, ``input_message``,
+            ``error_title``, ``error_message``, ``error_style``
+            (``stop``, ``warning``, ``information``), ``ignore_blank`` and
+            ``show_dropdown``. Rules cover the data rows only, never the
+            header. An unknown column warns and is skipped; an unknown type or
+            criteria raises.
+        outline: Collapsible row and column groups — the +/- brackets in
+            Excel's margin — as one mapping:
+
+            - ``rows`` — a list of ``{"from": int, "to": int}`` by 0-based
+              sheet row, matching ``row_heights``, plus optional ``collapsed``
+            - ``columns`` — a list of ``{"from": name, "to": name}`` by header
+              name, plus optional ``collapsed``
+            - ``symbols_above`` / ``symbols_to_left`` — which side the summary
+              row or column sits on
+
+            NOTE: asking for a row group takes the sheet out of constant-memory
+            mode, the same trade-off as ``dedupe_strings``. The constant-memory
+            row writer emits ``hidden`` but not ``outlineLevel``, so a
+            collapsed group there would leave hidden rows with no bracket to
+            reopen them. Column groups carry no such cost. An unknown column
+            name warns and is skipped.
+        notes: Notes on header cells, as ``{column: text}`` — where you say
+            what a column means without widening it or adding a legend sheet.
+            The value may instead be a dict with ``text`` plus any of
+            ``author``, ``width``, ``height``, ``visible`` and
+            ``background_color``. An unknown column warns and is skipped.
+        images: Images anchored to cells, as a list of dicts. Each needs
+            ``path`` or ``data`` (raw bytes, for a logo already in memory),
+            and takes ``row`` and ``col`` (0-based, default 0), ``scale`` or
+            the per-axis ``scale_x``/``scale_y``, ``fit_to_cell`` with
+            ``keep_aspect_ratio``, ``alt_text`` and ``url``. Images are placed
+            by index rather than by column name, since they float above the
+            grid instead of belonging to a column. Identical images are stored
+            once.
+        sparklines: A one-cell chart per data row, as ``{column: rule}``.
+            The column is one you left empty in the records, and ``from`` and
+            ``to`` name the span each row summarises::
+
+                rows = [{"q1": 1, "q2": 5, "q3": 3, "q4": 8, "trend": None}]
+                sparklines={"trend": {"from": "q1", "to": "q4"}}
+
+            Also takes ``type`` (``line``, ``column``, ``win_lose``),
+            ``color``, ``style``, and the toggles ``high_point``,
+            ``low_point``, ``first_point``, ``last_point``, ``markers``,
+            ``negative_points``, ``axis`` and ``right_to_left``.
+
+            The target column has to exist already: appending one would mean
+            reaching into the header assembly and column accounting that
+            ``formula_columns`` uses, in both row loops, which is far more than
+            the feature is worth. An unknown column warns and is skipped.
+        charts: Charts anchored to a cell, as a list of dicts. Each needs a
+            ``type`` and a ``series``::
+
+                charts=[{"type": "column", "series": ["q1", "q2"],
+                         "categories": "region", "title": "Quarterly"}]
+
+            ``series`` is a list of column names, or of dicts with ``values``
+            and an optional ``name`` — left out, the series name links to that
+            column's header cell, so the legend follows the header.
+            ``categories`` names the column used for the axis labels.
+
+            Types: ``area``, ``bar``, ``column``, ``line`` (each also with
+            ``_stacked`` and ``_percent_stacked``), ``pie``, ``doughnut``,
+            ``radar``, ``radar_with_markers``, ``radar_filled``, ``scatter``,
+            ``scatter_smooth``, ``stock``.
+
+            Also takes ``row``/``col``, ``title``, ``x_axis``, ``y_axis``,
+            ``width``, ``height``, ``style`` and ``legend``. Left unplaced, a
+            chart lands one column clear of the data and level with the header
+            rather than on top of the table. Series cover the data rows only.
+            An unknown column warns and skips that chart, since a chart missing
+            a series draws a misleading picture. A scatter chart is refused
+            without ``categories`` — they are its x values rather than labels,
+            so there is nothing to default them to.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -286,6 +649,11 @@ def write_csv(
     file_name: FileTarget,
     delimiter: Optional[str] = None,
     sanitize_formulas: bool = False,
+    bom: bool = False,
+    columns: Optional[List[str]] = None,
+    header: bool = True,
+    na_rep: Optional[str] = None,
+    inf_value: Optional[str] = None,
 ) -> None:
     """Write data to a CSV file.
 
@@ -297,6 +665,25 @@ def write_csv(
         sanitize_formulas: When ``True``, string fields starting with
             ``= + - @`` are prefixed with ``'`` to neutralize CSV formula
             injection. Off by default (output stays byte-identical).
+        bom: Prefix the UTF-8 byte order mark. Excel on Windows reads a BOM-less
+            UTF-8 file as the system code page, which turns non-ASCII text into
+            mojibake; this is the fix. Off by default so output stays
+            byte-identical for pipelines that parse it.
+        columns: Select and order the output columns by name. A name that is
+            not in the data raises ``ValueError`` — unlike the styling options,
+            this one decides the shape of the file, so a silent drop would hand
+            back something that looks complete. Works on every input type,
+            and stays zero-copy on the Arrow path.
+        header: Write the header row. Set ``False`` to append to an existing
+            file or to feed a reader that supplies its own names.
+        na_rep: Text written for a missing value — ``None``, an Arrow null, or
+            a float ``NaN``, which are deliberately one knob: pandas turns NaN
+            in a float column into an Arrow null, so a setting that caught only
+            true NaN would do nothing on the most common input there is.
+            Default ``None`` leaves the cell empty, as every earlier version
+            did, which makes a missing value indistinguishable from a blank.
+        inf_value: Text written for ``inf``; ``-inf`` gets the same text with a
+            ``-`` in front, matching Excel's own ``INF``/``-INF``.
 
     Examples:
         >>> write_csv([{"Name": "Alice", "Age": 30}], "out.csv")

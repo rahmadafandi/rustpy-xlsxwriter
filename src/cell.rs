@@ -27,10 +27,7 @@ pub trait CellWriter {
 /// for the first-row fast path. Order is significant:
 /// - `bool` before `int` (Python `bool` is a subclass of `int`),
 /// - native casts before numpy-scalar `extract` fallbacks.
-pub fn classify_and_write<W: CellWriter>(
-    value: &Bound<'_, PyAny>,
-    w: &mut W,
-) -> PyResult<ColType> {
+pub fn classify_and_write<W: CellWriter>(value: &Bound<'_, PyAny>, w: &mut W) -> PyResult<ColType> {
     if value.is_none() {
         w.write_none()?;
         return Ok(ColType::Unknown);

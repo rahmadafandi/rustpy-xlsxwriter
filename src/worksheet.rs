@@ -8,8 +8,7 @@ use crate::cell::{classify_and_write, try_cached, CellWriter};
 use crate::data_types::{FreezePanesConfig, WorksheetData};
 use crate::helpers::{
     py_date_to_excel, py_datetime_to_excel, save_workbook, write_all_headers, write_bool_opt,
-    write_datetime_opt, write_num, write_number_opt, write_string_opt, write_url_or_text,
-    ColType,
+    write_datetime_opt, write_num, write_number_opt, write_string_opt, write_url_or_text, ColType,
 };
 use crate::utils::ensure_valid_sheet_name;
 
@@ -34,12 +33,19 @@ struct ExcelCell<'a> {
     datetime_fmt: &'a Format,
     datetime_cols_set: &'a mut HashSet<u16>,
     col_override: Option<&'a Format>,
+    /// Text for NaN and the infinities; see [`crate::helpers::NumReps`].
+    reps: crate::helpers::NumReps<'a>,
     /// When banding is on, datetimes are formatted per cell instead of via a
     /// one-shot column format — a column format is fixed for every row and so
     /// cannot alternate.
     per_cell_datetime: bool,
     /// This column was listed in `url_columns`, so strings become links.
     is_url: bool,
+    /// Display text for the link, when `url_columns` named a text column.
+    /// Owned: it comes from another cell of the same row, whose Python object
+    /// does not outlive the lookup. One allocation per link cell, and link
+    /// columns are few.
+    url_text: Option<String>,
 }
 
 impl ExcelCell<'_> {
@@ -71,7 +77,17 @@ impl ExcelCell<'_> {
 
     fn put_string(&mut self, s: &str) -> PyResult<()> {
         if self.is_url && !s.is_empty() {
-            return write_url_or_text(self.worksheet, self.row, self.col, s, self.text_fmt);
+            return write_url_or_text(
+                self.worksheet,
+                self.row,
+                self.col,
+                s,
+                // A column format has to win here exactly as it does for a
+                // plain string; passing only text_fmt silently dropped
+                // `column_formats` on any url column.
+                self.col_override.or(self.text_fmt),
+                self.url_text.as_deref(),
+            );
         }
         match self.text_fmt {
             Some(fmt) => self
@@ -89,7 +105,7 @@ impl ExcelCell<'_> {
 
 impl CellWriter for ExcelCell<'_> {
     fn write_none(&mut self) -> PyResult<()> {
-        self.put_string("")
+        self.put_string(self.reps.na_text())
     }
 
     fn write_str(&mut self, s: &str) -> PyResult<()> {
@@ -117,6 +133,7 @@ impl CellWriter for ExcelCell<'_> {
             self.col,
             f,
             self.col_override.or(self.float_fmt),
+            self.reps,
         )
     }
 
@@ -193,7 +210,7 @@ fn write_worksheet_content(
     column_formats: Option<&Bound<'_, PyAny>>,
     header_format: Option<&crate::format::Format>,
     layout: &crate::helpers::SheetLayout,
-    url_columns: Option<&Vec<String>>,
+    url_columns: Option<&Bound<'_, PyAny>>,
     formula_columns: Option<&Bound<'_, PyAny>>,
     py: Python,
 ) -> PyResult<()> {
@@ -235,74 +252,74 @@ fn write_worksheet_content(
             let arrow_ok = match reader {
                 Err(stream_err) => Err(stream_err),
                 Ok(reader) => (|| -> PyResult<()> {
-                let schema = reader.schema();
-                final_headers = schema
-                    .fields()
-                    .iter()
-                    .map(|f| f.name().to_string())
-                    .collect();
-                for fc in &formula_cols {
-                    final_headers.push(fc.header.clone());
-                }
-                let n_data_cols = final_headers.len() - formula_cols.len();
-                write_all_headers(
-                    worksheet,
-                    header_row,
-                    &final_headers,
-                    bold_headers,
-                    &bold_fmt,
-                    index_columns,
-                    header_format.map(|h| &h.inner),
-                )?;
-
-                let mut current_row: u32 = layout.first_data_row();
-                let mut formats_set = false;
-
-                // Resolve per-column formats ONCE (after headers are known).
-                // Apply set_column_format BEFORE the first batch — constant memory mode requires
-                // column formats to be set before their data rows.
-                let col_formats: Vec<Option<crate::format::Format>> =
-                    crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
-                let (plain, banded) = crate::format::build_palettes(
-                    &col_formats,
-                    float_fmt.as_ref(),
-                    &datetime_fmt,
-                    layout.band_color.as_deref(),
-                )?;
-                let url_cols =
-                    crate::helpers::resolve_url_columns(url_columns, &final_headers, py)?;
-
-                for batch_result in reader {
-                    let batch = batch_result.map_err(crate::arrow_ffi::batch_read_err)?;
-
-                    if !formats_set {
-                        // Auto datetime column formats first…
-                        crate::arrow_writer::set_datetime_column_formats(
-                            worksheet,
-                            &batch,
-                            &datetime_fmt,
-                        )?;
-                        // …then explicit column_formats override them (and any other cols).
-                        crate::format::apply_column_formats(worksheet, &col_formats)?;
-                        formats_set = true;
+                    let schema = reader.schema();
+                    final_headers = schema
+                        .fields()
+                        .iter()
+                        .map(|f| f.name().to_string())
+                        .collect();
+                    for fc in &formula_cols {
+                        final_headers.push(fc.header.clone());
                     }
-
-                    crate::arrow_writer::write_arrow_batch(
+                    let n_data_cols = final_headers.len() - formula_cols.len();
+                    write_all_headers(
                         worksheet,
-                        &batch,
-                        current_row,
-                        &plain,
-                        banded.as_ref(),
-                        layout,
-                        &url_cols,
-                        &formula_cols,
-                        n_data_cols,
+                        header_row,
+                        &final_headers,
+                        bold_headers,
+                        &bold_fmt,
+                        index_columns,
+                        header_format.map(|h| &h.inner),
                     )?;
 
-                    current_row += batch.num_rows() as u32;
-                }
-                data_rows = current_row - layout.first_data_row();
-                Ok(())
+                    let mut current_row: u32 = layout.first_data_row();
+                    let mut formats_set = false;
+
+                    // Resolve per-column formats ONCE (after headers are known).
+                    // Apply set_column_format BEFORE the first batch — constant memory mode requires
+                    // column formats to be set before their data rows.
+                    let col_formats: Vec<Option<crate::format::Format>> =
+                        crate::format::resolve_column_formats(column_formats, &final_headers, py)?;
+                    let (plain, banded) = crate::format::build_palettes(
+                        &col_formats,
+                        float_fmt.as_ref(),
+                        &datetime_fmt,
+                        layout.band_color.as_deref(),
+                    )?;
+                    let url_cols =
+                        crate::helpers::resolve_url_columns(url_columns, &final_headers, py)?;
+
+                    for batch_result in reader {
+                        let batch = batch_result.map_err(crate::arrow_ffi::batch_read_err)?;
+
+                        if !formats_set {
+                            // Auto datetime column formats first…
+                            crate::arrow_writer::set_datetime_column_formats(
+                                worksheet,
+                                &batch,
+                                &datetime_fmt,
+                            )?;
+                            // …then explicit column_formats override them (and any other cols).
+                            crate::format::apply_column_formats(worksheet, &col_formats)?;
+                            formats_set = true;
+                        }
+
+                        crate::arrow_writer::write_arrow_batch(
+                            worksheet,
+                            &batch,
+                            current_row,
+                            &plain,
+                            banded.as_ref(),
+                            layout,
+                            &url_cols,
+                            &formula_cols,
+                            n_data_cols,
+                        )?;
+
+                        current_row += batch.num_rows() as u32;
+                    }
+                    data_rows = current_row - layout.first_data_row();
+                    Ok(())
                 })(),
             };
 
@@ -315,20 +332,46 @@ fn write_worksheet_content(
                 }
                 if polars {
                     write_dataframe(
-                        worksheet, py, stream_obj, &mut final_headers, &mut data_rows,
-                        column_formats, float_fmt.as_ref(), &datetime_fmt,
-                        &mut datetime_cols_set, bold_headers, &bold_fmt, index_columns,
-                        header_format, layout, url_columns, &formula_cols,
-                        "get_column", "to_list",
+                        worksheet,
+                        py,
+                        stream_obj,
+                        &mut final_headers,
+                        &mut data_rows,
+                        column_formats,
+                        float_fmt.as_ref(),
+                        &datetime_fmt,
+                        &mut datetime_cols_set,
+                        bold_headers,
+                        &bold_fmt,
+                        index_columns,
+                        header_format,
+                        layout,
+                        url_columns,
+                        &formula_cols,
+                        "get_column",
+                        "to_list",
                         |dtype| Ok(polars_kind(&dtype.to_string())),
                     )?;
                 } else {
                     write_dataframe(
-                        worksheet, py, stream_obj, &mut final_headers, &mut data_rows,
-                        column_formats, float_fmt.as_ref(), &datetime_fmt,
-                        &mut datetime_cols_set, bold_headers, &bold_fmt, index_columns,
-                        header_format, layout, url_columns, &formula_cols,
-                        "__getitem__", "tolist",
+                        worksheet,
+                        py,
+                        stream_obj,
+                        &mut final_headers,
+                        &mut data_rows,
+                        column_formats,
+                        float_fmt.as_ref(),
+                        &datetime_fmt,
+                        &mut datetime_cols_set,
+                        bold_headers,
+                        &bold_fmt,
+                        index_columns,
+                        header_format,
+                        layout,
+                        url_columns,
+                        &formula_cols,
+                        "__getitem__",
+                        "tolist",
                         |dtype| {
                             let kind: String = dtype.getattr("kind")?.extract()?;
                             Ok(map_pandas_kind(kind.chars().next().unwrap_or('O')))
@@ -356,7 +399,7 @@ fn write_worksheet_content(
                 crate::format::RowPalette,
                 Option<crate::format::RowPalette>,
             )> = None;
-            let mut url_cols: Vec<bool> = Vec::new();
+            let mut url_cols: Vec<crate::helpers::UrlCol> = Vec::new();
             let mut n_data_cols: usize = 0;
 
             for (row_idx, row_res) in rows.enumerate() {
@@ -423,6 +466,8 @@ fn write_worksheet_content(
                     datetime_fmt: &pal.datetime,
                     datetime_cols_set: &mut datetime_cols_set,
                     col_override: None,
+                    url_text: None,
+                    reps: layout.reps(),
                     per_cell_datetime: banding,
                     is_url: false,
                 };
@@ -430,15 +475,23 @@ fn write_worksheet_content(
                 // Iterate the dict directly (insertion order == header order)
                 // to avoid allocating a fresh `values()` list per row.
                 for (col, (_key, value)) in row_dict.iter().enumerate() {
-                    let cached = col_types
-                        .get(col)
-                        .copied()
-                        .unwrap_or(ColType::Unknown);
+                    let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
 
                     sink.col = col as u16;
                     // Column format override: wins over float_fmt / datetime_fmt.
                     sink.col_override = pal.col(col);
-                    sink.is_url = url_cols.get(col).copied().unwrap_or(false);
+                    let url_col = url_cols.get(col).copied().unwrap_or_default();
+                    sink.is_url = url_col.link;
+                    // Display text lives in another column of this same row,
+                    // so it is looked up here rather than in the sink.
+                    sink.url_text = match url_col.text_col {
+                        Some(ti) => final_headers
+                            .get(ti)
+                            .and_then(|name| row_dict.get_item(name).ok().flatten())
+                            .and_then(|v| v.str().ok())
+                            .map(|v| v.to_string_lossy().into_owned()),
+                        None => None,
+                    };
 
                     if !try_cached(&value, cached, &mut sink)? {
                         let detected = classify_and_write(&value, &mut sink)?;
@@ -459,7 +512,6 @@ fn write_worksheet_content(
                 }
                 data_rows = row_idx as u32 + 1;
             }
-
         }
 
         WorksheetData::PandasDataFrame(df) => {
@@ -515,6 +567,27 @@ fn write_worksheet_content(
     }
 
     layout.apply_autofilter(worksheet, data_rows, final_headers.len())?;
+    layout
+        .conditional
+        .apply(worksheet, &final_headers, layout.header_row, data_rows, py)?;
+    layout
+        .ignore
+        .apply(worksheet, &final_headers, layout.header_row, data_rows, py)?;
+    layout
+        .validations
+        .apply(worksheet, &final_headers, layout.header_row, data_rows, py)?;
+    layout
+        .outline
+        .apply_columns(worksheet, &final_headers, py)?;
+    layout
+        .notes
+        .apply(worksheet, &final_headers, layout.header_row, py)?;
+    layout
+        .sparklines
+        .apply(worksheet, &final_headers, layout.header_row, data_rows, py)?;
+    layout
+        .charts
+        .apply(worksheet, &final_headers, layout.header_row, data_rows, py)?;
     layout.apply_totals(worksheet, &final_headers, data_rows, py)?;
 
     if freeze_row.is_some() || freeze_col.is_some() {
@@ -587,7 +660,7 @@ fn write_df_rows<F>(
     plain: &crate::format::RowPalette,
     banded: Option<&crate::format::RowPalette>,
     layout: &crate::helpers::SheetLayout,
-    url_cols: &[bool],
+    url_cols: &[crate::helpers::UrlCol],
     formula_cols: &[crate::helpers::FormulaColumn],
     n_data_cols: usize,
 ) -> PyResult<()>
@@ -607,8 +680,7 @@ where
 
     // Per-column format override is fixed for the whole column *within a
     // palette* — resolve both variants once instead of per cell.
-    let plain_cols: Vec<Option<&Format>> =
-        (0..bound_cols.len()).map(|c| plain.col(c)).collect();
+    let plain_cols: Vec<Option<&Format>> = (0..bound_cols.len()).map(|c| plain.col(c)).collect();
     let banded_cols: Vec<Option<&Format>> = match banded {
         Some(b) => (0..bound_cols.len()).map(|c| b.col(c)).collect(),
         None => Vec::new(),
@@ -618,7 +690,11 @@ where
     for row in 0..nrows {
         let row_u32 = layout.first_data_row() + row as u32;
         let use_band = layout.is_banded(row_u32);
-        let pal = if use_band { banded.unwrap_or(plain) } else { plain };
+        let pal = if use_band {
+            banded.unwrap_or(plain)
+        } else {
+            plain
+        };
         let overrides = if use_band && banded.is_some() {
             &banded_cols
         } else {
@@ -630,22 +706,32 @@ where
             let col_u16 = col_idx as u16;
             let item = col_list.get(row)?;
             let col_override = overrides[col_idx];
+            let url_col = url_cols.get(col_idx).copied().unwrap_or_default();
+            // Display text sits in another column of this same row.
+            let url_text: Option<String> = match url_col.text_col {
+                Some(ti) => bound_cols
+                    .get(ti)
+                    .and_then(|c| c.get(row).ok())
+                    .and_then(|v| v.str().ok())
+                    .map(|v| v.to_string_lossy().into_owned()),
+                None => None,
+            };
 
             if item.is_none() {
-                write_string_opt(worksheet, row_u32, col_u16, "", text_fmt)?;
+                write_string_opt(
+                    worksheet,
+                    row_u32,
+                    col_u16,
+                    layout.reps().na_text(),
+                    text_fmt,
+                )?;
                 continue;
             }
 
             match kind_at(col_idx) {
                 ScalarKind::Int => {
                     let val: f64 = item.extract()?;
-                    write_number_opt(
-                        worksheet,
-                        row_u32,
-                        col_u16,
-                        val,
-                        col_override.or(text_fmt),
-                    )?;
+                    write_number_opt(worksheet, row_u32, col_u16, val, col_override.or(text_fmt))?;
                 }
                 ScalarKind::Float => {
                     let val: f64 = item.extract()?;
@@ -655,6 +741,7 @@ where
                         col_u16,
                         val,
                         col_override.or(pal.float.as_ref()),
+                        layout.reps(),
                     )?;
                 }
                 ScalarKind::Bool => {
@@ -672,13 +759,7 @@ where
                         let excel_dt = py_date_to_excel(d)?;
                         write_datetime_opt(worksheet, row_u32, col_u16, &excel_dt, dt_fmt)?;
                     } else {
-                        write_string_opt(
-                            worksheet,
-                            row_u32,
-                            col_u16,
-                            &item.to_string(),
-                            text_fmt,
-                        )?;
+                        write_string_opt(worksheet, row_u32, col_u16, &item.to_string(), text_fmt)?;
                     }
                 }
                 ScalarKind::Other => {
@@ -691,8 +772,10 @@ where
                         datetime_fmt: &pal.datetime,
                         datetime_cols_set: &mut *datetime_cols_set,
                         col_override,
+                        reps: layout.reps(),
                         per_cell_datetime: banding,
-                        is_url: url_cols.get(col_idx).copied().unwrap_or(false),
+                        is_url: url_col.link,
+                        url_text: url_text.clone(),
                     };
                     classify_and_write(&item, &mut sink)?;
                 }
@@ -736,7 +819,7 @@ fn write_dataframe<C>(
     index_columns: Option<&Vec<String>>,
     header_format: Option<&crate::format::Format>,
     layout: &crate::helpers::SheetLayout,
-    url_columns: Option<&Vec<String>>,
+    url_columns: Option<&Bound<'_, PyAny>>,
     formula_cols: &[crate::helpers::FormulaColumn],
     get_column_method: &str,
     to_list_method: &str,
@@ -862,7 +945,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None, sparklines = None, charts = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -890,15 +973,55 @@ pub fn write_worksheets(
     totals_label: Option<Bound<'_, pyo3::types::PyDict>>,
     totals_format: Option<Bound<'_, pyo3::types::PyDict>>,
     formula_columns: Option<Bound<'_, pyo3::types::PyDict>>,
+    na_rep: Option<String>,
+    inf_value: Option<String>,
+    page_setup: Option<Bound<'_, pyo3::types::PyDict>>,
+    conditional_formats: Option<Bound<'_, pyo3::types::PyDict>>,
+    sheet_view: Option<Bound<'_, pyo3::types::PyDict>>,
+    ignore_errors: Option<Bound<'_, pyo3::types::PyDict>>,
+    data_validations: Option<Bound<'_, pyo3::types::PyDict>>,
+    outline: Option<Bound<'_, pyo3::types::PyDict>>,
+    notes: Option<Bound<'_, pyo3::types::PyDict>>,
+    images: Option<Bound<'_, pyo3::types::PyDict>>,
+    sparklines: Option<Bound<'_, pyo3::types::PyDict>>,
+    charts: Option<Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
         ensure_valid_sheet_name(&sheet_name)?;
 
-        let dedupe = keyed_extract::<bool>(dedupe_strings.as_ref(), &sheet_name)?
-            .unwrap_or(false);
+        let dedupe = keyed_extract::<bool>(dedupe_strings.as_ref(), &sheet_name)?.unwrap_or(false);
 
-        let worksheet = if dedupe {
+        let sheet_header_row = keyed_extract::<u32>(header_row.as_ref(), &sheet_name)?.unwrap_or(0);
+        let sheet_band = keyed_extract::<String>(banded_rows.as_ref(), &sheet_name)?;
+        let layout = crate::helpers::resolve_layout(
+            sheet_header_row,
+            keyed_get(merge_ranges.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(row_heights.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(row_formats.as_ref(), &sheet_name)?.as_ref(),
+            sheet_band,
+            keyed_extract::<bool>(autofilter.as_ref(), &sheet_name)?.unwrap_or(false),
+            keyed_get(totals_row.as_ref(), &sheet_name)?.as_ref(),
+            keyed_extract::<String>(totals_label.as_ref(), &sheet_name)?,
+            keyed_format(totals_format.as_ref(), &sheet_name)?.map(|f| f.inner),
+            // Workbook-wide, like float_format: cloned per sheet because the
+            // layout owns its strings.
+            na_rep.clone(),
+            inf_value.clone(),
+            keyed_get(page_setup.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(conditional_formats.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(sheet_view.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(ignore_errors.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(data_validations.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(outline.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(notes.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(images.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(sparklines.as_ref(), &sheet_name)?.as_ref(),
+            keyed_get(charts.as_ref(), &sheet_name)?.as_ref(),
+        )?;
+
+        // Row groups need the buffered writer; see `needs_buffered_rows`.
+        let worksheet = if dedupe || layout.outline.needs_buffered_rows() {
             workbook.add_worksheet()
         } else {
             workbook.add_worksheet_with_constant_memory()
@@ -911,29 +1034,13 @@ pub fn write_worksheets(
             .unwrap_or_default();
 
         let sheet_uniform = keyed_extract::<f64>(column_width.as_ref(), &sheet_name)?;
-        let sheet_spec: Option<Bound<'_, PyAny>> =
-            keyed_get(column_widths.as_ref(), &sheet_name)?;
+        let sheet_spec: Option<Bound<'_, PyAny>> = keyed_get(column_widths.as_ref(), &sheet_name)?;
 
         let sheet_col_fmts: Option<Bound<'_, PyAny>> =
             keyed_get(column_formats.as_ref(), &sheet_name)?;
         let sheet_hdr_fmt = keyed_format(header_format.as_ref(), &sheet_name)?;
 
-        let sheet_header_row =
-            keyed_extract::<u32>(header_row.as_ref(), &sheet_name)?.unwrap_or(0);
-        let sheet_band = keyed_extract::<String>(banded_rows.as_ref(), &sheet_name)?;
-        let layout = crate::helpers::resolve_layout(
-            sheet_header_row,
-            keyed_get(merge_ranges.as_ref(), &sheet_name)?.as_ref(),
-            keyed_get(row_heights.as_ref(), &sheet_name)?.as_ref(),
-            keyed_get(row_formats.as_ref(), &sheet_name)?.as_ref(),
-            sheet_band,
-            keyed_extract::<bool>(autofilter.as_ref(), &sheet_name)?.unwrap_or(false),
-            keyed_get(totals_row.as_ref(), &sheet_name)?.as_ref(),
-            keyed_extract::<String>(totals_label.as_ref(), &sheet_name)?,
-            keyed_format(totals_format.as_ref(), &sheet_name)?.map(|f| f.inner),
-        )?;
-
-        let sheet_urls = keyed_extract::<Vec<String>>(url_columns.as_ref(), &sheet_name)?;
+        let sheet_urls = keyed_get(url_columns.as_ref(), &sheet_name)?;
 
         write_worksheet_content(
             worksheet,
@@ -963,7 +1070,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = true, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None, sparklines = None, charts = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -988,11 +1095,23 @@ pub fn write_worksheet(
     row_formats: Option<Bound<'_, PyAny>>,
     banded_rows: Option<String>,
     autofilter: bool,
-    url_columns: Option<Vec<String>>,
+    url_columns: Option<Bound<'_, PyAny>>,
     totals_row: Option<Bound<'_, PyAny>>,
     totals_label: Option<String>,
     totals_format: Option<Bound<'_, crate::format::Format>>,
     formula_columns: Option<Bound<'_, PyAny>>,
+    na_rep: Option<String>,
+    inf_value: Option<String>,
+    page_setup: Option<Bound<'_, PyAny>>,
+    conditional_formats: Option<Bound<'_, PyAny>>,
+    sheet_view: Option<Bound<'_, PyAny>>,
+    ignore_errors: Option<Bound<'_, PyAny>>,
+    data_validations: Option<Bound<'_, PyAny>>,
+    outline: Option<Bound<'_, PyAny>>,
+    notes: Option<Bound<'_, PyAny>>,
+    images: Option<Bound<'_, PyAny>>,
+    sparklines: Option<Bound<'_, PyAny>>,
+    charts: Option<Bound<'_, PyAny>>,
 ) -> PyResult<()> {
     let layout = crate::helpers::resolve_layout(
         header_row,
@@ -1004,9 +1123,22 @@ pub fn write_worksheet(
         totals_row.as_ref(),
         totals_label,
         totals_format.map(|f| f.borrow().inner.clone()),
+        na_rep,
+        inf_value,
+        page_setup.as_ref(),
+        conditional_formats.as_ref(),
+        sheet_view.as_ref(),
+        ignore_errors.as_ref(),
+        data_validations.as_ref(),
+        outline.as_ref(),
+        notes.as_ref(),
+        images.as_ref(),
+        sparklines.as_ref(),
+        charts.as_ref(),
     )?;
     let mut workbook = Workbook::new();
-    let worksheet = if dedupe_strings {
+    // Row groups need the buffered writer; see `needs_buffered_rows`.
+    let worksheet = if dedupe_strings || layout.outline.needs_buffered_rows() {
         workbook.add_worksheet()
     } else {
         workbook.add_worksheet_with_constant_memory()

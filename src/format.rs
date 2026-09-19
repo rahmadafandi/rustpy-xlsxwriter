@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use rust_xlsxwriter::{
-    Color, Format as XlsxFormat, FontScheme, FormatAlign, FormatBorder, FormatDiagonalBorder,
+    Color, FontScheme, Format as XlsxFormat, FormatAlign, FormatBorder, FormatDiagonalBorder,
     FormatPattern, FormatScript, FormatUnderline,
 };
 
@@ -162,8 +162,8 @@ fn parse_diagonal_type(s: &str) -> PyResult<FormatDiagonalBorder> {
         "border_up_down" => FormatDiagonalBorder::BorderUpDown,
         other => {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "invalid diagonal_type '{other}' (valid: none, border_up, border_down, border_up_down)"
-            )))
+            "invalid diagonal_type '{other}' (valid: none, border_up, border_down, border_up_down)"
+        )))
         }
     })
 }
@@ -181,7 +181,10 @@ fn parse_font_scheme(s: &str) -> PyResult<FontScheme> {
     })
 }
 
-/// Python-facing cell format. Chainable; each setter returns `self`.
+// Not a `///` doc comment: pyo3 turns those into `__doc__`, which then
+// shadows the richer stub entry in `rustpy_xlsxwriter.pyi` — the one
+// mypy, IDEs and the docs site all read. Keep the prose in one place.
+// Python-facing cell format. Chainable; each setter returns `self`.
 #[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct Format {
@@ -377,7 +380,10 @@ pub fn build_palettes(
 /// resolved. Used per-cell to let an explicit column format win over the
 /// sheet-wide float/datetime format.
 pub fn col_override(col_formats: &[Option<Format>], idx: usize) -> Option<&XlsxFormat> {
-    col_formats.get(idx).and_then(|o| o.as_ref()).map(|f| &f.inner)
+    col_formats
+        .get(idx)
+        .and_then(|o| o.as_ref())
+        .map(|f| &f.inner)
 }
 
 /// Apply resolved per-column formats to the worksheet via `set_column_format`.

@@ -16,6 +16,8 @@ from rustpy_xlsxwriter import FastExcel
 FastExcel("report.xlsx").sheet("Sheet1", records).save()
 ```
 
+**[Documentation](https://rahmadafandi.github.io/rustpy-xlsxwriter/)** · [Guide](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/dataframes/) · [API reference](https://rahmadafandi.github.io/rustpy-xlsxwriter/api/)
+
 ## Installation
 
 ```bash
@@ -144,20 +146,33 @@ build is younger — treat it as the newer option it is.
 - Custom datetime format (e.g. `"dd/mm/yyyy"`)
 - Bold headers and bold index columns
 - Freeze panes (rows, columns, per-sheet overrides)
+- Page and print setup (`page_setup=`): orientation, margins, repeat rows, fit-to-pages, headers/footers
+- Conditional formatting (`conditional_formats=`): data bars, colour scales, cell/text/top/average rules
+- Data validation (`data_validations=`): dropdowns, numeric and text-length rules
+- Outline grouping (`outline=`): collapsible row and column groups
+- Header notes (`notes=`) and cell-anchored images (`images=`, path or bytes)
+- Sparklines (`sparklines=`): a one-cell trend chart per row
+- Charts (`charts=`): column, bar, line, pie, scatter and more, series by column name
+- Sheet view (`sheet_view=`): tab colour, gridlines, zoom, hidden
+- Suppress error triangles (`ignore_errors=`), e.g. numbers stored as text
 
 **Output Options**
 - `.xlsx` (Excel) — auto-detected from file extension
 - `.csv` / `.tsv` — auto-detected; ~5x faster than Python `csv` (records), ~12x faster than `pandas.to_csv` (Pandas DataFrame, via Arrow zero-copy)
-- `io.BytesIO` in-memory buffer
+- `io.BytesIO` in-memory buffer, with `output_format` to put CSV in one
+- CSV byte order mark (`bom=True`) so Excel on Windows reads UTF-8
+- Column selection and ordering (`columns=`), header row toggle (`header=`)
+- Text for missing values and infinity (`na_rep=`, `inf_value=`)
 - Password protection (Excel only)
 - Optional column auto-fit (`autofit=True/False`)
 - Multiple sheets in a single file (Excel only)
 
 **Runtime**
-- CPython 3.8+ — prebuilt wheels for Linux (glibc/musl), macOS, Windows
+- CPython 3.9+ — prebuilt wheels for Linux (glibc/musl), macOS, Windows
 - Free-threaded builds (`python3.14t`) — parallel writes, see [Concurrency](#concurrency)
 
 **API**
+- Typed: ships `py.typed`, so mypy and Pyright check calls into it
 - Fluent builder via `FastExcel` class
 - Context manager (`with` statement) for auto-save
 - Lower-level functional API (`write_worksheet`, `write_worksheets`)
@@ -167,483 +182,41 @@ build is younger — treat it as the newer option it is.
 ```python
 from rustpy_xlsxwriter import FastExcel
 
-# Simple
-FastExcel("output.xlsx").sheet("Users", [{"Name": "Alice", "Age": 30}]).save()
+# One line
+FastExcel("report.xlsx").sheet("Sheet1", records).save()
 
-# Full-featured with context manager
-with FastExcel("report.xlsx", password="secret") as f:
-    f.format(
-        float_format="0.00",
-        datetime_format="dd/mm/yyyy",
-        bold_headers=True,
-        index_columns=["ID"],
-    )
-    f.freeze(row=1)
-    f.sheet("Employees", employee_records)
-    f.sheet("Departments", dept_records)
-```
-
-## Usage Examples
-
-### Pandas & Polars DataFrames
-
-```python
-import pandas as pd
-import polars as pl
-from rustpy_xlsxwriter import FastExcel
-
-# Pandas — Arrow zero-copy, dtype-aware
-df_pd = pd.DataFrame({"Name": ["Alice", "Bob"], "Score": [88.5, 92.3]})
-FastExcel("pandas.xlsx").sheet("Data", df_pd).save()
-
-# Polars — native support, no .to_pandas() needed
-df_pl = pl.DataFrame({"Name": ["Alice", "Bob"], "Score": [88.5, 92.3]})
-FastExcel("polars.xlsx").sheet("Data", df_pl).save()
-```
-
-### Freeze Panes
-
-```python
-# Freeze header row on all sheets
-FastExcel("frozen.xlsx").freeze(row=1).sheet("Sheet1", data).save()
-
-# Per-sheet freeze configuration
-(
-    FastExcel("custom.xlsx")
-    .freeze(row=1)                             # all sheets
-    .freeze(row=1, col=2, sheet="Details")     # override for Details
-    .sheet("Summary", summary_data)
-    .sheet("Details", detail_data)
-    .save()
-)
-```
-
-### Column widths
-
-Override `autofit` with explicit widths (Excel character units):
-
-```python
-from rustpy_xlsxwriter import FastExcel
-
-(
-    FastExcel("out.xlsx")
-    .sheet("RawData", rows, column_width=15)                    # uniform
-    .sheet("Meta", meta, column_widths={"row": 7, "var": 22})   # per-column (by name)
-    .sheet("Other", rows, column_widths=[7, 22, 40])            # per-column (positional)
-    .save()
-)
-```
-
-`column_widths` overrides `column_width` per named/positional column, and explicit
-widths win over `autofit=True`. Unknown column names and out-of-range list indices
-emit a warning and are skipped. For `write_worksheets`, pass `column_width` /
-`column_widths` as dicts keyed by sheet name (with a `"general"` fallback key).
-
-### Cell formatting
-
-Build a reusable `Format` and attach it per column or to the header row:
-
-```python
-from rustpy_xlsxwriter import FastExcel, Format
-
-money = Format().set_num_format("$#,##0.00").set_font_color("#006600")
-header = Format().set_bold().set_background_color("#1F4E78").set_font_color("white")
-
-(
-    FastExcel("out.xlsx")
-    .sheet("Products", rows, header_format=header, column_formats={"price": money})
-    .save()
-)
-```
-
-`Format` chains setters (font, fill, border, alignment, number format). Colors
-accept `"#RRGGBB"` or names (`"red"`); enum-valued setters take lowercase strings
-(`set_align("center")`, `set_border("thin")`). A column's format wins over
-`float_format` / `datetime_format`. For `write_worksheets`, pass `column_formats` /
-`header_format` as dicts keyed by sheet name (with a `"general"` fallback key).
-
-> **Note:** a column format wins *entirely* over the automatic number format. On
-> a date/datetime column, a `Format` without `set_num_format(...)` makes cells
-> show the raw Excel serial number — chain `.set_num_format("yyyy-mm-dd")` (or
-> similar) to keep a date display.
-
-### Row Layout: Merged Headers, Borders, Banding
-
-Crosstab and summary reports need structure above and across the data rows.
-Everything here is declared up front, per sheet:
-
-```python
-from rustpy_xlsxwriter import FastExcel, Format
-
-banner = Format().set_bold().set_align("center").set_background_color("#1F4E78")
-under_header = Format().set_border_bottom("thin")
-
-(
-    FastExcel("crosstab.xlsx")
-    .sheet(
-        "Survey",
-        rows,
-        header_row=1,                                    # leave row 0 for banners
-        merge_ranges=[(0, 1, 0, 2, "Gender", banner)],   # "Gender" spans B:C
-        row_heights={0: 28, 1: 22},
-        row_formats={1: under_header},                   # rule under the header
-        banded_rows="#F2F2F2",                           # alternating fill
-    )
-    .save()
-)
-```
-
-| Option | Effect |
-|---|---|
-| `header_row` | 0-based row for headers; data starts on the next row |
-| `merge_ranges` | `(first_row, first_col, last_row, last_col, value[, format])` |
-| `row_heights` | `{row_index: height}` in points |
-| `row_formats` | `{row_index: Format}` — borders under headers, above totals |
-| `banded_rows` | Background colour for every other data row |
-| `autofilter` | Filter dropdowns over the header row and its data |
-
-| `url_columns` | Column names whose text cells become clickable links |
-| `totals_row` | Aggregate formulas in a row below the data |
-| `formula_columns` | Computed columns appended after the data |
-
-`autofilter=True` sizes its own range from the rows actually written, so it
-follows `header_row` and needs no manual bounds:
-
-```python
-FastExcel("report.xlsx").sheet("Data", rows, autofilter=True, freeze_row=1).save()
-```
-
-### Formulas
-
-Append computed columns. `{row}` becomes that row's sheet row, `{first}` the
-first data row:
-
-```python
+# Or with options
 (
     FastExcel("report.xlsx")
-    .sheet(
-        "Sales",
-        rows,
-        formula_columns={
-            "total":   "=A{row}*B{row}",
-            "running": "=SUM(B${first}:B{row})",
-        },
-    )
+    .format(float_format="0.00", bold_headers=True)
+    .freeze(row=1)
+    .sheet("Users", users)
+    .sheet("Orders", orders)
     .save()
 )
 ```
 
-The text goes to Excel unchanged, so **anything Excel accepts works** — nested
-calls, `SUMIFS`, `INDEX`/`MATCH`, cross-sheet references. Modern functions are
-handled for you: the 131 "future" functions (`IFS`, `TEXTJOIN`, `MAXIFS`,
-`STDEV.P`, …) get their required `_xlfn.` prefix, and the 30 dynamic-array ones
-(`XLOOKUP`, `UNIQUE`, `SORT`, `FILTER`, …) additionally get array-formula markup
-and the `xl/metadata.xml` part. Writing those by hand is the usual way to end up
-with a file Excel refuses to open.
+Everything else — formatting, charts, validation, printing, CSV options — is in
+the **[documentation](https://rahmadafandi.github.io/rustpy-xlsxwriter/)**:
 
-`totals_row` values may also be raw formulas — a value starting with `=`, with
-`{col}` the column letter and `{first}`/`{last}` the data range:
-
-```python
-totals_row={"qty": "sum", "price": "=ROUND(AVERAGE({col}{first}:{col}{last}),2)"}
-```
-
-Two things to know:
-
-**Structure is validated, names are not.** Unbalanced parentheses or quotes and
-an empty formula raise at write time, naming the column and echoing the
-formula. Function names are not checked: `LAMBDA` and `LET` bind their own,
-workbooks carry user-defined functions, and Excel keeps adding to the list, so a
-whitelist would reject valid formulas. `=NOTAFUNC(A1)` therefore reaches the
-file and shows `#NAME?` in that cell.
-
-For context, a malformed formula never corrupts the file — every case tested
-opens fine and shows an error value in the one cell. Validation just moves the
-discovery from "when someone opens the report" to "when the export runs", which
-is why it stops at the checks that cannot produce a false positive.
-
-**There is no `{last}` in `formula_columns`.** Those cells are written while
-rows are still streaming, so the final row is unknown; the placeholder raises
-with that explanation. Use `totals_row` for whole-column formulas.
-
-### Totals Row
-
-Aggregate formulas in a row below the data. The ranges are derived from the
-rows actually written:
-
-```python
-(
-    FastExcel("report.xlsx")
-    .sheet(
-        "Sales",
-        rows,
-        totals_row={"amount": "sum", "qty": "sum"},
-        totals_label="Total",
-        totals_format=Format().set_bold().set_border_top("thin"),
-    )
-    .save()
-)
-# amount column gets  =SUM(C2:C101)
-```
-
-Aggregates: `sum`, `average` (`avg`/`mean`), `count`, `min`, `max`, `product`,
-`stdev`. An unknown one raises rather than writing a broken formula. The row is
-skipped entirely when there are no data rows, since the range would be empty,
-and `autofilter` deliberately stops above it so sorting never drags the total
-into the data.
-
-`totals_format` exists because the totals row index depends on how much data
-there was, so `row_formats` cannot reach it.
-
-> **The formulas carry no computed result.** This library does not evaluate
-> them; Excel and LibreOffice do, on open. Readers that trust the cached value —
-> `pandas.read_excel`, `openpyxl` with `data_only=True` — get `None`, not a
-> number. That is deliberate: the cached result is written empty rather than
-> left at the underlying crate's default of `0`, which would look like a real
-> total of zero. Use the totals row for files people will open, not for a
-> machine-readable handoff.
-
-### Hyperlinks
-
-Name the columns that hold links; the cell text stays the URL:
-
-```python
-FastExcel("report.xlsx").sheet("Docs", rows, url_columns=["homepage"]).save()
-```
-
-Accepts what Excel accepts — `http(s)://`, `mailto:`, and `internal:Sheet2!A1`
-to jump to another sheet. Anything Excel would reject (ordinary text, a blank,
-or a URL past its 2083-character limit) is written as plain text instead, so one
-stray value in a column of thousands never aborts the export. Links keep their
-banding and column format.
-
-**Ordering is enforced, not assumed.** Sheets are written row by row and a row
-that has been flushed cannot be revisited — `rust_xlsxwriter` would drop a late
-`merge_range` with only a message on stderr. So a merge range that reaches
-`header_row` or below raises `ValueError` telling you what to raise
-`header_row` to, rather than silently losing the banner.
-
-**Banding is applied per cell, not per row.** A cell carrying its own format
-ignores the row's, so shading a row with `set_row_format` leaves holes in
-exactly the columns that have a number format. `banded_rows` instead shades
-each cell, so float, integer, boolean, datetime and explicitly-formatted
-columns all stay banded. That costs roughly 20% write time; leave it off when
-you don't need it.
-
-For `write_worksheets`, every one of these takes a dict keyed by sheet name
-(with a `"general"` fallback key).
-
-### String Deduplication
-
-By default every sheet is written in constant-memory mode: strings go inline
-into the sheet XML and nothing is buffered. Passing `dedupe_strings=True` takes
-that sheet out of constant-memory mode and stores each distinct string once in
-the workbook's shared-string table instead.
-
-```python
-(
-    FastExcel("report.xlsx")
-    .sheet("Events", events, dedupe_strings=True)   # lots of repeated text
-    .sheet("Raw", raw_rows)                         # default: streamed
-    .save()
-)
-```
-
-Measured on 50k rows — the uncompressed XML shrinks a lot, but `.xlsx` is a zip
-and deflate already collapses repetition, so the **on-disk** win is modest and
-can even be negative:
-
-| Data | Uncompressed | On disk | Write time |
-|---|---|---|---|
-| Short repeats (4 distinct values) | −11% | **+2%** | 1.7x |
-| Long repeats (20 distinct, 120 chars) | −56% | −5% | 1.1x |
-| All-unique strings | +11% | −1% | 1.5x |
-| 20 repeated text columns | −39% | −9% | 1.1x |
-
-Worth enabling for sheets with many repeated *long* strings, or when the
-consumer parses the uncompressed XML. Not worth it for short categorical values.
-Off by default because it buffers the whole sheet in memory — measure on your
-own data before turning it on for a large export.
-
-For `write_worksheets`, pass `dedupe_strings` as a dict keyed by sheet name
-(with a `"general"` fallback key).
-
-### Generator Streaming
-
-```python
-def rows():
-    for i in range(1_000_000):
-        yield {"id": i, "value": f"row_{i}"}
-
-FastExcel("streamed.xlsx").sheet("Data", rows()).save()
-```
-
-> **Note:** `dedupe_strings=True` buffers the sheet, so it defeats the point of
-> generator streaming. Leave it off for very large streamed exports.
-
-### In-Memory Buffer (Web Frameworks)
-
-```python
-import io
-from rustpy_xlsxwriter import FastExcel
-
-buf = io.BytesIO()
-FastExcel(buf).sheet("Sheet1", records).save()
-xlsx_bytes = buf.getvalue()  # send as HTTP response
-```
-
-### Type checking
-
-The package ships `py.typed`, so mypy and Pyright check calls into it without
-any extra stub package.
-
-### CSV / TSV Output
-
-```python
-# Auto-detected from file extension
-FastExcel("output.csv").sheet("Sheet1", records).save()
-FastExcel("output.tsv").sheet("Sheet1", records).save()
-
-# A buffer has no extension, so name the format — this is how you get CSV
-# out of a web handler without touching the filesystem
-buf = io.BytesIO()
-FastExcel(buf, output_format="csv").sheet("Sheet1", records).save()
-
-# Or use write_csv directly
-from rustpy_xlsxwriter import write_csv
-
-write_csv(records, "output.csv")
-write_csv(records, "output.csv", delimiter=";")  # custom delimiter
-```
-
-`output_format` accepts `"xlsx"`, `"csv"` or `"tsv"` and overrides the
-extension, so a `.txt` target can hold CSV. For any other delimiter, call
-`write_csv` directly.
-
-CSV carries no formatting, so every Excel-only option is dropped —
-`float_format`, `column_formats`, `header_format`, freeze panes, merges,
-banding, row heights and formats, `password`, `dedupe_strings`. Only
-`delimiter` and `sanitize_formulas` apply. Switching a target from `.xlsx` to
-`.csv` therefore silently changes the output, so the builder warns and names
-what it discarded:
-
-```python
-FastExcel("out.csv").format(float_format="0.00").sheet("S", rows).save()
-# UserWarning: CSV/TSV output ignores Excel-only options: float_format. …
-```
-
-The data is still written correctly — only the styling is gone.
-
-### Functional API
-
-```python
-from rustpy_xlsxwriter import write_worksheet, write_worksheets
-
-write_worksheet(records, "output.xlsx", sheet_name="Sheet1", password="secret")
-
-write_worksheets(
-    [("Sheet1", records1), ("Sheet2", records2)],
-    "output.xlsx",
-    freeze_panes={"general": {"row": 1, "col": 0}},
-)
-```
-
-## API Reference
-
-### `FastExcel` Class
-
-| Method | Description |
+| | |
 |---|---|
-| `FastExcel(target, *, output_format=None, password=None, autofit=True, sanitize_formulas=False)` | Create writer for file path or `BytesIO` buffer |
-| `.format(*, float_format, datetime_format, index_columns, bold_headers)` | Set number/datetime format and styling |
-| `.freeze(*, row=None, col=None, sheet=None)` | Configure freeze panes (general or per-sheet) |
-| `.sheet(name, data)` | Add a worksheet (list of dicts, generator, or DataFrame) |
-| `.save()` | Write all sheets and save |
-
-Supports context manager (`with` statement) — auto-saves on exit, skips save on exception.
-
-### Functional API
-
-| Function | Description |
-|---|---|
-| `write_worksheet(records, file_name, ...)` | Write single Excel sheet |
-| `write_worksheets(records_with_sheet_name, file_name, ...)` | Write multiple Excel sheets |
-| `write_csv(records, file_name, delimiter=",")` | Write CSV/TSV file |
-| `validate_sheet_name(name)` | Check if sheet name is valid for Excel |
-
-### Supported Data Types
-
-| Python Type | Excel Output |
-|---|---|
-| `str` | Text |
-| `int` | Number |
-| `float` | Number (with optional format) |
-| `bool` | Boolean |
-| `None` | Empty cell |
-| `datetime.datetime` | DateTime (with optional format) |
-| `datetime.date` | Date (with optional format) |
-| `numpy.int64` / `numpy.float64` | Number |
-| `numpy.bool_` | Boolean |
-| `dict`, other | String representation |
-
-## Examples
-
-See [`examples/`](examples/) for 16 runnable scripts + a Jupyter notebook:
-
-| File | Description |
-|---|---|
-| [`01_basic.py`](examples/01_basic.py) | Single sheet from list of dicts |
-| [`02_multiple_sheets.py`](examples/02_multiple_sheets.py) | Multiple sheets in one file |
-| [`03_dataframe.py`](examples/03_dataframe.py) | Pandas DataFrame with styling |
-| [`04_freeze_panes.py`](examples/04_freeze_panes.py) | Freeze rows, columns, per-sheet config |
-| [`05_bytesio.py`](examples/05_bytesio.py) | In-memory buffer for web frameworks |
-| [`06_generator.py`](examples/06_generator.py) | Memory-efficient streaming (100K rows) |
-| [`07_password.py`](examples/07_password.py) | Password-protected workbook |
-| [`08_full_featured.py`](examples/08_full_featured.py) | All features combined |
-| [`09_polars.py`](examples/09_polars.py) | Polars DataFrame (native support) |
-| [`10_context_manager.py`](examples/10_context_manager.py) | Auto-save with `with` statement |
-| [`11_datetime_format.py`](examples/11_datetime_format.py) | Custom datetime/date formatting |
-| [`12_bold_headers.py`](examples/12_bold_headers.py) | Bold header row |
-| [`13_autofit.py`](examples/13_autofit.py) | Column auto-fit toggle |
-| [`14_csv_tsv.py`](examples/14_csv_tsv.py) | CSV/TSV output (~5x faster) |
-| [`15_column_widths.py`](examples/15_column_widths.py) | Uniform & per-column widths |
-| [`16_cell_formats.py`](examples/16_cell_formats.py) | Cell formatting (Format class) |
-| [`quickstart.ipynb`](examples/quickstart.ipynb) | Jupyter notebook walkthrough |
+| [Data sources](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/dataframes/) | DataFrames, generators, in-memory buffers |
+| [Formatting](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/formatting/) | fonts, widths, banding, conditional formats |
+| [Formulas and links](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/formulas/) | computed columns, totals rows, hyperlinks |
+| [Charts and visuals](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/visuals/) | charts, sparklines, notes, images |
+| [Sheet layout](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/layout/) | printing, outline groups, sheet view |
+| [Data integrity](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/data-integrity/) | validation, missing values |
+| [CSV and TSV](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/csv/) | delimiters, BOM, column selection |
+| [API reference](https://rahmadafandi.github.io/rustpy-xlsxwriter/api/) | every function and option |
 
 ## Testing
 
 ```bash
-# Unit tests (~1 second)
-pytest tests/ -m "not benchmark"
-
-# All tests including benchmarks
-pytest tests/
-
-# Benchmark only
-python benchmark.py
+pytest tests/ -m "not benchmark"   # unit tests
+pytest tests/                      # including benchmarks
+python benchmark.py                # standalone benchmark
 ```
-
-<details>
-<summary>Test structure</summary>
-
-| File | Coverage |
-|---|---|
-| `test_metadata.py` | Package metadata functions |
-| `test_validation.py` | Sheet name validation (unicode, length, special chars) |
-| `test_write_single.py` | Single sheet: all types, generator, context manager, autofit |
-| `test_write_multi.py` | Multiple sheets |
-| `test_write_functional.py` | Functional API |
-| `test_freeze_panes.py` | Freeze panes (single & multi-sheet) |
-| `test_password.py` | Password protection |
-| `test_bytesio.py` | In-memory buffer I/O |
-| `test_dataframe.py` | Pandas DataFrame, numpy scalar types |
-| `test_polars.py` | Polars DataFrame: types, datetime, date, null, styling |
-| `test_styling.py` | Float format, datetime format, bold headers, index columns |
-| `test_output_format.py` | Explicit `output_format`, CSV/TSV into a buffer |
-| `test_type_stubs.py` | `.pyi` kept in step with the compiled extension |
-| `test_benchmark.py` | Performance benchmarks (Records + Pandas + Polars vs xlsxwriter) |
-
-</details>
 
 ## Contributing
 
