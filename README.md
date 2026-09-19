@@ -148,7 +148,10 @@ build is younger — treat it as the newer option it is.
 **Output Options**
 - `.xlsx` (Excel) — auto-detected from file extension
 - `.csv` / `.tsv` — auto-detected; ~5x faster than Python `csv` (records), ~12x faster than `pandas.to_csv` (Pandas DataFrame, via Arrow zero-copy)
-- `io.BytesIO` in-memory buffer
+- `io.BytesIO` in-memory buffer, with `output_format` to put CSV in one
+- CSV byte order mark (`bom=True`) so Excel on Windows reads UTF-8
+- Column selection and ordering (`columns=`), header row toggle (`header=`)
+- Text for missing values and infinity (`na_rep=`, `inf_value=`)
 - Password protection (Excel only)
 - Optional column auto-fit (`autofit=True/False`)
 - Multiple sheets in a single file (Excel only)
@@ -158,6 +161,7 @@ build is younger — treat it as the newer option it is.
 - Free-threaded builds (`python3.14t`) — parallel writes, see [Concurrency](#concurrency)
 
 **API**
+- Typed: ships `py.typed`, so mypy and Pyright check calls into it
 - Fluent builder via `FastExcel` class
 - Context manager (`with` statement) for auto-save
 - Lower-level functional API (`write_worksheet`, `write_worksheets`)
