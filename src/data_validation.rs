@@ -36,11 +36,8 @@ fn get<'py>(map: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<Bound<'py, P
 }
 
 fn need<'py>(map: &Bound<'py, PyDict>, key: &str, kind: &str) -> PyResult<Bound<'py, PyAny>> {
-    get(map, key)?.ok_or_else(|| {
-        value_err(format!(
-            "data_validations: a '{kind}' rule needs '{key}'"
-        ))
-    })
+    get(map, key)?
+        .ok_or_else(|| value_err(format!("data_validations: a '{kind}' rule needs '{key}'")))
 }
 
 /// The comparison a numeric rule uses, before its values are narrowed.
@@ -123,7 +120,9 @@ fn whole(v: f64, kind: &str) -> PyResult<i64> {
 /// The messages and flags every rule type accepts.
 fn decorate(mut dv: DataValidation, map: &Bound<'_, PyDict>) -> PyResult<DataValidation> {
     if let Some(v) = get(map, "input_title")? {
-        dv = dv.set_input_title(v.extract::<String>()?).map_err(xlsx_err)?;
+        dv = dv
+            .set_input_title(v.extract::<String>()?)
+            .map_err(xlsx_err)?;
     }
     if let Some(v) = get(map, "input_message")? {
         dv = dv
@@ -131,7 +130,9 @@ fn decorate(mut dv: DataValidation, map: &Bound<'_, PyDict>) -> PyResult<DataVal
             .map_err(xlsx_err)?;
     }
     if let Some(v) = get(map, "error_title")? {
-        dv = dv.set_error_title(v.extract::<String>()?).map_err(xlsx_err)?;
+        dv = dv
+            .set_error_title(v.extract::<String>()?)
+            .map_err(xlsx_err)?;
     }
     if let Some(v) = get(map, "error_message")? {
         dv = dv

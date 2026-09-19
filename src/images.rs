@@ -132,9 +132,9 @@ impl Images {
             .enumerate()
         {
             let item = item?;
-            let map = item.cast::<PyDict>().map_err(|_| {
-                value_err(format!("images[{index}]: each image must be a dict"))
-            })?;
+            let map = item
+                .cast::<PyDict>()
+                .map_err(|_| value_err(format!("images[{index}]: each image must be a dict")))?;
             out.push(build(map, index)?);
         }
         Ok(Images(out))

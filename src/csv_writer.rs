@@ -239,7 +239,6 @@ pub fn write_csv(
             }
             output.push(b'\n');
         }
-
     }
 
     write_bytes_to_target(py, &output, file_name)
@@ -258,11 +257,7 @@ fn write_csv_via_arrow(
 ) -> PyResult<()> {
     let reader = crate::arrow_ffi::stream_to_reader(records, py)?;
     let schema = reader.schema();
-    let headers: Vec<String> = schema
-        .fields()
-        .iter()
-        .map(|f| f.name().clone())
-        .collect();
+    let headers: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
     let indices = select_indices(&headers, columns)?;
     if header {
         let out = apply_selection(headers, indices.as_ref());
@@ -275,10 +270,16 @@ fn write_csv_via_arrow(
             // Projection is an Arc clone per column, so the zero-copy path
             // stays zero-copy.
             Some(ix) => {
-                let projected = batch.project(ix).map_err(crate::arrow_ffi::batch_read_err)?;
-                crate::arrow_writer::write_arrow_batch_csv(output, &projected, delim, sanitize, reps)?;
+                let projected = batch
+                    .project(ix)
+                    .map_err(crate::arrow_ffi::batch_read_err)?;
+                crate::arrow_writer::write_arrow_batch_csv(
+                    output, &projected, delim, sanitize, reps,
+                )?;
             }
-            None => crate::arrow_writer::write_arrow_batch_csv(output, &batch, delim, sanitize, reps)?,
+            None => {
+                crate::arrow_writer::write_arrow_batch_csv(output, &batch, delim, sanitize, reps)?
+            }
         }
     }
     Ok(())

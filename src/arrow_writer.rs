@@ -80,13 +80,9 @@ fn write_temporal(
     text_fmt: Option<&Format>,
 ) -> PyResult<()> {
     match value {
-        Some(dt) => crate::helpers::write_datetime_opt(
-            worksheet,
-            row,
-            col,
-            &dt,
-            banding.then_some(dt_fmt),
-        ),
+        Some(dt) => {
+            crate::helpers::write_datetime_opt(worksheet, row, col, &dt, banding.then_some(dt_fmt))
+        }
         None => write_string_opt(worksheet, row, col, "", text_fmt),
     }
 }
@@ -121,7 +117,11 @@ pub fn write_arrow_batch(
     for row in 0..num_rows {
         let row_u32 = start_row + row as u32;
         let use_band = layout.is_banded(row_u32);
-        let pal = if use_band { banded.unwrap_or(plain) } else { plain };
+        let pal = if use_band {
+            banded.unwrap_or(plain)
+        } else {
+            plain
+        };
         let overrides = if use_band && banded.is_some() {
             &banded_cols
         } else {
@@ -137,7 +137,13 @@ pub fn write_arrow_batch(
             let col_override = overrides[col_idx].or(text_fmt);
 
             if column.is_null(row) {
-                write_string_opt(worksheet, row_u32, col_u16, layout.reps().na_text(), text_fmt)?;
+                write_string_opt(
+                    worksheet,
+                    row_u32,
+                    col_u16,
+                    layout.reps().na_text(),
+                    text_fmt,
+                )?;
                 continue;
             }
 
@@ -173,7 +179,12 @@ pub fn write_arrow_batch(
                     let val: &str = $val;
                     if as_url && !val.is_empty() {
                         crate::helpers::write_url_or_text(
-                            worksheet, row_u32, col_u16, val, col_override, url_text,
+                            worksheet,
+                            row_u32,
+                            col_u16,
+                            val,
+                            col_override,
+                            url_text,
                         )?
                     } else {
                         write_string_opt(worksheet, row_u32, col_u16, val, col_override)?
@@ -408,7 +419,9 @@ fn emit_arrow_cell_csv(
 fn timestamp_to_micros(column: &ArrayRef, unit: TimeUnit, row: usize) -> i64 {
     match unit {
         TimeUnit::Second => column.as_primitive::<TimestampSecondType>().value(row) * 1_000_000,
-        TimeUnit::Millisecond => column.as_primitive::<TimestampMillisecondType>().value(row) * 1_000,
+        TimeUnit::Millisecond => {
+            column.as_primitive::<TimestampMillisecondType>().value(row) * 1_000
+        }
         TimeUnit::Microsecond => column.as_primitive::<TimestampMicrosecondType>().value(row),
         TimeUnit::Nanosecond => column.as_primitive::<TimestampNanosecondType>().value(row) / 1_000,
     }

@@ -105,7 +105,9 @@ fn build(map: &Bound<'_, PyDict>, column: &str) -> PyResult<Spark> {
         ("axis", 6),
         ("right_to_left", 7),
     ] {
-        let Some(v) = map.get_item(key)? else { continue };
+        let Some(v) = map.get_item(key)? else {
+            continue;
+        };
         let enable: bool = v.extract()?;
         sparkline = match on {
             0 => sparkline.show_high_point(enable),
@@ -133,14 +135,16 @@ impl Sparklines {
         let Some(spec) = spec else {
             return Ok(Sparklines(out));
         };
-        let map = spec.cast::<PyDict>().map_err(|_| {
-            value_err("sparklines must be a dict keyed by column name".to_string())
-        })?;
+        let map = spec
+            .cast::<PyDict>()
+            .map_err(|_| value_err("sparklines must be a dict keyed by column name".to_string()))?;
 
         for (key, value) in map.iter() {
             let column: String = key.extract()?;
             let rule = value.cast::<PyDict>().map_err(|_| {
-                value_err(format!("sparklines: the rule for '{column}' must be a dict"))
+                value_err(format!(
+                    "sparklines: the rule for '{column}' must be a dict"
+                ))
             })?;
             out.push(build(rule, &column)?);
         }

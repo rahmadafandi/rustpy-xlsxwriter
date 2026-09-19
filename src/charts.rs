@@ -178,8 +178,7 @@ fn parse(map: &Bound<'_, PyDict>, index: usize) -> PyResult<Spec> {
             .extract::<String>()?,
     )?;
     let series = parse_series(
-        &get("series")?
-            .ok_or_else(|| value_err(format!("charts[{index}]: needs 'series'")))?,
+        &get("series")?.ok_or_else(|| value_err(format!("charts[{index}]: needs 'series'")))?,
         index,
     )?;
 
@@ -241,9 +240,9 @@ impl Charts {
             .enumerate()
         {
             let item = item?;
-            let map = item.cast::<PyDict>().map_err(|_| {
-                value_err(format!("charts[{index}]: each chart must be a dict"))
-            })?;
+            let map = item
+                .cast::<PyDict>()
+                .map_err(|_| value_err(format!("charts[{index}]: each chart must be a dict")))?;
             out.push(parse(map, index)?);
         }
         Ok(Charts(out))
@@ -295,7 +294,9 @@ impl Charts {
             if let Some(name) = missing {
                 warnings.call_method1(
                     "warn",
-                    (format!("charts[{index}]: unknown column '{name}', chart skipped"),),
+                    (format!(
+                        "charts[{index}]: unknown column '{name}', chart skipped"
+                    ),),
                 )?;
                 continue;
             }
@@ -340,9 +341,7 @@ impl Charts {
             // header, so a chart never lands on top of the table.
             let row = spec.row.unwrap_or(header_row);
             let col = spec.col.unwrap_or_else(|| headers.len() as u16 + 1);
-            worksheet
-                .insert_chart(row, col, &chart)
-                .map_err(xlsx_err)?;
+            worksheet.insert_chart(row, col, &chart).map_err(xlsx_err)?;
         }
         Ok(())
     }

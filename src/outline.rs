@@ -82,21 +82,17 @@ impl Outline {
                 "rows" => {
                     for item in value.try_iter()? {
                         let (first, last, collapsed) = group_parts(&item?, "rows")?;
-                        outline.rows.push((
-                            first.extract()?,
-                            last.extract()?,
-                            collapsed,
-                        ));
+                        outline
+                            .rows
+                            .push((first.extract()?, last.extract()?, collapsed));
                     }
                 }
                 "columns" => {
                     for item in value.try_iter()? {
                         let (first, last, collapsed) = group_parts(&item?, "columns")?;
-                        outline.columns.push((
-                            first.extract()?,
-                            last.extract()?,
-                            collapsed,
-                        ));
+                        outline
+                            .columns
+                            .push((first.extract()?, last.extract()?, collapsed));
                     }
                 }
                 "symbols_above" => outline.symbols_above = Some(value.extract()?),

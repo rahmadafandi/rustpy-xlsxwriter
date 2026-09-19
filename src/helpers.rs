@@ -3,9 +3,9 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyDict, PyList, PyTimeAccess};
 use pyo3::Py;
+use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, Worksheet};
 use std::borrow::Cow;
 use std::path::PathBuf;
-use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, Worksheet};
 
 use crate::worksheet::xlsx_err;
 
@@ -26,42 +26,26 @@ pub enum ColType {
 
 /// Convert a Python `datetime` to `ExcelDateTime`.
 pub fn py_datetime_to_excel(dt: &Bound<PyDateTime>) -> PyResult<ExcelDateTime> {
-    ExcelDateTime::from_ymd(
-        dt.get_year() as u16,
-        dt.get_month(),
-        dt.get_day(),
-    )
-    .map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "Failed to create datetime: {}",
-            e
-        ))
-    })?
-    .and_hms(
-        dt.get_hour() as u16,
-        dt.get_minute(),
-        dt.get_second(),
-    )
-    .map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "Failed to create timestamp: {}",
-            e
-        ))
-    })
+    ExcelDateTime::from_ymd(dt.get_year() as u16, dt.get_month(), dt.get_day())
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Failed to create datetime: {}",
+                e
+            ))
+        })?
+        .and_hms(dt.get_hour() as u16, dt.get_minute(), dt.get_second())
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Failed to create timestamp: {}",
+                e
+            ))
+        })
 }
 
 /// Convert a Python `date` to `ExcelDateTime`.
 pub fn py_date_to_excel(d: &Bound<PyDate>) -> PyResult<ExcelDateTime> {
-    ExcelDateTime::from_ymd(
-        d.get_year() as u16,
-        d.get_month(),
-        d.get_day(),
-    )
-    .map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "Failed to create date: {}",
-            e
-        ))
+    ExcelDateTime::from_ymd(d.get_year() as u16, d.get_month(), d.get_day()).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to create date: {}", e))
     })
 }
 
@@ -230,25 +214,25 @@ pub fn formula_problem(formula: &str) -> Option<String> {
 }
 
 /// Read `formula_columns` — an ordered `{header: formula}` mapping.
-pub fn resolve_formula_columns(
-    spec: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Vec<FormulaColumn>> {
-    let Some(spec) = spec else { return Ok(Vec::new()) };
-    let dict = spec.cast::<PyDict>().map_err(|_| {
-        value_err("formula_columns must be a dict of {header: formula}".into())
-    })?;
+pub fn resolve_formula_columns(spec: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<FormulaColumn>> {
+    let Some(spec) = spec else {
+        return Ok(Vec::new());
+    };
+    let dict = spec
+        .cast::<PyDict>()
+        .map_err(|_| value_err("formula_columns must be a dict of {header: formula}".into()))?;
     let mut out = Vec::with_capacity(dict.len());
     for (key, val) in dict.iter() {
-        let header: String = key.extract().map_err(|_| {
-            value_err("formula_columns keys must be header names".into())
-        })?;
+        let header: String = key
+            .extract()
+            .map_err(|_| value_err("formula_columns keys must be header names".into()))?;
         let template: String = val.extract().map_err(|_| {
-            value_err(format!("formula_columns['{header}'] must be a formula string"))
+            value_err(format!(
+                "formula_columns['{header}'] must be a formula string"
+            ))
         })?;
         if template.trim().is_empty() {
-            return Err(value_err(format!(
-                "formula_columns['{header}'] is empty"
-            )));
+            return Err(value_err(format!("formula_columns['{header}'] is empty")));
         }
         // Placeholders expand to digits, so the structure is already final.
         if let Some(problem) = formula_problem(&template) {
@@ -454,15 +438,17 @@ fn row_keyed<T>(
     what: &str,
     mut convert: impl FnMut(&Bound<'_, PyAny>) -> PyResult<T>,
 ) -> PyResult<Vec<(u32, T)>> {
-    let Some(spec) = spec else { return Ok(Vec::new()) };
-    let dict = spec.cast::<PyDict>().map_err(|_| {
-        value_err(format!("{what} must be a dict keyed by row index"))
-    })?;
+    let Some(spec) = spec else {
+        return Ok(Vec::new());
+    };
+    let dict = spec
+        .cast::<PyDict>()
+        .map_err(|_| value_err(format!("{what} must be a dict keyed by row index")))?;
     let mut out = Vec::with_capacity(dict.len());
     for (key, val) in dict.iter() {
-        let row: u32 = key.extract().map_err(|_| {
-            value_err(format!("{what}: row index must be a non-negative int"))
-        })?;
+        let row: u32 = key
+            .extract()
+            .map_err(|_| value_err(format!("{what}: row index must be a non-negative int")))?;
         out.push((row, convert(&val)?));
     }
     out.sort_by_key(|(row, _)| *row);
@@ -501,9 +487,9 @@ pub fn resolve_layout(
             value_err("totals_row must be a dict of {column name: aggregate}".into())
         })?;
         for (key, val) in dict.iter() {
-            let column: String = key.extract().map_err(|_| {
-                value_err("totals_row keys must be column names".into())
-            })?;
+            let column: String = key
+                .extract()
+                .map_err(|_| value_err("totals_row keys must be column names".into()))?;
             let name: String = val.extract().map_err(|_| {
                 value_err("totals_row values must be aggregate names or formulas".into())
             })?;
@@ -577,9 +563,9 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
     }
 
     let heights = row_keyed(row_heights, "row_heights", |v| {
-        let h: f64 = v.extract().map_err(|_| {
-            value_err("row_heights values must be numbers".into())
-        })?;
+        let h: f64 = v
+            .extract()
+            .map_err(|_| value_err("row_heights values must be numbers".into()))?;
         if h < 0.0 {
             return Err(value_err("row_heights values must not be negative".into()));
         }
@@ -607,17 +593,13 @@ Merged ranges must sit strictly above the header row — raise header_row to at 
         page: crate::page_setup::PageSetup::from_py(page_setup)?,
         view: crate::sheet_view::SheetView::from_py(sheet_view)?,
         ignore: crate::ignore_errors::IgnoreErrors::from_py(ignore_errors)?,
-        validations: crate::data_validation::DataValidations::from_py(
-            data_validations,
-        )?,
+        validations: crate::data_validation::DataValidations::from_py(data_validations)?,
         outline: crate::outline::Outline::from_py(outline)?,
         notes: crate::notes::Notes::from_py(notes)?,
         images: crate::images::Images::from_py(images)?,
         sparklines: crate::sparklines::Sparklines::from_py(sparklines)?,
         charts: crate::charts::Charts::from_py(charts)?,
-        conditional: crate::conditional_format::ConditionalFormats::from_py(
-            conditional_formats,
-        )?,
+        conditional: crate::conditional_format::ConditionalFormats::from_py(conditional_formats)?,
     })
 }
 
@@ -646,13 +628,13 @@ pub fn write_header(
             .write_string_with_format(row, col, header, bold_fmt)
             .map_err(xlsx_err)?;
     } else {
-        worksheet
-            .write_string(row, col, header)
-            .map_err(xlsx_err)?;
+        worksheet.write_string(row, col, header).map_err(xlsx_err)?;
     }
     if let Some(cols) = index_columns {
         if cols.iter().any(|c| c == header) {
-            worksheet.set_column_format(col, bold_fmt).map_err(xlsx_err)?;
+            worksheet
+                .set_column_format(col, bold_fmt)
+                .map_err(xlsx_err)?;
         }
     }
     Ok(())
@@ -971,10 +953,7 @@ pub fn save_workbook(
 ) -> PyResult<()> {
     if let Ok(path) = file_or_buffer.extract::<PathBuf>(py) {
         workbook.save(&path).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                "Failed to save workbook: {}",
-                e
-            ))
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to save workbook: {}", e))
         })?;
         return Ok(());
     }
@@ -991,11 +970,7 @@ pub fn save_workbook(
 }
 
 /// Write raw bytes to a file path or writable buffer.
-pub fn write_bytes_to_target(
-    py: Python,
-    bytes: &[u8],
-    file_or_buffer: Py<PyAny>,
-) -> PyResult<()> {
+pub fn write_bytes_to_target(py: Python, bytes: &[u8], file_or_buffer: Py<PyAny>) -> PyResult<()> {
     if let Ok(path) = file_or_buffer.extract::<PathBuf>(py) {
         std::fs::write(&path, bytes).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write file: {}", e))
@@ -1083,9 +1058,7 @@ pub fn apply_column_widths(
             if idx as u16 >= ncols {
                 warn_py(
                     py,
-                    &format!(
-                        "column_widths: index {idx} out of range ({ncols} columns), skipped"
-                    ),
+                    &format!("column_widths: index {idx} out of range ({ncols} columns), skipped"),
                 )?;
                 continue;
             }

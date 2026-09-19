@@ -116,24 +116,26 @@ impl PageSetup {
                 "landscape" => setup.landscape = Some(value.extract()?),
                 "paper_size" => setup.paper_size = Some(value.extract()?),
                 "margins" => setup.margins = Some(margins(&value)?),
-                "print_area" => setup.print_area = Some(value.extract().map_err(|_| {
-                    value_err(
-                        "page_setup: 'print_area' must be \
+                "print_area" => {
+                    setup.print_area = Some(value.extract().map_err(|_| {
+                        value_err(
+                            "page_setup: 'print_area' must be \
                          (first_row, first_col, last_row, last_col)"
-                            .to_string(),
-                    )
-                })?),
-                "repeat_rows" => setup.repeat_rows = Some(span(&value, "repeat_rows")?),
-                "repeat_columns" => {
-                    setup.repeat_columns = Some(span(&value, "repeat_columns")?)
+                                .to_string(),
+                        )
+                    })?)
                 }
-                "fit_to_pages" => setup.fit_to_pages = Some(value.extract().map_err(|_| {
-                    value_err(
-                        "page_setup: 'fit_to_pages' must be (width, height); \
+                "repeat_rows" => setup.repeat_rows = Some(span(&value, "repeat_rows")?),
+                "repeat_columns" => setup.repeat_columns = Some(span(&value, "repeat_columns")?),
+                "fit_to_pages" => {
+                    setup.fit_to_pages = Some(value.extract().map_err(|_| {
+                        value_err(
+                            "page_setup: 'fit_to_pages' must be (width, height); \
                          0 lets that dimension run to as many pages as it needs"
-                            .to_string(),
-                    )
-                })?),
+                                .to_string(),
+                        )
+                    })?)
+                }
                 "scale" => setup.scale = Some(value.extract()?),
                 "center_horizontally" => setup.center_horizontally = Some(value.extract()?),
                 "center_vertically" => setup.center_vertically = Some(value.extract()?),

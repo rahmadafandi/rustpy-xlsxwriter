@@ -12,10 +12,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyDict};
 use rust_xlsxwriter::{
     ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
-    ConditionalFormatAverageRule, ConditionalFormatCell,
-    ConditionalFormatCellRule, ConditionalFormatDataBar, ConditionalFormatDuplicate,
-    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
-    ConditionalFormatTopRule, Format as XlsxFormat, Worksheet,
+    ConditionalFormatAverageRule, ConditionalFormatCell, ConditionalFormatCellRule,
+    ConditionalFormatDataBar, ConditionalFormatDuplicate, ConditionalFormatText,
+    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
+    Format as XlsxFormat, Worksheet,
 };
 
 use crate::format::parse_color;
@@ -71,7 +71,9 @@ fn need<'py>(map: &Bound<'py, PyDict>, key: &str, kind: &str) -> PyResult<Bound<
 fn format_of(map: &Bound<'_, PyDict>) -> PyResult<Option<XlsxFormat>> {
     match get(map, "format")? {
         Some(obj) => Ok(Some(
-            obj.extract::<PyRef<'_, crate::format::Format>>()?.inner.clone(),
+            obj.extract::<PyRef<'_, crate::format::Format>>()?
+                .inner
+                .clone(),
         )),
         None => Ok(None),
     }

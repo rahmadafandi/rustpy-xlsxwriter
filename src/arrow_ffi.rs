@@ -26,10 +26,8 @@ pub fn stream_to_reader(
 
     // 2. Extract the raw pointer from the PyCapsule
     let ptr = unsafe {
-        let cap_ptr = pyo3::ffi::PyCapsule_GetPointer(
-            capsule_bound.as_ptr(),
-            c"arrow_array_stream".as_ptr(),
-        );
+        let cap_ptr =
+            pyo3::ffi::PyCapsule_GetPointer(capsule_bound.as_ptr(), c"arrow_array_stream".as_ptr());
         if cap_ptr.is_null() {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Failed to get pointer from Arrow PyCapsule",
@@ -39,13 +37,12 @@ pub fn stream_to_reader(
     };
 
     // 3. Convert FFI stream to Rust RecordBatchReader
-    let stream =
-        unsafe { ArrowArrayStreamReader::from_raw(ptr) }.map_err(|e: ArrowError| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to create Arrow reader from stream: {}",
-                e
-            ))
-        })?;
+    let stream = unsafe { ArrowArrayStreamReader::from_raw(ptr) }.map_err(|e: ArrowError| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Failed to create Arrow reader from stream: {}",
+            e
+        ))
+    })?;
 
     Ok(Box::new(stream))
 }
