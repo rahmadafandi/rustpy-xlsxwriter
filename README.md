@@ -99,10 +99,18 @@ interpreter:
 | 4 | 2.09s | 18.83s | 9.0x |
 | 8 | **1.72s** | 16.21s | **9.4x** |
 
-With the GIL both columns are flat: threads take turns, so the 1M records cost
-the same whether one worker writes them or eight.
+> **The standard-build table above predates 0.7.1** and shows RustPy flat
+> across workers. It no longer is: the save — XML assembly and deflate, about
+> two thirds of a write — now runs with the GIL released, so concurrent writers
+> overlap there. Measured after the change on 8 physical cores: 8.84s at one
+> worker to 5.42s at eight, a 1.6x gain where there used to be none. Re-run
+> `python benchmark.py --concurrent` to refresh these numbers for your machine.
 
-Without it both writers spread out — `xlsxwriter` is pure Python and gets faster
+With the GIL, RustPy now spreads part of the work: the rows are read through
+Python objects and stay serialised, but the save does not. `xlsxwriter` is pure
+Python throughout, so its threads take turns.
+
+Without the GIL both writers spread out — `xlsxwriter` is pure Python and gets faster
 too, from 45.00s to 16.21s (**2.8x**). RustPy goes from 6.10s to 1.72s
 (**3.5x**), because more of its work is Rust rather than interpreted bytecode.
 That is why the advantage widens rather than staying put: 7.4x at one worker,
