@@ -209,7 +209,7 @@ fn write_worksheet_content(
     column_widths: Option<&Bound<'_, PyAny>>,
     column_formats: Option<&Bound<'_, PyAny>>,
     header_format: Option<&crate::format::Format>,
-    layout: &crate::helpers::SheetLayout,
+    layout: &crate::layout::SheetLayout,
     url_columns: Option<&Bound<'_, PyAny>>,
     formula_columns: Option<&Bound<'_, PyAny>>,
     py: Python,
@@ -228,7 +228,7 @@ fn write_worksheet_content(
     // Merges, row heights and row formats must all land before the first data
     // cell — constant-memory mode cannot revisit a flushed row.
     layout.apply(worksheet)?;
-    let formula_cols = crate::helpers::resolve_formula_columns(formula_columns)?;
+    let formula_cols = crate::formula::resolve_formula_columns(formula_columns)?;
     // Applies to every formula this sheet writes, so it must be set before any
     // of them. The crate's default cached result is 0, which readers that trust
     // the cache take at face value — `pandas.read_excel` reports 0, and
@@ -501,7 +501,7 @@ fn write_worksheet_content(
                     }
                 }
                 if !formula_cols.is_empty() {
-                    crate::helpers::write_formula_row(
+                    crate::formula::write_formula_row(
                         worksheet,
                         &formula_cols,
                         n_data_cols as u16,
@@ -659,9 +659,9 @@ fn write_df_rows<F>(
     datetime_cols_set: &mut HashSet<u16>,
     plain: &crate::format::RowPalette,
     banded: Option<&crate::format::RowPalette>,
-    layout: &crate::helpers::SheetLayout,
+    layout: &crate::layout::SheetLayout,
     url_cols: &[crate::helpers::UrlCol],
-    formula_cols: &[crate::helpers::FormulaColumn],
+    formula_cols: &[crate::formula::FormulaColumn],
     n_data_cols: usize,
 ) -> PyResult<()>
 where
@@ -782,7 +782,7 @@ where
             }
         }
         if !formula_cols.is_empty() {
-            crate::helpers::write_formula_row(
+            crate::formula::write_formula_row(
                 worksheet,
                 formula_cols,
                 n_data_cols as u16,
@@ -818,9 +818,9 @@ fn write_dataframe<C>(
     bold_fmt: &Format,
     index_columns: Option<&Vec<String>>,
     header_format: Option<&crate::format::Format>,
-    layout: &crate::helpers::SheetLayout,
+    layout: &crate::layout::SheetLayout,
     url_columns: Option<&Bound<'_, PyAny>>,
-    formula_cols: &[crate::helpers::FormulaColumn],
+    formula_cols: &[crate::formula::FormulaColumn],
     get_column_method: &str,
     to_list_method: &str,
     classify_dtype: C,
@@ -994,7 +994,7 @@ pub fn write_worksheets(
 
         let sheet_header_row = keyed_extract::<u32>(header_row.as_ref(), &sheet_name)?.unwrap_or(0);
         let sheet_band = keyed_extract::<String>(banded_rows.as_ref(), &sheet_name)?;
-        let layout = crate::helpers::resolve_layout(
+        let layout = crate::layout::resolve_layout(
             sheet_header_row,
             keyed_get(merge_ranges.as_ref(), &sheet_name)?.as_ref(),
             keyed_get(row_heights.as_ref(), &sheet_name)?.as_ref(),
@@ -1113,7 +1113,7 @@ pub fn write_worksheet(
     sparklines: Option<Bound<'_, PyAny>>,
     charts: Option<Bound<'_, PyAny>>,
 ) -> PyResult<()> {
-    let layout = crate::helpers::resolve_layout(
+    let layout = crate::layout::resolve_layout(
         header_row,
         merge_ranges.as_ref(),
         row_heights.as_ref(),

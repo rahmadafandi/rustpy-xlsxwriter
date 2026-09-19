@@ -94,9 +94,9 @@ pub fn write_arrow_batch(
     start_row: u32,
     plain: &crate::format::RowPalette,
     banded: Option<&crate::format::RowPalette>,
-    layout: &crate::helpers::SheetLayout,
+    layout: &crate::layout::SheetLayout,
     url_cols: &[crate::helpers::UrlCol],
-    formula_cols: &[crate::helpers::FormulaColumn],
+    formula_cols: &[crate::formula::FormulaColumn],
     n_data_cols: usize,
 ) -> PyResult<()> {
     let num_cols = batch.num_columns();
@@ -283,7 +283,7 @@ pub fn write_arrow_batch(
         // Written inside the row loop: constant-memory mode flushes each row as
         // the next begins, so a pass afterwards would be ignored.
         if !formula_cols.is_empty() {
-            crate::helpers::write_formula_row(
+            crate::formula::write_formula_row(
                 worksheet,
                 formula_cols,
                 n_data_cols as u16,
