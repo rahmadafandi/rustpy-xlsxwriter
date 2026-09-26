@@ -273,7 +273,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.CODECOV_TOKEN }}
         if: env.TOKEN != ''
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
