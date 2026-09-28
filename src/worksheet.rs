@@ -1024,7 +1024,9 @@ pub fn write_worksheets(
         let worksheet = if dedupe || layout.outline.needs_buffered_rows() {
             workbook.add_worksheet()
         } else {
-            workbook.add_worksheet_with_constant_memory()
+            workbook
+                .add_worksheet_with_constant_memory()
+                .map_err(xlsx_err)?
         };
         worksheet.set_name(&sheet_name).map_err(xlsx_err)?;
 
@@ -1141,7 +1143,9 @@ pub fn write_worksheet(
     let worksheet = if dedupe_strings || layout.outline.needs_buffered_rows() {
         workbook.add_worksheet()
     } else {
-        workbook.add_worksheet_with_constant_memory()
+        workbook
+            .add_worksheet_with_constant_memory()
+            .map_err(xlsx_err)?
     };
 
     if let Some(sheet_name) = sheet_name {
