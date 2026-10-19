@@ -1,4 +1,5 @@
 import os
+import zipfile
 from datetime import date, datetime
 
 import openpyxl
@@ -167,3 +168,25 @@ class TestWriteSingleSheet:
         wb = openpyxl.load_workbook(path)
         assert wb.active.cell(2, 1).value == "data"
         wb.close()
+
+    @pytest.mark.parametrize(
+        "kwargs, expect_cols",
+        [({}, False), ({"autofit": True}, True), ({"autofit": False}, False)],
+    )
+    def test_autofit_is_off_unless_asked_for(self, tmp_path, kwargs, expect_cols):
+        """The default flipped to False in 0.8.0.
+
+        Read from the sheet XML rather than through openpyxl: autofit writes a
+        `<cols>` element with computed widths, and its absence is the only
+        direct evidence that nothing sized the columns. A silent revert of the
+        default would not break any other test, because a file with autofitted
+        columns is still a perfectly valid file.
+        """
+        path = str(tmp_path / f"autofit_{expect_cols}.xlsx")
+        FastExcel(path, **kwargs).sheet(
+            "Sheet1", [{"Col": "a value wide enough to resize the column"}]
+        ).save()
+
+        with zipfile.ZipFile(path) as zf:
+            sheet = zf.read("xl/worksheets/sheet1.xml").decode()
+        assert ("<cols>" in sheet) is expect_cols

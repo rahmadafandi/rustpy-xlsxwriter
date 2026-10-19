@@ -34,10 +34,19 @@ def test_no_warning_when_nothing_excel_only_is_set(tmp_path):
     assert path.read_text().strip() == "a,b\n1.23456,x"
 
 
-def test_autofit_alone_does_not_warn(tmp_path):
-    """autofit defaults to True, so warning on it would fire on every CSV."""
-    with _no_warnings():
+def test_autofit_warns_on_csv(tmp_path):
+    """Now that autofit is off by default, asking for it on a CSV is a mistake.
+
+    It used to be excluded from the warning because the default was True and
+    the warning would have fired on every CSV write.
+    """
+    with pytest.warns(UserWarning, match="autofit"):
         FastExcel(str(tmp_path / "a.csv"), autofit=True).sheet("S", ROWS).save()
+
+
+def test_autofit_left_alone_does_not_warn(tmp_path):
+    with _no_warnings():
+        FastExcel(str(tmp_path / "b.csv")).sheet("S", ROWS).save()
 
 
 def test_sanitize_formulas_does_not_warn(tmp_path):

@@ -181,7 +181,7 @@ class FastExcel:
         *,
         output_format: Optional[str] = None,
         password: Optional[str] = None,
-        autofit: bool = True,
+        autofit: bool = False,
         sanitize_formulas: bool = False,
         bom: bool = False,
         columns: Optional[List[str]] = None,
@@ -203,11 +203,11 @@ class FastExcel:
                 the file. The cell data is stored in plaintext and the
                 protection is trivially removed; do not rely on it to keep
                 data confidential.
-            autofit: Automatically adjust column widths (default ``True``).
+            autofit: Automatically adjust column widths (default ``False``).
                 Under constant-memory mode (the default for every Excel sheet,
                 unless ``sheet(..., dedupe_strings=True)`` opts out) autofit
-                sizing is approximate. Set to ``False`` for large datasets to
-                improve performance.
+                sizing is approximate. Excel's own default widths are used
+                when this is off.
             sanitize_formulas: CSV/TSV only. When ``True``, string fields that
                 begin with ``= + - @`` are prefixed with a single quote so
                 spreadsheet apps open them as text instead of executing them as
@@ -621,10 +621,10 @@ class FastExcel:
     def _excel_only_options(self) -> List[str]:
         """Names of set options that only apply to ``.xlsx`` output.
 
-        ``autofit`` and ``sanitize_formulas`` are left out: the first is on by
-        default so it would fire on every CSV write, and the second is CSV-only.
+        ``sanitize_formulas`` is left out because it is CSV-only.
         """
         workbook_wide = {
+            "autofit": self._autofit,
             "password": self._password,
             "float_format": self._float_format,
             "datetime_format": self._datetime_format,
