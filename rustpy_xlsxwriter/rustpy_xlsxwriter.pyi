@@ -182,7 +182,7 @@ def write_worksheet(
     float_format: Optional[str] = None,
     datetime_format: Optional[str] = None,
     index_columns: Optional[List[str]] = None,
-    autofit: bool = True,
+    autofit: bool = False,
     bold_headers: bool = False,
     column_width: Optional[float] = None,
     column_widths: Optional[ColumnWidths] = None,
@@ -227,7 +227,7 @@ def write_worksheet(
         freeze_col: Freeze panes to the left of this column number.
         float_format: Excel number format for floats (e.g. ``"0.00"``).
         index_columns: Column names that should be rendered **bold**.
-        autofit: Automatically adjust column widths (default ``True``).
+        autofit: Automatically adjust column widths (default ``False``).
         column_width: Uniform width applied to every column.
         column_widths: Per-column width — a dict keyed by header name or a positional list.
         dedupe_strings: Store repeated strings once in the shared-string table
@@ -420,7 +420,7 @@ def write_worksheets(
     float_format: Optional[str] = None,
     datetime_format: Optional[str] = None,
     index_columns: Optional[List[str]] = None,
-    autofit: bool = True,
+    autofit: bool = False,
     bold_headers: bool = False,
     column_width: Optional[Dict[str, float]] = None,
     column_widths: Optional[Dict[str, ColumnWidths]] = None,
@@ -460,7 +460,7 @@ def write_worksheets(
         freeze_panes: Per-sheet and/or general freeze-pane config.
         float_format: Excel number format for floats (e.g. ``"0.00"``).
         index_columns: Column names that should be rendered **bold**.
-        autofit: Automatically adjust column widths (default ``True``).
+        autofit: Automatically adjust column widths (default ``False``).
         column_width: Uniform width per sheet — dict keyed by sheet name (``"general"`` applies to all).
         column_widths: Per-column width per sheet — dict keyed by sheet name mapping to :data:`ColumnWidths`.
         dedupe_strings: Per-sheet shared-string deduplication — dict keyed by

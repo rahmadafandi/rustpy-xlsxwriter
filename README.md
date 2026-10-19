@@ -170,7 +170,7 @@ build is younger — treat it as the newer option it is.
 - Column selection and ordering (`columns=`), header row toggle (`header=`)
 - Text for missing values and infinity (`na_rep=`, `inf_value=`)
 - Password protection (Excel only)
-- Optional column auto-fit (`autofit=True/False`)
+- Optional column auto-fit (`autofit=True`, off by default)
 - Multiple sheets in a single file (Excel only)
 
 **Runtime**

@@ -30,7 +30,9 @@ accept `"#RRGGBB"` or names (`"red"`); enum-valued setters take lowercase string
 
 ## Column widths
 
-Override `autofit` with explicit widths (Excel character units):
+Columns use Excel's default width unless you ask for something else. Pass
+`autofit=True` to size them to their contents, or set widths yourself (Excel
+character units):
 
 ```python
 from rustpy_xlsxwriter import FastExcel
