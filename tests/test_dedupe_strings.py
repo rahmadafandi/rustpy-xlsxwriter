@@ -66,8 +66,19 @@ def test_dedupe_shrinks_repeated_text(tmp_path):
     assert shared.stat().st_size < inline.stat().st_size
 
 
-def test_short_repeats_do_not_shrink_on_disk(tmp_path):
-    """Guards the documented caveat: dedup is not a free win."""
+def test_short_repeats_barely_shrink_on_disk(tmp_path):
+    """Guards the documented caveat: dedup is not a free win.
+
+    The shared-string table removes most of the repetition from the XML, but
+    deflate was already removing it from the file, so almost none of that
+    saving survives compression. The gap between the two numbers below is the
+    caveat.
+
+    This used to assert the file got no smaller at all, which held while the
+    build linked C zlib. Dropping that feature left zlib-rs as the backend,
+    and it squeezes repetitive inline strings slightly less hard, so a small
+    win now does survive. The size of the win is what matters, not its sign.
+    """
     inline = tmp_path / "inline.xlsx"
     shared = tmp_path / "shared.xlsx"
     records = _repetitive_records()
@@ -75,10 +86,11 @@ def test_short_repeats_do_not_shrink_on_disk(tmp_path):
     write_worksheet(records, str(inline))
     write_worksheet(records, str(shared), dedupe_strings=True)
 
-    # Uncompressed XML still shrinks...
-    assert _uncompressed_size(shared) < _uncompressed_size(inline)
-    # ...but after zip compression the table is pure overhead here.
-    assert shared.stat().st_size >= inline.stat().st_size
+    raw_saving = 1 - _uncompressed_size(shared) / _uncompressed_size(inline)
+    disk_saving = 1 - shared.stat().st_size / inline.stat().st_size
+
+    assert raw_saving > 0.15, f"table should shrink the XML, saved {raw_saving:.1%}"
+    assert disk_saving < 0.05, f"but barely the file, saved {disk_saving:.1%}"
 
 
 def test_dedupe_preserves_cell_values(tmp_path):
