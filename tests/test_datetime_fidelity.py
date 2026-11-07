@@ -277,7 +277,7 @@ def test_dataframe_date_before_1900_raises_naming_column_and_value(tmp_path, lab
 def test_dataframe_date_past_9999_raises(tmp_path):
     pl = pytest.importorskip("polars")
     df = pl.Series("far", [10_500 * 366], dtype=pl.Int32).cast(pl.Date).to_frame()
-    with pytest.raises(ValueError, match="column 'far': a date before the year 0 or after 9999"):
+    with pytest.raises(ValueError, match=r"column 'far': \+12491-10-11 is outside Excel's calendar"):
         write_worksheet(df, str(tmp_path / "out.xlsx"))
 
 

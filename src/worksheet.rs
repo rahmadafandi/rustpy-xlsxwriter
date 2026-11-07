@@ -7,9 +7,9 @@ use std::collections::{HashMap, HashSet};
 use crate::cell::{classify_and_write, try_cached, CellWriter};
 use crate::data_types::{FreezePanesConfig, WorksheetData};
 use crate::helpers::{
-    py_date_to_excel, py_datetime_to_excel, py_time_to_excel, save_workbook, write_all_headers,
-    write_bool_opt, write_datetime_opt, write_num, write_number_opt, write_string_opt,
-    write_url_or_text, ColType,
+    py_calendar_err, py_date_to_excel, py_datetime_to_excel, py_time_to_excel, save_workbook,
+    write_all_headers, write_bool_opt, write_datetime_opt, write_num, write_number_opt,
+    write_string_opt, write_url_or_text, ColType, Loc,
 };
 use crate::utils::ensure_valid_sheet_name;
 
@@ -122,6 +122,11 @@ struct ExcelCell<'a> {
     per_cell_datetime: bool,
     /// This column was listed in `url_columns`, so strings become links.
     is_url: bool,
+    /// The sheet's headers, and the record index on the records path, for an
+    /// error that has to say where a value came from. Both are set once per
+    /// row, so naming the source costs nothing until something fails.
+    headers: &'a [String],
+    record: Option<usize>,
     /// Display text for the link, when `url_columns` named a text column.
     /// Owned: it comes from another cell of the same row, whose Python object
     /// does not outlive the lookup. One allocation per link cell, and link
@@ -130,6 +135,18 @@ struct ExcelCell<'a> {
 }
 
 impl ExcelCell<'_> {
+    /// Where the current cell's value came from.
+    fn loc(&self) -> Loc<'_> {
+        let name = self
+            .headers
+            .get(self.col as usize)
+            .map_or("?", String::as_str);
+        match self.record {
+            Some(index) => Loc::Record { index, key: name },
+            None => Loc::Column(name),
+        }
+    }
+
     /// Set the datetime column format once, on first datetime cell in the column.
     fn ensure_datetime_format(&mut self) -> PyResult<()> {
         let fmt = self.col_override.unwrap_or(self.datetime_fmt);
@@ -232,13 +249,17 @@ impl CellWriter for ExcelCell<'_> {
     }
 
     fn write_datetime(&mut self, dt: &Bound<'_, PyDateTime>) -> PyResult<()> {
-        let excel_dt = py_datetime_to_excel(dt)?;
-        self.put_datetime(&excel_dt)
+        match py_datetime_to_excel(dt)? {
+            Some(excel_dt) => self.put_datetime(&excel_dt),
+            None => Err(py_calendar_err(dt.as_any(), self.loc())),
+        }
     }
 
     fn write_date(&mut self, d: &Bound<'_, PyDate>) -> PyResult<()> {
-        let excel_dt = py_date_to_excel(d)?;
-        self.put_datetime(&excel_dt)
+        match py_date_to_excel(d)? {
+            Some(excel_dt) => self.put_datetime(&excel_dt),
+            None => Err(py_calendar_err(d.as_any(), self.loc())),
+        }
     }
 
     fn write_decimal(&mut self, d: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -674,6 +695,8 @@ fn write_worksheet_content(
                     time_fmt: &pal.time,
                     datetime_cols_set: &mut datetime_cols_set,
                     col_override: None,
+                    headers: &final_headers,
+                    record: Some(row_idx),
                     url_text: None,
                     reps: layout.reps(),
                     per_cell_datetime: banding,
@@ -901,6 +924,7 @@ fn write_df_rows<F>(
     url_cols: &[crate::helpers::UrlCol],
     formula_cols: &[crate::formula::FormulaColumn],
     n_data_cols: usize,
+    headers: &[String],
 ) -> PyResult<()>
 where
     F: Fn(usize) -> ScalarKind,
@@ -990,11 +1014,14 @@ where
                     // With banding the shade has to ride on the cell, since a
                     // column format cannot alternate between rows.
                     let dt_fmt = banding.then(|| col_override.unwrap_or(&pal.datetime));
+                    let loc = || Loc::Column(headers.get(col_idx).map_or("?", String::as_str));
                     if let Ok(dt) = item.cast::<PyDateTime>() {
-                        let excel_dt = py_datetime_to_excel(dt)?;
+                        let excel_dt = py_datetime_to_excel(dt)?
+                            .ok_or_else(|| py_calendar_err(&item, loc()))?;
                         write_datetime_opt(worksheet, row_u32, col_u16, &excel_dt, dt_fmt)?;
                     } else if let Ok(d) = item.cast::<PyDate>() {
-                        let excel_dt = py_date_to_excel(d)?;
+                        let excel_dt =
+                            py_date_to_excel(d)?.ok_or_else(|| py_calendar_err(&item, loc()))?;
                         write_datetime_opt(worksheet, row_u32, col_u16, &excel_dt, dt_fmt)?;
                     } else if let Ok(t) = item.cast::<PyTime>() {
                         // The datetime column format set for this column would
@@ -1018,6 +1045,8 @@ where
                         time_fmt: &pal.time,
                         datetime_cols_set: &mut *datetime_cols_set,
                         col_override,
+                        headers,
+                        record: None,
                         reps: layout.reps(),
                         per_cell_datetime: banding,
                         is_url: url_col.link,
@@ -1164,6 +1193,7 @@ where
         &url_cols,
         formula_cols,
         n_data_cols,
+        final_headers,
     )
 }
 

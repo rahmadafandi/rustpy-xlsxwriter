@@ -9,6 +9,12 @@ The object paths had a worse version of the same hole: a pandas `Timestamp`
 past 9999 keeps a placeholder year in its C-level datetime fields, which is
 what the writers read, so `Timestamp("10500-03-04")` came out as 1970-03-04.
 Its `year` property is right, and subclasses are now checked against it.
+
+For xlsx the limit is Excel's calendar, 1900-01-01 to 9999-12-31. Every
+writer refuses a date outside it with the same sentence, and says where the
+value came from: the record and key for a list of dicts, the column for a
+DataFrame. The records path and the per-column DataFrame writer used to
+raise the crate's own message, which named neither.
 """
 
 import datetime as dt
@@ -16,7 +22,7 @@ import io
 
 import pytest
 
-from rustpy_xlsxwriter import write_csv
+from rustpy_xlsxwriter import write_csv, write_worksheet
 
 pl = pytest.importorskip("polars")
 pd = pytest.importorskip("pandas")
@@ -138,3 +144,105 @@ def test_in_range_timestamps_are_unchanged():
     assert _csv([{"t": ts}]) == ["t", "2026-01-01T12:00:00.500000"]
     frame = _NoArrowFrame(pd.DataFrame({"t": [ts]}))
     assert _csv(frame) == ["t", "2026-01-01T12:00:00.500000"]
+
+
+# --- xlsx: one sentence, with the location of the value -------------------
+
+CALENDAR = (
+    r"is outside Excel's calendar \(1900-01-01 to 9999-12-31\), so there is no cell value "
+    r"for it\. Convert the column to text to keep it\."
+)
+
+
+class _Series:
+    def __init__(self, values):
+        self._values = values
+
+    def tolist(self):
+        return list(self._values)
+
+
+class _Dtype:
+    def __init__(self, kind):
+        self.kind = kind
+
+
+class _NoArrowColumns:
+    """Pandas-shaped with no Arrow stream: the per-column xlsx writer runs."""
+
+    def __init__(self, data, kinds):
+        self._data = data
+        self.columns = list(data)
+        self.dtypes = [_Dtype(k) for k in kinds]
+
+    def __len__(self):
+        return len(next(iter(self._data.values())))
+
+    def __getitem__(self, key):
+        return _Series(self._data[key])
+
+
+@pytest.mark.parametrize(
+    "value, text",
+    [(dt.datetime(1850, 1, 1, 12), "1850-01-01T12:00:00"), (dt.date(1850, 3, 4), "1850-03-04")],
+    ids=["datetime", "date"],
+)
+def test_records_name_the_record_and_key(tmp_path, value, text):
+    rows = [{"id": 1, "born": dt.date(2000, 1, 1)}, {"id": 2, "born": value}]
+    with pytest.raises(ValueError, match=rf"^record 1, key 'born': {text} {CALENDAR}$"):
+        write_worksheet(rows, str(tmp_path / "out.xlsx"))
+
+
+def test_records_by_name_path_names_the_key(tmp_path):
+    rows = [{"id": 1, "born": dt.date(2000, 1, 1)}, {"born": dt.date(1850, 3, 4), "id": 2}]
+    with pytest.raises(ValueError, match="record 1, key 'born': 1850-03-04"):
+        write_worksheet(rows, str(tmp_path / "out.xlsx"))
+
+
+def test_records_with_columns_names_the_selected_key(tmp_path):
+    rows = [{"id": 1, "x": 0, "born": dt.date(1850, 3, 4)}]
+    with pytest.raises(ValueError, match="record 0, key 'born'"):
+        write_worksheet(rows, str(tmp_path / "out.xlsx"), columns=["born", "id"])
+
+
+@pytest.mark.parametrize(
+    "kind, value, text",
+    [
+        ("M", dt.datetime(1850, 1, 1), "1850-01-01T00:00:00"),
+        ("O", dt.date(1850, 3, 4), "1850-03-04"),
+    ],
+    ids=["temporal-column", "object-column"],
+)
+def test_no_arrow_dataframe_names_the_column(tmp_path, kind, value, text):
+    frame = _NoArrowColumns({"id": [1], "born": [value]}, ["i", kind])
+    with pytest.raises(ValueError, match=rf"^column 'born': {text} {CALENDAR}$"):
+        write_worksheet(frame, str(tmp_path / "out.xlsx"))
+
+
+def test_arrow_dataframe_uses_the_same_sentence(tmp_path):
+    df = pl.DataFrame({"born": [dt.datetime(1850, 1, 1)]})
+    with pytest.raises(
+        ValueError,
+        match=rf"^column 'born': 1850-01-01T00:00:00 {CALENDAR} \(Earlier versions wrote it "
+        r"as an empty cell without an error\.\)$",
+    ):
+        write_worksheet(df, str(tmp_path / "out.xlsx"))
+
+
+def test_xlsx_far_timestamp_is_no_longer_written_as_1970(tmp_path):
+    with pytest.raises(
+        ValueError,
+        match=rf"^record 0, key 'born': 10500-03-04T05:06:07 {CALENDAR} \(Earlier versions "
+        r"wrote it with a wrong year without an error\.\)$",
+    ):
+        write_worksheet([{"born": _far_timestamp()}], str(tmp_path / "out.xlsx"))
+
+
+def test_xlsx_calendar_bounds_still_write(tmp_path):
+    import openpyxl
+
+    path = tmp_path / "out.xlsx"
+    write_worksheet([{"d": dt.datetime(1900, 1, 1)}, {"d": dt.date(9999, 12, 31)}], str(path))
+    ws = openpyxl.load_workbook(path).active
+    assert ws["A2"].value == dt.datetime(1900, 1, 1)
+    assert ws["A3"].value == dt.datetime(9999, 12, 31)

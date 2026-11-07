@@ -294,22 +294,12 @@ fn write_temporal(
 
 /// The error for a date Excel cannot store, naming the column and the value.
 fn out_of_range(name: &str, col: &Col, idx: usize) -> PyErr {
-    let mut text = Vec::new();
-    let reps = crate::helpers::NumReps {
-        na: None,
-        inf: None,
-    };
-    let _ = emit_arrow_cell_csv(&mut text, col, idx, false, reps);
-    let what = match String::from_utf8(text) {
-        Ok(t) if !t.is_empty() => format!("{t} is"),
-        // ISO text cannot show a year outside 0..=9999 either.
-        _ => "a date before the year 0 or after 9999 is".to_string(),
-    };
-    value_err(format!(
-        "column '{name}': {what} outside Excel's calendar (1900-01-01 to 9999-12-31), \
-         so there is no cell value for it. Convert the column to text to keep it. \
-         (Earlier versions wrote it as an empty cell without an error.)"
-    ))
+    let value = expanded_iso(col, idx).unwrap_or_else(|| "the value".to_string());
+    crate::helpers::calendar_err(
+        crate::helpers::Loc::Column(name),
+        &value,
+        " (Earlier versions wrote it as an empty cell without an error.)",
+    )
 }
 
 /// Write an Arrow `RecordBatch` starting at `start_row`.

@@ -149,9 +149,16 @@ every case, and `datetime.fromisoformat` reads back the value you wrote.
 
 **Dates before 1900** cannot be stored in xlsx; Excel's calendar starts on
 1900-01-01 and ends on 9999-12-31. A date outside it raises `ValueError`, from
-a list of dicts and from a DataFrame alike; the DataFrame error names the
-column and the value. Earlier versions wrote such a DataFrame cell empty
-without an error. To keep old dates in xlsx, write the column as text. CSV
+a list of dicts and from a DataFrame alike, naming the value and where it came
+from:
+
+```
+record 41, key 'born': 1850-01-01 is outside Excel's calendar (1900-01-01 to 9999-12-31), …
+column 'born': 1850-01-01 is outside Excel's calendar (1900-01-01 to 9999-12-31), …
+```
+
+Earlier versions wrote such a DataFrame cell empty without an error. To keep
+old dates in xlsx, write the column as text. CSV
 has no calendar floor and writes them as they are. The one date CSV refuses is
 a year outside 0 to 9999, which an ISO-8601 date has no digits for: polars can
 hold one, and so can a pandas column with a non-nanosecond unit. That raises

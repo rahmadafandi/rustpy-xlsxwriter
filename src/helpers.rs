@@ -28,24 +28,29 @@ pub enum ColType {
 
 /// Convert a Python `datetime` to `ExcelDateTime`, microseconds included.
 ///
+/// `None` when Excel's calendar (1900-01-01 to 9999-12-31) cannot hold it.
+/// The caller knows where the value came from, and builds the error with
+/// [`calendar_err`]. A pandas `Timestamp` past 9999 is caught here too,
+/// rather than written with the placeholder year its fields carry; see
+/// [`true_year`].
+///
 /// An aware datetime keeps its wall-clock time and loses its offset: Excel has
 /// no timezone, and the data-integrity guide says so.
-pub fn py_datetime_to_excel(dt: &Bound<PyDateTime>) -> PyResult<ExcelDateTime> {
-    let whole = ExcelDateTime::from_ymd(dt.get_year() as u16, dt.get_month(), dt.get_day())
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Failed to create datetime: {}",
-                e
-            ))
-        })?
-        .and_hms(dt.get_hour() as u16, dt.get_minute(), dt.get_second())
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Failed to create timestamp: {}",
-                e
-            ))
-        })?;
-    Ok(with_subsecond(whole, dt.get_microsecond() * 1_000))
+#[inline]
+pub fn py_datetime_to_excel(dt: &Bound<PyDateTime>) -> PyResult<Option<ExcelDateTime>> {
+    let year = dt.get_year();
+    // Inline pointer check first: nearly every value is a built-in datetime.
+    if !is_builtin_date(dt.as_any()) && true_year(dt.as_any(), year)? != year {
+        return Ok(None);
+    }
+    let Ok(day) = ExcelDateTime::from_ymd(year as u16, dt.get_month(), dt.get_day()) else {
+        return Ok(None);
+    };
+    // A `datetime` always has a valid time of day, so this cannot fail.
+    let Ok(whole) = day.and_hms(dt.get_hour() as u16, dt.get_minute(), dt.get_second()) else {
+        return Ok(None);
+    };
+    Ok(Some(with_subsecond(whole, dt.get_microsecond() * 1_000)))
 }
 
 /// Convert a Python `time` to an Excel time of day, microseconds included.
@@ -114,11 +119,47 @@ pub fn is_builtin_date(value: &Bound<'_, PyAny>) -> bool {
 /// `datetime` has no room for, and keeps a placeholder year in those fields:
 /// `Timestamp("10500-03-04")` reads as 1970-03-04 there. Its `year` property
 /// is correct, so a subclass is asked for it.
+#[cold]
 pub fn true_year(value: &Bound<'_, PyAny>, field_year: i32) -> PyResult<i32> {
     if is_builtin_date(value) {
         return Ok(field_year);
     }
     value.getattr(pyo3::intern!(value.py(), "year"))?.extract()
+}
+
+/// The error for a date Excel's calendar cannot hold. Every writer uses this
+/// one sentence, so it reads the same whether the value came from a record or
+/// a column; only `loc` and `note` differ. `note` says what earlier versions
+/// did instead, where that was not an error.
+pub fn calendar_err(loc: Loc<'_>, value: &str, note: &str) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+        "{loc}: {value} is outside Excel's calendar (1900-01-01 to 9999-12-31), so there \
+         is no cell value for it. Convert the column to text to keep it.{note}"
+    ))
+}
+
+/// [`calendar_err`] for a Python `date` or `datetime` that
+/// [`py_datetime_to_excel`] or [`py_date_to_excel`] refused.
+pub fn py_calendar_err(value: &Bound<'_, PyAny>, loc: Loc<'_>) -> PyErr {
+    let note = if misread_year(value) {
+        WRONG_YEAR_NOTE
+    } else {
+        ""
+    };
+    calendar_err(loc, &iso_text(value), note)
+}
+
+/// `true` for a date subclass whose C-level year is a placeholder: a pandas
+/// `Timestamp` past 9999. See [`true_year`].
+pub fn misread_year(value: &Bound<'_, PyAny>) -> bool {
+    let field_year = if let Ok(dt) = value.cast::<PyDateTime>() {
+        dt.get_year()
+    } else if let Ok(d) = value.cast::<PyDate>() {
+        d.get_year()
+    } else {
+        return false;
+    };
+    matches!(true_year(value, field_year), Ok(year) if year != field_year)
 }
 
 /// The note for a far-year `Timestamp` on the object paths, which used to be
@@ -134,16 +175,10 @@ pub const WRONG_YEAR_NOTE: &str =
 /// year the CSV writer refused is re-checked and gets the full message; any
 /// other error is returned as it is.
 pub fn located<'a>(err: PyErr, value: &Bound<'_, PyAny>, loc: impl FnOnce() -> Loc<'a>) -> PyErr {
-    let field_year = if let Ok(dt) = value.cast::<PyDateTime>() {
-        dt.get_year()
-    } else if let Ok(d) = value.cast::<PyDate>() {
-        d.get_year()
+    if misread_year(value) {
+        iso_range_err(loc(), &iso_text(value), WRONG_YEAR_NOTE)
     } else {
-        return err;
-    };
-    match true_year(value, field_year) {
-        Ok(year) if year != field_year => iso_range_err(loc(), &iso_text(value), WRONG_YEAR_NOTE),
-        _ => err,
+        err
     }
 }
 
@@ -247,11 +282,15 @@ pub fn write_iso_offset(output: &mut Vec<u8>, offset_secs: i64) {
     }
 }
 
-/// Convert a Python `date` to `ExcelDateTime`.
-pub fn py_date_to_excel(d: &Bound<PyDate>) -> PyResult<ExcelDateTime> {
-    ExcelDateTime::from_ymd(d.get_year() as u16, d.get_month(), d.get_day()).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to create date: {}", e))
-    })
+/// Convert a Python `date` to `ExcelDateTime`; `None` outside Excel's
+/// calendar, as for [`py_datetime_to_excel`].
+#[inline]
+pub fn py_date_to_excel(d: &Bound<PyDate>) -> PyResult<Option<ExcelDateTime>> {
+    let year = d.get_year();
+    if !is_builtin_date(d.as_any()) && true_year(d.as_any(), year)? != year {
+        return Ok(None);
+    }
+    Ok(ExcelDateTime::from_ymd(year as u16, d.get_month(), d.get_day()).ok())
 }
 
 /// Write a header cell on `row`, optionally bold, and mark the column
