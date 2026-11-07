@@ -26,6 +26,48 @@ imposes are raised rather than written into a file it would refuse to open: an
 inline `list` is capped at 255 characters including separators, and a fraction
 given to `whole_number` or `text_length` is rejected instead of truncated.
 
+## Records must carry the same keys
+
+The header comes from the first record, because a generator gives no way to
+look ahead. Later records are matched to it **by key name**, so one whose keys
+arrive in another order still lands in the right columns:
+
+```python
+rows = [{"id": 1, "name": "Alice"}, {"name": "Bob", "id": 2}]
+# Bob stays under "name", 2 stays under "id".
+```
+
+A record missing a key leaves that cell empty. A record carrying a key the
+first one did not have raises, because the header row has already been written
+and a column cannot be given a title after the fact:
+
+```python
+FastExcel("out.xlsx").sheet("S", [{"a": 1}, {"a": 2, "b": 3}]).save()
+# ValueError: record 1: no column 'b'. The header comes from the first record (a) …
+```
+
+Normalise the records first, or hand over a DataFrame, which carries its own
+schema and has no first-record problem.
+
+## Whole numbers above 2^53
+
+Excel stores every number as a 64-bit float, so an integer larger than
+9,007,199,254,740,992 loses its last digits, and nothing reports it: the file
+is valid either way:
+
+```python
+write_worksheet([{"id": 9007199254740993}], "out.xlsx")
+# reads back as 9007199254740992
+```
+
+This is the file format, not this library; `xlsxwriter` and Excel itself
+behave the same. Long identifiers, account numbers and phone numbers belong in
+a text column, where they also keep any leading zeros:
+
+```python
+write_worksheet([{"id": str(9007199254740993)}], "out.xlsx")
+```
+
 ## Missing values, NaN and infinity
 
 Excel has no cell type for `NaN` or `inf`, so both are written as an **empty
