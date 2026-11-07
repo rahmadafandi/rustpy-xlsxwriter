@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDate, PyDateTime, PyInt, PyString};
+use pyo3::types::{PyDate, PyDateTime, PyInt, PyString, PyTime};
 use pyo3::{Py, PyAny, Python};
 use rust_xlsxwriter::{Format, Workbook, XlsxError};
 use std::collections::{HashMap, HashSet};
@@ -7,8 +7,9 @@ use std::collections::{HashMap, HashSet};
 use crate::cell::{classify_and_write, try_cached, CellWriter};
 use crate::data_types::{FreezePanesConfig, WorksheetData};
 use crate::helpers::{
-    py_date_to_excel, py_datetime_to_excel, save_workbook, write_all_headers, write_bool_opt,
-    write_datetime_opt, write_num, write_number_opt, write_string_opt, write_url_or_text, ColType,
+    py_date_to_excel, py_datetime_to_excel, py_time_to_excel, save_workbook, write_all_headers,
+    write_bool_opt, write_datetime_opt, write_num, write_number_opt, write_string_opt,
+    write_url_or_text, ColType,
 };
 use crate::utils::ensure_valid_sheet_name;
 
@@ -41,6 +42,9 @@ struct ExcelCell<'a> {
     text_fmt: Option<&'a Format>,
     float_fmt: Option<&'a Format>,
     datetime_fmt: &'a Format,
+    /// Format for time-of-day cells, attached to each one: a column of times
+    /// gets no column format, so there is nothing for the cell to inherit.
+    time_fmt: &'a Format,
     datetime_cols_set: &'a mut HashSet<u16>,
     col_override: Option<&'a Format>,
     /// Text for NaN and the infinities; see [`crate::helpers::NumReps`].
@@ -168,6 +172,15 @@ impl CellWriter for ExcelCell<'_> {
     fn write_date(&mut self, d: &Bound<'_, PyDate>) -> PyResult<()> {
         let excel_dt = py_date_to_excel(d)?;
         self.put_datetime(&excel_dt)
+    }
+
+    fn write_time(&mut self, t: &Bound<'_, PyTime>) -> PyResult<()> {
+        let excel_time = py_time_to_excel(t)?;
+        let fmt = self.col_override.unwrap_or(self.time_fmt);
+        self.worksheet
+            .write_datetime_with_format(self.row, self.col, &excel_time, fmt)
+            .map_err(xlsx_err)?;
+        Ok(())
     }
 }
 
@@ -497,6 +510,7 @@ fn write_worksheet_content(
                     text_fmt: pal.text.as_ref(),
                     float_fmt: pal.float.as_ref(),
                     datetime_fmt: &pal.datetime,
+                    time_fmt: &pal.time,
                     datetime_cols_set: &mut datetime_cols_set,
                     col_override: None,
                     url_text: None,
@@ -812,6 +826,13 @@ where
                     } else if let Ok(d) = item.cast::<PyDate>() {
                         let excel_dt = py_date_to_excel(d)?;
                         write_datetime_opt(worksheet, row_u32, col_u16, &excel_dt, dt_fmt)?;
+                    } else if let Ok(t) = item.cast::<PyTime>() {
+                        // The datetime column format set for this column would
+                        // show a time as a date in 1900, so the time format
+                        // rides on every cell.
+                        let excel_time = py_time_to_excel(t)?;
+                        let fmt = col_override.unwrap_or(&pal.time);
+                        write_datetime_opt(worksheet, row_u32, col_u16, &excel_time, Some(fmt))?;
                     } else {
                         write_string_opt(worksheet, row_u32, col_u16, &item.to_string(), text_fmt)?;
                     }
@@ -824,6 +845,7 @@ where
                         text_fmt,
                         float_fmt: pal.float.as_ref(),
                         datetime_fmt: &pal.datetime,
+                        time_fmt: &pal.time,
                         datetime_cols_set: &mut *datetime_cols_set,
                         col_override,
                         reps: layout.reps(),

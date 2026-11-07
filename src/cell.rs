@@ -6,7 +6,7 @@
 //! four hand-kept-in-sync copies the cascade used to live in.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDate, PyDateTime, PyFloat, PyInt, PyString};
+use pyo3::types::{PyBool, PyDate, PyDateTime, PyFloat, PyInt, PyString, PyTime};
 
 use crate::helpers::ColType;
 
@@ -21,6 +21,7 @@ pub trait CellWriter {
     fn write_int(&mut self, i: &Bound<'_, PyInt>) -> PyResult<()>;
     fn write_datetime(&mut self, dt: &Bound<'_, PyDateTime>) -> PyResult<()>;
     fn write_date(&mut self, d: &Bound<'_, PyDate>) -> PyResult<()>;
+    fn write_time(&mut self, t: &Bound<'_, PyTime>) -> PyResult<()>;
 }
 
 /// Full type cascade. Returns the detected [`ColType`] so callers can cache it
@@ -57,6 +58,13 @@ pub fn classify_and_write<W: CellWriter>(value: &Bound<'_, PyAny>, w: &mut W) ->
     if let Ok(d) = value.cast::<PyDate>() {
         w.write_date(d)?;
         return Ok(ColType::Date);
+    }
+    // `time` is not related to `date` or `datetime`, so its place among the
+    // temporal checks does not matter. It must come before the `str()`
+    // fallback at the end, which used to turn it into text.
+    if let Ok(t) = value.cast::<PyTime>() {
+        w.write_time(t)?;
+        return Ok(ColType::Time);
     }
     // numpy scalar fallback: bool before f64 (numpy.bool_ extracts as f64 too).
     if let Ok(val) = value.extract::<bool>() {
@@ -122,6 +130,12 @@ pub fn try_cached<W: CellWriter>(
         ColType::Date => {
             if let Ok(d) = value.cast::<PyDate>() {
                 w.write_date(d)?;
+                return Ok(true);
+            }
+        }
+        ColType::Time => {
+            if let Ok(t) = value.cast::<PyTime>() {
+                w.write_time(t)?;
                 return Ok(true);
             }
         }

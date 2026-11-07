@@ -32,7 +32,9 @@ enum ColKind {
     Utf8View,
     Date32,
     Date64,
-    Timestamp(TimeUnit),
+    /// The flag is set when the column has a timezone. Arrow stores those
+    /// values as UTC instants.
+    Timestamp(TimeUnit, bool),
     /// Time of day. The unit also picks the array type: seconds and
     /// milliseconds are `Time32`, microseconds and nanoseconds `Time64`.
     Time(TimeUnit),
@@ -80,7 +82,7 @@ fn classify(name: &str, dt: &DataType) -> PyResult<ColKind> {
         DataType::Utf8View => ColKind::Utf8View,
         DataType::Date32 => ColKind::Date32,
         DataType::Date64 => ColKind::Date64,
-        DataType::Timestamp(unit, _) => ColKind::Timestamp(*unit),
+        DataType::Timestamp(unit, tz) => ColKind::Timestamp(*unit, tz.is_some()),
         // Only these four pairings are valid Arrow. Matching them exactly
         // matters: `as_primitive` panics when the array is not the type asked.
         DataType::Time32(unit @ (TimeUnit::Second | TimeUnit::Millisecond))
@@ -440,23 +442,27 @@ pub fn write_arrow_batch(
                 }
                 ColKind::Date64 => {
                     let ms = column.as_primitive::<Date64Type>().value(i);
+                    let (secs, nanos) = split_epoch(ms, 1_000);
                     write_temporal(
                         worksheet,
                         row_u32,
                         col_u16,
-                        millis_to_excel_datetime(ms),
+                        epoch_to_excel_datetime(secs, nanos),
                         banding,
                         overrides[col_idx].unwrap_or(&pal.datetime),
                         text_fmt,
                     )?;
                 }
-                ColKind::Timestamp(unit) => {
-                    let micros = timestamp_to_micros(column, unit, i);
+                // An aware column is written as its UTC wall-clock time: Excel
+                // has no timezone, and turning the instant into the column's
+                // own local time would take a timezone database.
+                ColKind::Timestamp(unit, _) => {
+                    let (secs, nanos) = timestamp_parts(column, unit, i);
                     write_temporal(
                         worksheet,
                         row_u32,
                         col_u16,
-                        micros_to_excel_datetime(micros),
+                        epoch_to_excel_datetime(secs, nanos),
                         banding,
                         overrides[col_idx].unwrap_or(&pal.datetime),
                         text_fmt,
@@ -536,7 +542,6 @@ fn emit_arrow_cell_csv(
     sanitize: bool,
     reps: crate::helpers::NumReps<'_>,
 ) -> PyResult<()> {
-    use std::io::Write;
     let column = &col.values;
 
     macro_rules! emit_int {
@@ -597,15 +602,16 @@ fn emit_arrow_cell_csv(
         ColKind::Date32 => {
             let days = column.as_primitive::<Date32Type>().value(i);
             if let Some((y, m, d)) = chrono_from_days(days as i64) {
-                let _ = write!(output, "{:04}-{:02}-{:02}", y, m, d);
+                crate::helpers::write_iso_date(output, u32::from(y), u32::from(m), u32::from(d));
             }
         }
         ColKind::Date64 => {
-            let ms = column.as_primitive::<Date64Type>().value(i);
-            emit_timestamp_csv(output, ms * 1000);
+            let (secs, nanos) = split_epoch(column.as_primitive::<Date64Type>().value(i), 1_000);
+            emit_timestamp_csv(output, secs, nanos, false);
         }
-        ColKind::Timestamp(unit) => {
-            emit_timestamp_csv(output, timestamp_to_micros(column, unit, i));
+        ColKind::Timestamp(unit, aware) => {
+            let (secs, nanos) = timestamp_parts(column, unit, i);
+            emit_timestamp_csv(output, secs, nanos, aware);
         }
         ColKind::Time(unit) => {
             let (h, m, s, ns) = time_parts(column, unit, i);
@@ -616,42 +622,67 @@ fn emit_arrow_cell_csv(
     Ok(())
 }
 
-/// Scale an Arrow timestamp column value at `row` to microseconds since epoch,
-/// regardless of its stored `TimeUnit`.
-fn timestamp_to_micros(column: &ArrayRef, unit: TimeUnit, row: usize) -> i64 {
+/// Split a count of `per_sec` ticks since the epoch into whole seconds and
+/// nanoseconds. Floor division, so a moment before 1970 keeps a fraction in
+/// `0..1s` instead of a negative one that would wrap to the wrong second.
+fn split_epoch(ticks: i64, per_sec: i64) -> (i64, u32) {
+    let nanos_per_tick = 1_000_000_000 / per_sec;
+    (
+        ticks.div_euclid(per_sec),
+        (ticks.rem_euclid(per_sec) * nanos_per_tick) as u32,
+    )
+}
+
+/// An Arrow timestamp as `(seconds since epoch, nanoseconds)`, whatever its
+/// stored `TimeUnit`.
+fn timestamp_parts(column: &ArrayRef, unit: TimeUnit, row: usize) -> (i64, u32) {
     match unit {
-        TimeUnit::Second => column.as_primitive::<TimestampSecondType>().value(row) * 1_000_000,
-        TimeUnit::Millisecond => {
-            column.as_primitive::<TimestampMillisecondType>().value(row) * 1_000
-        }
-        TimeUnit::Microsecond => column.as_primitive::<TimestampMicrosecondType>().value(row),
-        TimeUnit::Nanosecond => column.as_primitive::<TimestampNanosecondType>().value(row) / 1_000,
+        TimeUnit::Second => (column.as_primitive::<TimestampSecondType>().value(row), 0),
+        TimeUnit::Millisecond => split_epoch(
+            column.as_primitive::<TimestampMillisecondType>().value(row),
+            1_000,
+        ),
+        TimeUnit::Microsecond => split_epoch(
+            column.as_primitive::<TimestampMicrosecondType>().value(row),
+            1_000_000,
+        ),
+        TimeUnit::Nanosecond => split_epoch(
+            column.as_primitive::<TimestampNanosecondType>().value(row),
+            1_000_000_000,
+        ),
     }
 }
 
-/// Decompose micros-since-epoch into civil `(year, month, day, hour, minute,
-/// second)`. Returns `None` if the date is out of Excel's 0..=9999 range.
-fn micros_to_ymdhms(micros: i64) -> Option<(u16, u8, u8, u16, u8, u8)> {
-    let total_secs = micros / 1_000_000;
-    let days = total_secs / 86400;
-    let day_secs = (total_secs % 86400).unsigned_abs();
+/// Decompose seconds since the epoch into civil `(year, month, day, hour,
+/// minute, second)`. Returns `None` if the year is outside 0..=9999.
+fn epoch_to_civil(secs: i64) -> Option<(u16, u8, u8, u32, u32, u32)> {
+    let days = secs.div_euclid(86_400);
+    let day_secs = secs.rem_euclid(86_400) as u32;
     let (year, month, day) = chrono_from_days(days)?;
-    let hour = (day_secs / 3600) as u16;
-    let minute = ((day_secs % 3600) / 60) as u8;
-    let second = (day_secs % 60) as u8;
-    Some((year, month, day, hour, minute, second))
+    Some((
+        year,
+        month,
+        day,
+        day_secs / 3600,
+        day_secs % 3600 / 60,
+        day_secs % 60,
+    ))
 }
 
-fn emit_timestamp_csv(output: &mut Vec<u8>, micros: i64) {
-    use std::io::Write;
-    let Some((y, m, d, hour, minute, second)) = micros_to_ymdhms(micros) else {
+/// ISO-8601 with the fraction when there is one. An aware column's values are
+/// UTC instants, so they are written in UTC and say so with `+00:00`: the text
+/// then names the same instant the column holds. Writing the column's own
+/// local time instead would take a timezone database.
+fn emit_timestamp_csv(output: &mut Vec<u8>, secs: i64, nanos: u32, aware: bool) {
+    let Some((y, m, d, hour, minute, second)) = epoch_to_civil(secs) else {
         return;
     };
-    let _ = write!(
-        output,
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
-        y, m, d, hour, minute, second
-    );
+    crate::helpers::write_iso_date(output, u32::from(y), u32::from(m), u32::from(d));
+    output.push(b'T');
+    crate::helpers::write_iso_time(output, hour, minute, second, nanos);
+    if aware {
+        crate::helpers::write_iso_offset(output, 0);
+    }
 }
 
 pub fn set_datetime_column_formats(
@@ -677,16 +708,13 @@ fn days_to_excel_date(days_since_epoch: i64) -> Option<ExcelDateTime> {
     ExcelDateTime::from_ymd(y, m, d).ok()
 }
 
-fn millis_to_excel_datetime(ms: i64) -> Option<ExcelDateTime> {
-    micros_to_excel_datetime(ms * 1000)
-}
-
-fn micros_to_excel_datetime(micros: i64) -> Option<ExcelDateTime> {
-    let (year, month, day, hour, minute, second) = micros_to_ymdhms(micros)?;
-    ExcelDateTime::from_ymd(year, month, day)
+fn epoch_to_excel_datetime(secs: i64, nanos: u32) -> Option<ExcelDateTime> {
+    let (year, month, day, hour, minute, second) = epoch_to_civil(secs)?;
+    let whole = ExcelDateTime::from_ymd(year, month, day)
         .ok()?
-        .and_hms(hour, minute, second)
-        .ok()
+        .and_hms(hour as u16, minute as u8, second)
+        .ok()?;
+    Some(crate::helpers::with_subsecond(whole, nanos))
 }
 
 /// Howard Hinnant's civil_from_days — days since Unix epoch → (y, m, d).

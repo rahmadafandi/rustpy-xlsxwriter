@@ -1,9 +1,10 @@
 //! Fast CSV writer — writes Records, Pandas, or Polars data to CSV.
 
-use std::io::Write;
-
 use pyo3::prelude::*;
-use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyInt, PyTimeAccess};
+use pyo3::types::{
+    PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyInt, PyTime, PyTimeAccess,
+    PyTzInfoAccess,
+};
 use pyo3::Py;
 
 use crate::cell::{classify_and_write, try_cached, CellWriter};
@@ -386,26 +387,64 @@ fn write_csv_row_strings(output: &mut Vec<u8>, values: &[String], delim: u8, san
     output.push(b'\n');
 }
 
-fn emit_datetime(output: &mut Vec<u8>, dt: &Bound<PyDateTime>) {
-    let _ = write!(
+/// ISO-8601, as `datetime.isoformat()` writes it: microseconds only when
+/// there are some, and the UTC offset when the value is aware, so that the
+/// text names one instant rather than a wall-clock time in an unknown zone.
+fn emit_datetime(output: &mut Vec<u8>, dt: &Bound<PyDateTime>) -> PyResult<()> {
+    crate::helpers::write_iso_date(
         output,
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
-        dt.get_year(),
-        dt.get_month(),
-        dt.get_day(),
-        dt.get_hour(),
-        dt.get_minute(),
-        dt.get_second()
+        dt.get_year() as u32,
+        u32::from(dt.get_month()),
+        u32::from(dt.get_day()),
     );
+    output.push(b'T');
+    crate::helpers::write_iso_time(
+        output,
+        u32::from(dt.get_hour()),
+        u32::from(dt.get_minute()),
+        u32::from(dt.get_second()),
+        dt.get_microsecond() * 1_000,
+    );
+    // Naive values, the common case, stop at a pointer check.
+    if dt.get_tzinfo().is_some() {
+        emit_utc_offset(output, &dt.call_method0("utcoffset")?)?;
+    }
+    Ok(())
+}
+
+/// The same for a `datetime.time`.
+fn emit_time(output: &mut Vec<u8>, t: &Bound<PyTime>) -> PyResult<()> {
+    crate::helpers::write_iso_time(
+        output,
+        u32::from(t.get_hour()),
+        u32::from(t.get_minute()),
+        u32::from(t.get_second()),
+        t.get_microsecond() * 1_000,
+    );
+    if t.get_tzinfo().is_some() {
+        emit_utc_offset(output, &t.call_method0("utcoffset")?)?;
+    }
+    Ok(())
+}
+
+/// Append `+HH:MM` (with `:SS` when the offset has seconds) for the result of
+/// `utcoffset()`. `None` — a tzinfo that declines to give an offset — adds
+/// nothing, which is also what `isoformat()` does.
+fn emit_utc_offset(output: &mut Vec<u8>, offset: &Bound<PyAny>) -> PyResult<()> {
+    let Ok(delta) = offset.cast::<PyDelta>() else {
+        return Ok(());
+    };
+    let total = i64::from(delta.get_days()) * 86_400 + i64::from(delta.get_seconds());
+    crate::helpers::write_iso_offset(output, total);
+    Ok(())
 }
 
 fn emit_date(output: &mut Vec<u8>, d: &Bound<PyDate>) {
-    let _ = write!(
+    crate::helpers::write_iso_date(
         output,
-        "{:04}-{:02}-{:02}",
-        d.get_year(),
-        d.get_month(),
-        d.get_day()
+        d.get_year() as u32,
+        u32::from(d.get_month()),
+        u32::from(d.get_day()),
     );
 }
 
@@ -470,12 +509,15 @@ impl CellWriter for CsvCell<'_> {
     }
 
     fn write_datetime(&mut self, dt: &Bound<'_, PyDateTime>) -> PyResult<()> {
-        emit_datetime(self.output, dt);
-        Ok(())
+        emit_datetime(self.output, dt)
     }
 
     fn write_date(&mut self, d: &Bound<'_, PyDate>) -> PyResult<()> {
         emit_date(self.output, d);
         Ok(())
+    }
+
+    fn write_time(&mut self, t: &Bound<'_, PyTime>) -> PyResult<()> {
+        emit_time(self.output, t)
     }
 }

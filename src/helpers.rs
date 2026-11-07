@@ -1,7 +1,7 @@
 //! Shared helpers for Excel/CSV writing paths.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyDict, PyList, PyTimeAccess};
+use pyo3::types::{PyDate, PyDateAccess, PyDateTime, PyDict, PyList, PyTime, PyTimeAccess};
 use pyo3::Py;
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, Worksheet};
 use std::borrow::Cow;
@@ -22,11 +22,15 @@ pub enum ColType {
     Int = 4,
     DateTime = 5,
     Date = 6,
+    Time = 7,
 }
 
-/// Convert a Python `datetime` to `ExcelDateTime`.
+/// Convert a Python `datetime` to `ExcelDateTime`, microseconds included.
+///
+/// An aware datetime keeps its wall-clock time and loses its offset: Excel has
+/// no timezone, and the data-integrity guide says so.
 pub fn py_datetime_to_excel(dt: &Bound<PyDateTime>) -> PyResult<ExcelDateTime> {
-    ExcelDateTime::from_ymd(dt.get_year() as u16, dt.get_month(), dt.get_day())
+    let whole = ExcelDateTime::from_ymd(dt.get_year() as u16, dt.get_month(), dt.get_day())
         .map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Failed to create datetime: {}",
@@ -39,7 +43,21 @@ pub fn py_datetime_to_excel(dt: &Bound<PyDateTime>) -> PyResult<ExcelDateTime> {
                 "Failed to create timestamp: {}",
                 e
             ))
-        })
+        })?;
+    Ok(with_subsecond(whole, dt.get_microsecond() * 1_000))
+}
+
+/// Convert a Python `time` to an Excel time of day, microseconds included.
+pub fn py_time_to_excel(t: &Bound<PyTime>) -> PyResult<ExcelDateTime> {
+    excel_time(
+        u32::from(t.get_hour()),
+        u32::from(t.get_minute()),
+        u32::from(t.get_second()),
+        t.get_microsecond() * 1_000,
+    )
+    .ok_or_else(|| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to create time: {t}"))
+    })
 }
 
 /// Add a fraction of a second to `dt`.
@@ -65,26 +83,73 @@ pub fn excel_time(hour: u32, minute: u32, second: u32, nanos: u32) -> Option<Exc
     Some(with_subsecond(base, nanos))
 }
 
+/// Append `value` as exactly `width` decimal digits, zero-padded.
+///
+/// Dates and times are written once per cell, and `write!` with a format
+/// string dominated their cost: on 200k rows with one datetime column,
+/// writing digits directly made both CSV paths about a third faster. Every
+/// caller passes a value that fits its width.
+#[inline]
+fn push_digits(output: &mut Vec<u8>, mut value: u32, width: usize) {
+    let mut buf = [b'0'; 9];
+    for slot in buf[..width].iter_mut().rev() {
+        *slot = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
+    output.extend_from_slice(&buf[..width]);
+}
+
+/// Append an ISO-8601 date, `YYYY-MM-DD`. The year must be 0..=9999, which
+/// both Python's `date` and the Arrow path guarantee.
+#[inline]
+pub fn write_iso_date(output: &mut Vec<u8>, year: u32, month: u32, day: u32) {
+    push_digits(output, year, 4);
+    output.push(b'-');
+    push_digits(output, month, 2);
+    output.push(b'-');
+    push_digits(output, day, 2);
+}
+
 /// Append `.ffffff` (or `.fffffffff` when the value has sub-microsecond
 /// digits) to an ISO-8601 time. Whole seconds get no fraction, which is what
 /// Python's `isoformat()` does too.
+#[inline]
 pub fn write_iso_fraction(output: &mut Vec<u8>, nanos: u32) {
-    use std::io::Write;
     if nanos == 0 {
         return;
     }
+    output.push(b'.');
     if nanos.is_multiple_of(1_000) {
-        let _ = write!(output, ".{:06}", nanos / 1_000);
+        push_digits(output, nanos / 1_000, 6);
     } else {
-        let _ = write!(output, ".{nanos:09}");
+        push_digits(output, nanos, 9);
     }
 }
 
 /// Append an ISO-8601 time of day, `HH:MM:SS` plus any fraction.
+#[inline]
 pub fn write_iso_time(output: &mut Vec<u8>, hour: u32, minute: u32, second: u32, nanos: u32) {
-    use std::io::Write;
-    let _ = write!(output, "{hour:02}:{minute:02}:{second:02}");
+    push_digits(output, hour, 2);
+    output.push(b':');
+    push_digits(output, minute, 2);
+    output.push(b':');
+    push_digits(output, second, 2);
     write_iso_fraction(output, nanos);
+}
+
+/// Append a UTC offset given in seconds: `+HH:MM`, or `+HH:MM:SS` when it
+/// has seconds, as Python's `isoformat()` writes it. UTC is `+00:00`.
+pub fn write_iso_offset(output: &mut Vec<u8>, offset_secs: i64) {
+    output.push(if offset_secs < 0 { b'-' } else { b'+' });
+    // Python limits an offset to under a day, so this fits in two digits.
+    let abs = (offset_secs.unsigned_abs() % 86_400) as u32;
+    push_digits(output, abs / 3600, 2);
+    output.push(b':');
+    push_digits(output, abs % 3600 / 60, 2);
+    if !abs.is_multiple_of(60) {
+        output.push(b':');
+        push_digits(output, abs % 60, 2);
+    }
 }
 
 /// Convert a Python `date` to `ExcelDateTime`.
