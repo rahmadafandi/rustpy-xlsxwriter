@@ -287,9 +287,7 @@ fn write_worksheet_content(
                         .iter()
                         .map(|f| f.name().to_string())
                         .collect();
-                    for fc in &formula_cols {
-                        final_headers.push(fc.header.clone());
-                    }
+                    crate::formula::append_formula_headers(&mut final_headers, &formula_cols)?;
                     let n_data_cols = final_headers.len() - formula_cols.len();
                     write_all_headers(
                         worksheet,
@@ -455,9 +453,7 @@ fn write_worksheet_content(
                         headers.push(key.to_str()?.to_owned());
                         header_keys.push(key.unbind());
                     }
-                    for fc in &formula_cols {
-                        headers.push(fc.header.clone());
-                    }
+                    crate::formula::append_formula_headers(&mut headers, &formula_cols)?;
                     write_all_headers(
                         worksheet,
                         header_row,
@@ -907,9 +903,7 @@ where
     let headers: Vec<String> = df.getattr(py, "columns")?.extract(py)?;
     let n_data_cols = headers.len();
     *final_headers = headers.clone();
-    for fc in formula_cols {
-        final_headers.push(fc.header.clone());
-    }
+    crate::formula::append_formula_headers(final_headers, formula_cols)?;
     let dtypes = df.getattr(py, "dtypes")?;
     let dtypes_list: Vec<Bound<'_, PyAny>> =
         dtypes.bind(py).try_iter()?.collect::<Result<Vec<_>, _>>()?;
