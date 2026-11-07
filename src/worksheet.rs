@@ -1240,7 +1240,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = false, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None, sparklines = None, charts = None, columns = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = false, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None, sparklines = None, charts = None, columns = None, compression_level = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -1281,8 +1281,10 @@ pub fn write_worksheets(
     sparklines: Option<Bound<'_, pyo3::types::PyDict>>,
     charts: Option<Bound<'_, pyo3::types::PyDict>>,
     columns: Option<Bound<'_, pyo3::types::PyDict>>,
+    compression_level: Option<i64>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
+    crate::helpers::apply_compression_level(&mut workbook, compression_level)?;
     for (sheet_name, records) in records_with_sheet_name {
         ensure_valid_sheet_name(&sheet_name)?;
 
@@ -1369,7 +1371,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = false, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None, sparklines = None, charts = None, columns = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = false, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None, sparklines = None, charts = None, columns = None, compression_level = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -1412,6 +1414,7 @@ pub fn write_worksheet(
     sparklines: Option<Bound<'_, PyAny>>,
     charts: Option<Bound<'_, PyAny>>,
     columns: Option<Vec<String>>,
+    compression_level: Option<i64>,
 ) -> PyResult<()> {
     let layout = crate::layout::resolve_layout(
         header_row,
@@ -1437,6 +1440,7 @@ pub fn write_worksheet(
         charts.as_ref(),
     )?;
     let mut workbook = Workbook::new();
+    crate::helpers::apply_compression_level(&mut workbook, compression_level)?;
     // Row groups need the buffered writer; see `needs_buffered_rows`.
     let worksheet = if dedupe_strings || layout.outline.needs_buffered_rows() {
         workbook.add_worksheet()

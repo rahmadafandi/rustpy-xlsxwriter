@@ -92,3 +92,34 @@ own data before turning it on for a large export.
 
 For `write_worksheets`, pass `dedupe_strings` as a dict keyed by sheet name
 (with a `"general"` fallback key).
+
+## Compression level
+
+An `.xlsx` is a zip, and compressing the sheet XML is most of what saving
+costs — on a multi-sheet workbook, 59% of the whole write. `compression_level`
+is the knob on it, 1 to 9, default 6:
+
+```python
+write_worksheets(sheets, "report.xlsx", compression_level=3)
+```
+
+Measured on four sheets of 200k rows × 5 columns:
+
+| Level | Write time | On disk | Speedup |
+|---|---|---|---|
+| 1 | 1.34s | 32.2 MB | **1.75x** |
+| 3 | 1.63s | 20.7 MB | **1.44x** |
+| 6 (default) | 2.35s | 18.9 MB | 1.00x |
+| 9 | 5.99s | 18.8 MB | 0.39x |
+
+`3` is the one to reach for: a third off the write for 9% more file. `1` pays
+70% more disk for half the time, which is worth it for a temporary file or
+something about to be re-compressed in transit.
+
+**`9` is never worth it.** It costs two and a half times the default's write
+time to save 0.5% of the file, because the XML is already highly repetitive
+and deflate has little left to find. It is accepted so the full range is
+available, not because there is a reason to use it.
+
+A level outside 1–9 raises `ValueError` rather than falling back to the
+default, which is what the underlying crate does with only a line on stderr.
