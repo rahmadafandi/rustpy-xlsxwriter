@@ -259,6 +259,12 @@ fn write_worksheet_content(
             // Once batches start landing a failure has to propagate, because
             // re-writing from the top would duplicate rows.
             let reader = crate::arrow_ffi::stream_to_reader(stream_obj, py);
+            // A column the writer cannot represent is the data's problem, not
+            // this path's, so it raises here rather than falling back: the
+            // fallback would write it as whatever `str()` makes of it.
+            if let Ok(reader) = &reader {
+                crate::arrow_writer::check_schema(&reader.schema(), None)?;
+            }
             let arrow_ok = match reader {
                 Err(stream_err) => Err(stream_err),
                 Ok(reader) => (|| -> PyResult<()> {

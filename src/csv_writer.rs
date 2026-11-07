@@ -312,6 +312,8 @@ fn write_csv_via_arrow(
     let schema = reader.schema();
     let headers: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
     let indices = select_indices(&headers, columns)?;
+    // Raises ValueError, which the caller does not retry on the slower paths.
+    crate::arrow_writer::check_schema(&schema, indices.as_deref())?;
     if header {
         let out = apply_selection(headers, indices.as_ref());
         write_csv_row_strings(output, &out, delim, sanitize);

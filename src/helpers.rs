@@ -42,6 +42,51 @@ pub fn py_datetime_to_excel(dt: &Bound<PyDateTime>) -> PyResult<ExcelDateTime> {
         })
 }
 
+/// Add a fraction of a second to `dt`.
+///
+/// `ExcelDateTime::and_hms` rejects seconds above 59.999, so a value such as
+/// `59.9995` cannot go through it. Excel stores a datetime as a day count with
+/// the time as the fraction, so adding to the serial keeps every digit the
+/// float holds, about a microsecond at today's dates.
+pub fn with_subsecond(dt: ExcelDateTime, nanos: u32) -> ExcelDateTime {
+    if nanos == 0 {
+        return dt;
+    }
+    let serial = dt.to_excel() + f64::from(nanos) / 1e9 / 86_400.0;
+    ExcelDateTime::from_serial_datetime(serial).unwrap_or(dt)
+}
+
+/// An Excel time of day, keeping the fraction of a second.
+///
+/// The one place both writers turn a time into a cell: the Arrow `Time32` and
+/// `Time64` columns and Python `datetime.time` values all come through here.
+pub fn excel_time(hour: u32, minute: u32, second: u32, nanos: u32) -> Option<ExcelDateTime> {
+    let base = ExcelDateTime::from_hms(hour as u16, minute as u8, second as f64).ok()?;
+    Some(with_subsecond(base, nanos))
+}
+
+/// Append `.ffffff` (or `.fffffffff` when the value has sub-microsecond
+/// digits) to an ISO-8601 time. Whole seconds get no fraction, which is what
+/// Python's `isoformat()` does too.
+pub fn write_iso_fraction(output: &mut Vec<u8>, nanos: u32) {
+    use std::io::Write;
+    if nanos == 0 {
+        return;
+    }
+    if nanos.is_multiple_of(1_000) {
+        let _ = write!(output, ".{:06}", nanos / 1_000);
+    } else {
+        let _ = write!(output, ".{nanos:09}");
+    }
+}
+
+/// Append an ISO-8601 time of day, `HH:MM:SS` plus any fraction.
+pub fn write_iso_time(output: &mut Vec<u8>, hour: u32, minute: u32, second: u32, nanos: u32) {
+    use std::io::Write;
+    let _ = write!(output, "{hour:02}:{minute:02}:{second:02}");
+    write_iso_fraction(output, nanos);
+}
+
 /// Convert a Python `date` to `ExcelDateTime`.
 pub fn py_date_to_excel(d: &Bound<PyDate>) -> PyResult<ExcelDateTime> {
     ExcelDateTime::from_ymd(d.get_year() as u16, d.get_month(), d.get_day()).map_err(|e| {
