@@ -680,59 +680,23 @@ class FastExcel:
             )
             return
 
-        if len(self._sheets) == 1:
-            sheet_name, data = self._sheets[0]
-            # Single-sheet path: use write_worksheet for simpler freeze pane
-            freeze_row = None
-            freeze_col = None
-            # Check general or sheet-specific freeze config
-            cfg = self._freeze_panes.get(sheet_name) or self._freeze_panes.get(
-                "general"
-            )
-            if cfg:
-                freeze_row = cfg.get("row")
-                freeze_col = cfg.get("col")
-
-            write_worksheet(
-                data,
-                self._target,
-                sheet_name=sheet_name,
-                password=self._password,
-                freeze_row=freeze_row,
-                freeze_col=freeze_col,
-                float_format=self._float_format,
-                datetime_format=self._datetime_format,
-                index_columns=self._index_columns,
-                autofit=self._autofit,
-                bold_headers=self._bold_headers,
-                na_rep=self._na_rep,
-                inf_value=self._inf_value,
-                **{
-                    option: values[sheet_name]
-                    for option, values in self._per_sheet.items()
-                    if sheet_name in values
-                },
-            )
-        else:
-            # Multi-sheet path
-            write_worksheets(
-                self._sheets,
-                self._target,
-                password=self._password,
-                freeze_panes=self._freeze_panes or None,
-                float_format=self._float_format,
-                datetime_format=self._datetime_format,
-                index_columns=self._index_columns,
-                autofit=self._autofit,
-                bold_headers=self._bold_headers,
-                na_rep=self._na_rep,
-                inf_value=self._inf_value,
-                **{
-                    option: values
-                    for option, values in self._per_sheet.items()
-                    if values
-                },
-            )
+        # One path for one sheet and for many: ``write_worksheets`` takes the
+        # same options keyed by sheet name, which is how ``_per_sheet`` already
+        # stores them, and resolves the ``general`` freeze fallback itself.
+        write_worksheets(
+            self._sheets,
+            self._target,
+            password=self._password,
+            freeze_panes=self._freeze_panes or None,
+            float_format=self._float_format,
+            datetime_format=self._datetime_format,
+            index_columns=self._index_columns,
+            autofit=self._autofit,
+            bold_headers=self._bold_headers,
+            na_rep=self._na_rep,
+            inf_value=self._inf_value,
+            **{option: values for option, values in self._per_sheet.items() if values},
+        )
 
 
 # ---------------------------------------------------------------------------
