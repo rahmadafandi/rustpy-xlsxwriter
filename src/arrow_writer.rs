@@ -566,6 +566,7 @@ where
     F: FnMut(&mut Vec<u8>) -> PyResult<()>,
 {
     let num_rows = batch.num_rows();
+    let schema = batch.schema();
     let cols = batch_cols(batch)?;
 
     for row in 0..num_rows {
@@ -579,7 +580,14 @@ where
                 }
                 continue;
             };
-            emit_arrow_cell_csv(output, col, i, sanitize, reps)?;
+            if !emit_arrow_cell_csv(output, col, i, sanitize, reps)? {
+                let value = expanded_iso(col, i).unwrap_or_else(|| "the value".to_string());
+                return Err(crate::helpers::iso_range_err(
+                    crate::helpers::Loc::Column(schema.field(col_idx).name()),
+                    &value,
+                    " (Earlier versions wrote it as an empty field without an error.)",
+                ));
+            }
         }
         output.push(b'\n');
         row_done(output)?;
@@ -587,13 +595,15 @@ where
     Ok(())
 }
 
+/// Returns `Ok(false)`, writing nothing, for a date or timestamp whose year
+/// is outside 0..=9999; the caller knows the column and raises.
 fn emit_arrow_cell_csv(
     output: &mut Vec<u8>,
     col: &Col,
     i: usize,
     sanitize: bool,
     reps: crate::helpers::NumReps<'_>,
-) -> PyResult<()> {
+) -> PyResult<bool> {
     let column = &col.values;
 
     macro_rules! emit_int {
@@ -661,17 +671,18 @@ fn emit_arrow_cell_csv(
         }
         ColKind::Date32 => {
             let days = column.as_primitive::<Date32Type>().value(i);
-            if let Some((y, m, d)) = chrono_from_days(days as i64) {
-                crate::helpers::write_iso_date(output, u32::from(y), u32::from(m), u32::from(d));
-            }
+            let Some((y, m, d)) = chrono_from_days(days as i64) else {
+                return Ok(false);
+            };
+            crate::helpers::write_iso_date(output, u32::from(y), u32::from(m), u32::from(d));
         }
         ColKind::Date64 => {
             let (secs, nanos) = split_epoch(column.as_primitive::<Date64Type>().value(i), 1_000);
-            emit_timestamp_csv(output, secs, nanos, false);
+            return Ok(emit_timestamp_csv(output, secs, nanos, false));
         }
         ColKind::Timestamp(unit, aware) => {
             let (secs, nanos) = timestamp_parts(column, unit, i);
-            emit_timestamp_csv(output, secs, nanos, aware);
+            return Ok(emit_timestamp_csv(output, secs, nanos, aware));
         }
         ColKind::Time(unit) => {
             let (h, m, s, ns) = time_parts(column, unit, i);
@@ -679,7 +690,7 @@ fn emit_arrow_cell_csv(
         }
         ColKind::Null => {}
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Split a count of `per_sec` ticks since the epoch into whole seconds and
@@ -733,9 +744,12 @@ fn epoch_to_civil(secs: i64) -> Option<(u16, u8, u8, u32, u32, u32)> {
 /// UTC instants, so they are written in UTC and say so with `+00:00`: the text
 /// then names the same instant the column holds. Writing the column's own
 /// local time instead would take a timezone database.
-fn emit_timestamp_csv(output: &mut Vec<u8>, secs: i64, nanos: u32, aware: bool) {
+///
+/// Returns `false`, writing nothing, when the year is outside 0..=9999.
+#[must_use]
+fn emit_timestamp_csv(output: &mut Vec<u8>, secs: i64, nanos: u32, aware: bool) -> bool {
     let Some((y, m, d, hour, minute, second)) = epoch_to_civil(secs) else {
-        return;
+        return false;
     };
     crate::helpers::write_iso_date(output, u32::from(y), u32::from(m), u32::from(d));
     output.push(b'T');
@@ -743,6 +757,7 @@ fn emit_timestamp_csv(output: &mut Vec<u8>, secs: i64, nanos: u32, aware: bool) 
     if aware {
         crate::helpers::write_iso_offset(output, 0);
     }
+    true
 }
 
 pub fn set_datetime_column_formats(
@@ -777,8 +792,19 @@ fn epoch_to_excel_datetime(secs: i64, nanos: u32) -> Option<ExcelDateTime> {
     Some(crate::helpers::with_subsecond(whole, nanos))
 }
 
-/// Howard Hinnant's civil_from_days — days since Unix epoch → (y, m, d).
+/// [`civil_from_days`], limited to the years 0..=9999 that a plain ISO-8601
+/// date (and every writer here) can show.
 fn chrono_from_days(days: i64) -> Option<(u16, u8, u8)> {
+    let (y, m, d) = civil_from_days(days);
+    if !(0..=9999).contains(&y) {
+        return None;
+    }
+    Some((y as u16, m as u8, d as u8))
+}
+
+/// Howard Hinnant's civil_from_days — days since Unix epoch → (y, m, d), for
+/// any year.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
     let doe = (z - era * 146097) as u32;
@@ -789,9 +815,41 @@ fn chrono_from_days(days: i64) -> Option<(u16, u8, u8)> {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
 
-    if !(0..=9999).contains(&y) {
-        return None;
+/// A date, datetime or timestamp cell as ISO-8601 text that also covers a
+/// year outside 0..=9999, in the standard's expanded form (`+10500-03-04`).
+/// For error messages: it names a value no writer here can store.
+fn expanded_iso(col: &Col, idx: usize) -> Option<String> {
+    let column = &col.values;
+    let (secs, with_time) = match col.kind {
+        ColKind::Date32 => (
+            i64::from(column.as_primitive::<Date32Type>().value(idx)) * 86_400,
+            false,
+        ),
+        ColKind::Date64 => (
+            split_epoch(column.as_primitive::<Date64Type>().value(idx), 1_000).0,
+            true,
+        ),
+        ColKind::Timestamp(unit, _) => (timestamp_parts(column, unit, idx).0, true),
+        _ => return None,
+    };
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    let year = match y {
+        0..=9999 => format!("{y:04}"),
+        y if y > 9999 => format!("+{y}"),
+        y => format!("-{:04}", -y),
+    };
+    let mut text = format!("{year}-{m:02}-{d:02}");
+    if with_time {
+        let day_secs = secs.rem_euclid(86_400);
+        text.push_str(&format!(
+            "T{:02}:{:02}:{:02}",
+            day_secs / 3600,
+            day_secs % 3600 / 60,
+            day_secs % 60
+        ));
     }
-    Some((y as u16, m as u8, d as u8))
+    Some(text)
 }

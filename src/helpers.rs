@@ -61,6 +61,100 @@ pub fn py_time_to_excel(t: &Bound<PyTime>) -> PyResult<ExcelDateTime> {
     })
 }
 
+/// Where a value came from, for an error message about it.
+#[derive(Clone, Copy, Debug)]
+pub enum Loc<'a> {
+    /// A dict in a list of records, and the key it was under.
+    Record { index: usize, key: &'a str },
+    /// A DataFrame column.
+    Column(&'a str),
+    /// Not known where the error was raised; [`located`] fills it in.
+    Unknown,
+}
+
+impl std::fmt::Display for Loc<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Loc::Record { index, key } => write!(f, "record {index}, key '{key}'"),
+            Loc::Column(name) => write!(f, "column '{name}'"),
+            Loc::Unknown => write!(f, "a value"),
+        }
+    }
+}
+
+/// The error for a date CSV cannot write: a year outside 0..=9999, which a
+/// plain ISO-8601 date has no digits for. CSV has no calendar floor, so 1850
+/// is fine there; this is the only date CSV refuses. `note` says what earlier
+/// versions did instead, where that differs from raising.
+pub fn iso_range_err(loc: Loc<'_>, value: &str, note: &str) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+        "{loc}: {value} is outside the years 0 to 9999 that an ISO-8601 date can show, so \
+         there is no CSV value for it. Convert the column to text to keep it.{note}"
+    ))
+}
+
+/// `true` for a built-in `date` or `datetime`, not a subclass: the values
+/// whose C-level fields can be trusted as they are. See [`true_year`].
+#[inline]
+pub fn is_builtin_date(value: &Bound<'_, PyAny>) -> bool {
+    // SAFETY: `value` is a live object, and the datetime C API is loaded:
+    // the caller already holds it as a `PyDate` or `PyDateTime`, whose casts
+    // load it. These are the C API's own exact-type macros, one pointer
+    // comparison each.
+    unsafe {
+        pyo3::ffi::PyDateTime_CheckExact(value.as_ptr()) != 0
+            || pyo3::ffi::PyDate_CheckExact(value.as_ptr()) != 0
+    }
+}
+
+/// The year of a `date` or `datetime`, read so that it can be trusted.
+///
+/// The C-level fields are only reliable for the built-in types. A pandas
+/// `Timestamp` with a non-nanosecond unit can hold a year past 9999, which a
+/// `datetime` has no room for, and keeps a placeholder year in those fields:
+/// `Timestamp("10500-03-04")` reads as 1970-03-04 there. Its `year` property
+/// is correct, so a subclass is asked for it.
+pub fn true_year(value: &Bound<'_, PyAny>, field_year: i32) -> PyResult<i32> {
+    if is_builtin_date(value) {
+        return Ok(field_year);
+    }
+    value.getattr(pyo3::intern!(value.py(), "year"))?.extract()
+}
+
+/// The note for a far-year `Timestamp` on the object paths, which used to be
+/// written with the placeholder year from its C-level fields.
+pub const WRONG_YEAR_NOTE: &str =
+    " (Earlier versions wrote it with a wrong year without an error.)";
+
+/// Name where `value` came from in an error raised while writing it.
+///
+/// The CSV sinks are built per cell, and carrying a location in each cost
+/// the records path about 10%, so the location is attached here, on the
+/// error path only: the caller passes a closure that builds it. A value whose
+/// year the CSV writer refused is re-checked and gets the full message; any
+/// other error is returned as it is.
+pub fn located<'a>(err: PyErr, value: &Bound<'_, PyAny>, loc: impl FnOnce() -> Loc<'a>) -> PyErr {
+    let field_year = if let Ok(dt) = value.cast::<PyDateTime>() {
+        dt.get_year()
+    } else if let Ok(d) = value.cast::<PyDate>() {
+        d.get_year()
+    } else {
+        return err;
+    };
+    match true_year(value, field_year) {
+        Ok(year) if year != field_year => iso_range_err(loc(), &iso_text(value), WRONG_YEAR_NOTE),
+        _ => err,
+    }
+}
+
+/// `value.isoformat()`, for an error message.
+pub fn iso_text(value: &Bound<'_, PyAny>) -> String {
+    value
+        .call_method0("isoformat")
+        .and_then(|t| t.extract())
+        .unwrap_or_else(|_| value.to_string())
+}
+
 /// Add a fraction of a second to `dt`.
 ///
 /// `ExcelDateTime::and_hms` rejects seconds above 59.999, so a value such as

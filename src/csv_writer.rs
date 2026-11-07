@@ -11,7 +11,7 @@ use pyo3::Py;
 
 use crate::cell::{classify_and_write, try_cached, CellWriter};
 use crate::helpers::{
-    apply_selection, select_indices, write_csv_escaped_guarded, ColType, NumReps,
+    apply_selection, located, select_indices, write_csv_escaped_guarded, ColType, Loc, NumReps,
 };
 use crate::options::value_err;
 
@@ -112,6 +112,20 @@ impl CsvSink {
             let _ = std::fs::remove_file(path);
         }
     }
+}
+
+/// Write one value through the type cache, falling back to the full cascade.
+/// Returns the detected type when the cascade ran, for the caller to cache.
+#[inline]
+fn write_cell(
+    value: &Bound<'_, PyAny>,
+    cached: ColType,
+    sink: &mut CsvCell<'_>,
+) -> PyResult<Option<ColType>> {
+    if try_cached(value, cached, sink)? {
+        return Ok(None);
+    }
+    classify_and_write(value, sink).map(Some)
 }
 
 /// Turn a failed `try_iter` into a clear message. Skipping the loop instead
@@ -295,7 +309,8 @@ fn write_csv_rows(
                     }
                     let item = col_list.get_item(row)?;
                     let mut sink = CsvCell::new(output, sanitize_formulas, reps);
-                    classify_and_write(&item, &mut sink)?;
+                    classify_and_write(&item, &mut sink)
+                        .map_err(|e| located(e, &item, || Loc::Column(&columns[i])))?;
                 }
                 output.push(b'\n');
                 target.row_done(output)?;
@@ -317,19 +332,22 @@ fn write_csv_rows(
                             }
                             let item = row.get_item(i)?;
                             let mut sink = CsvCell::new(output, sanitize_formulas, reps);
-                            classify_and_write(&item, &mut sink)?;
+                            classify_and_write(&item, &mut sink)
+                                .map_err(|e| located(e, &item, || Loc::Column(&columns[n])))?;
                         }
                     }
                     None => {
-                        let mut first = true;
-                        for item_res in row.try_iter()? {
+                        for (n, item_res) in row.try_iter()?.enumerate() {
                             let item = item_res?;
-                            if !first {
+                            if n > 0 {
                                 output.push(delim_byte);
                             }
-                            first = false;
                             let mut sink = CsvCell::new(output, sanitize_formulas, reps);
-                            classify_and_write(&item, &mut sink)?;
+                            classify_and_write(&item, &mut sink).map_err(|e| {
+                                located(e, &item, || {
+                                    Loc::Column(columns.get(n).map_or("?", String::as_str))
+                                })
+                            })?;
                         }
                     }
                 }
@@ -394,8 +412,13 @@ fn write_csv_rows(
                     }
                     let cached = col_types[col];
                     let mut sink = CsvCell::new(output, sanitize_formulas, reps);
-                    if !try_cached(&value, cached, &mut sink)? {
-                        let detected = classify_and_write(&value, &mut sink)?;
+                    let detected = write_cell(&value, cached, &mut sink).map_err(|e| {
+                        located(e, &value, || Loc::Record {
+                            index,
+                            key: &headers[col],
+                        })
+                    })?;
+                    if let Some(detected) = detected {
                         if col_types[col] == ColType::Unknown {
                             col_types[col] = detected;
                         }
@@ -423,8 +446,9 @@ fn write_csv_rows(
                 if let Some(value) = row_dict.get_item(name)? {
                     matched += 1;
                     let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
-                    if !try_cached(&value, cached, &mut sink)? {
-                        let detected = classify_and_write(&value, &mut sink)?;
+                    let detected = write_cell(&value, cached, &mut sink)
+                        .map_err(|e| located(e, &value, || Loc::Record { index, key: name }))?;
+                    if let Some(detected) = detected {
                         if col_types[col] == ColType::Unknown {
                             col_types[col] = detected;
                         }
@@ -505,10 +529,17 @@ fn write_csv_row_strings(output: &mut Vec<u8>, values: &[String], delim: u8, san
 /// ISO-8601, as `datetime.isoformat()` writes it: microseconds only when
 /// there are some, and the UTC offset when the value is aware, so that the
 /// text names one instant rather than a wall-clock time in an unknown zone.
+///
+/// A year the fields cannot hold — a pandas `Timestamp` past 9999 — raises;
+/// see [`crate::helpers::true_year`].
 fn emit_datetime(output: &mut Vec<u8>, dt: &Bound<PyDateTime>) -> PyResult<()> {
+    let year = dt.get_year();
+    if !crate::helpers::is_builtin_date(dt.as_any()) {
+        check_subclass_year(dt, year)?;
+    }
     crate::helpers::write_iso_date(
         output,
-        dt.get_year() as u32,
+        year as u32,
         u32::from(dt.get_month()),
         u32::from(dt.get_day()),
     );
@@ -523,6 +554,24 @@ fn emit_datetime(output: &mut Vec<u8>, dt: &Bound<PyDateTime>) -> PyResult<()> {
     // Naive values, the common case, stop at a pointer check.
     if dt.get_tzinfo().is_some() {
         emit_utc_offset(output, &dt.call_method0("utcoffset")?)?;
+    }
+    Ok(())
+}
+
+/// The slow half of the year check in [`emit_datetime`], for a `datetime`
+/// subclass. Kept out of line so that the common case, a built-in datetime,
+/// pays one pointer comparison and nothing else.
+#[cold]
+#[inline(never)]
+fn check_subclass_year(dt: &Bound<PyDateTime>, year: i32) -> PyResult<()> {
+    if crate::helpers::true_year(dt.as_any(), year)? != year {
+        // The caller knows where the value came from and says so through
+        // `located`, which rebuilds this message.
+        return Err(crate::helpers::iso_range_err(
+            Loc::Unknown,
+            &crate::helpers::iso_text(dt.as_any()),
+            crate::helpers::WRONG_YEAR_NOTE,
+        ));
     }
     Ok(())
 }
@@ -567,6 +616,9 @@ fn emit_date(output: &mut Vec<u8>, d: &Bound<PyDate>) {
 /// The type-detection order lives in [`crate::cell`]; this only encodes the
 /// per-type CSV serialization (and the optional formula-injection guard for
 /// strings).
+///
+/// A value it cannot write raises without saying where it came from; the
+/// caller adds that with [`crate::helpers::located`], on the error path only.
 struct CsvCell<'a> {
     output: &'a mut Vec<u8>,
     sanitize: bool,

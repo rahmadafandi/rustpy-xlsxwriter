@@ -152,7 +152,10 @@ every case, and `datetime.fromisoformat` reads back the value you wrote.
 a list of dicts and from a DataFrame alike; the DataFrame error names the
 column and the value. Earlier versions wrote such a DataFrame cell empty
 without an error. To keep old dates in xlsx, write the column as text. CSV
-has no such limit and writes them as they are.
+has no calendar floor and writes them as they are. The one date CSV refuses is
+a year outside 0 to 9999, which an ISO-8601 date has no digits for: polars can
+hold one, and so can a pandas column with a non-nanosecond unit. That raises
+`ValueError` naming the column (or the record and key) and the date.
 
 ## Column types a DataFrame can hold
 
