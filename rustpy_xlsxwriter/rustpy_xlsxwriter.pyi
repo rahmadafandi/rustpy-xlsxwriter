@@ -59,38 +59,32 @@ MergeRange = Union[
 """One merged cell range: ``(first_row, first_col, last_row, last_col, value)``,
 optionally followed by a :class:`Format`."""
 
-ConditionalRule = Dict[str, Any]
-"""One conditional-formatting rule; see :func:`write_worksheet` for the keys."""
-
-ConditionalFormats = Dict[str, Union[ConditionalRule, List[ConditionalRule]]]
-"""Conditional formats keyed by column name."""
-
-Charts = List[Dict[str, Any]]
-"""Charts anchored to a cell."""
-
-Sparklines = Dict[str, Dict[str, Any]]
-"""Per-row trend charts, by the column they are drawn in."""
-
-Notes = Dict[str, Union[str, Dict[str, Any]]]
-"""Header-cell notes, by column name."""
-
-Images = List[Dict[str, Any]]
-"""Images anchored to cells."""
-
-Outline = Dict[str, Any]
-"""Row and column grouping; see :func:`write_worksheet` for the keys."""
-
-DataValidations = Dict[str, Dict[str, Any]]
-"""Data validation rules keyed by column name."""
-
-SheetView = Dict[str, Any]
-"""Screen presentation; see :func:`write_worksheet` for the keys."""
+# The dict-shaped options have their keys spelled out in ``_types``, so a
+# checker catches a misspelled one instead of leaving it to ``save()``.
+from ._types import (
+    Chart as Chart,
+    ChartSeries as ChartSeries,
+    Charts as Charts,
+    ConditionalFormats as ConditionalFormats,
+    ConditionalRule as ConditionalRule,
+    DataValidation as DataValidation,
+    DataValidations as DataValidations,
+    Image as Image,
+    Images as Images,
+    Margins as Margins,
+    Note as Note,
+    Notes as Notes,
+    Outline as Outline,
+    OutlineColumnGroup as OutlineColumnGroup,
+    OutlineRowGroup as OutlineRowGroup,
+    PageSetup as PageSetup,
+    SheetView as SheetView,
+    Sparkline as Sparkline,
+    Sparklines as Sparklines,
+)
 
 IgnoreErrors = Union[List[str], Dict[str, str]]
 """Error indicators to suppress, by column."""
-
-PageSetup = Dict[str, Any]
-"""Page and print settings; see :func:`write_worksheet` for the keys."""
 
 UrlColumns = Union[List[str], Dict[str, str]]
 """Link columns — a list of column names, or ``{url column: display-text column}``."""
