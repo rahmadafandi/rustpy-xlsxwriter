@@ -2,7 +2,7 @@
 //! `__arrow_c_stream__` into Rust `arrow_array::RecordBatchReader`
 //! without the `pyo3-arrow` crate (avoids chrono-tz compile issues).
 
-use arrow_array::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
+use arrow_array::ffi_stream::{FFI_ArrowArrayStream, RecordBatchStreamReader};
 use arrow_array::RecordBatchReader;
 use arrow_schema::ArrowError;
 use pyo3::prelude::*;
@@ -37,7 +37,7 @@ pub fn stream_to_reader(
     };
 
     // 3. Convert FFI stream to Rust RecordBatchReader
-    let stream = unsafe { ArrowArrayStreamReader::from_raw(ptr) }.map_err(|e: ArrowError| {
+    let stream = unsafe { RecordBatchStreamReader::from_raw(ptr) }.map_err(|e: ArrowError| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
             "Failed to create Arrow reader from stream: {}",
             e
