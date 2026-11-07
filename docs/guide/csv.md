@@ -34,10 +34,19 @@ the input flat as well.
 write_csv((row_to_dict(r) for r in cursor), "export.csv")
 ```
 
-If the write fails part-way, for example on a record with a key the header
-does not have, the partial file is removed rather than left looking like a
-complete export with fewer rows. A failure in the first 64 KiB never opens
-the file, so whatever was at the path before is still there.
+The rows go to a sibling temporary file that is renamed onto the target when
+the write finishes. So if the write fails part-way — on a record with a key
+the header does not have, say — whatever was at the path before is still
+there, untouched, however far the write got. A reader never sees half a
+file either: the rename is the moment the new export appears. The target
+keeps its permissions across the replacement, though not its inode, so a
+hard link to it still points at the old content.
+
+A few targets cannot be replaced this way and are written through directly:
+a symlink, which a rename would overwrite instead of follow, and a FIFO or a
+device such as `/dev/stdout`, which have nothing to rename. For those a
+failure part-way removes the partial file, since a truncated CSV reads as a
+complete export with fewer rows.
 
 A buffer such as `io.BytesIO` gets the whole file in one `write()` call, so
 the output is held in memory before it is handed over.

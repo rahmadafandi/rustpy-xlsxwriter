@@ -124,15 +124,29 @@ def test_error_before_the_first_chunk_leaves_an_existing_file_alone(tmp_path):
     assert path.read_text() == "previous export\n"
 
 
-def test_error_after_the_first_chunk_removes_an_existing_file(tmp_path):
-    """Once streaming has started the old content is already gone; what is
-    left is the partial new file, which is removed."""
+def test_error_after_the_first_chunk_leaves_an_existing_file_alone(tmp_path):
+    """The rows go to a sibling temporary file, so the old export survives
+    however far the write got before failing.
+
+    This used to assert the opposite: streaming wrote straight to the target,
+    so a failure past the first chunk deleted a file the caller never asked to
+    replace, while the same mistake one row earlier left it untouched.
+    """
     path = tmp_path / "out.csv"
     path.write_text("previous export\n")
     records = _records() + [{"id": 0, "unexpected": 1}]
     with pytest.raises(ValueError):
         write_csv(records, path)
-    assert not path.exists()
+    assert path.read_text() == "previous export\n"
+
+
+def test_no_temporary_file_is_left_behind(tmp_path):
+    path = tmp_path / "out.csv"
+    path.write_text("previous export\n")
+    records = _records() + [{"id": 0, "unexpected": 1}]
+    with pytest.raises(ValueError):
+        write_csv(records, path)
+    assert [p.name for p in tmp_path.iterdir()] == ["out.csv"]
 
 
 def test_file_like_target_gets_one_write():

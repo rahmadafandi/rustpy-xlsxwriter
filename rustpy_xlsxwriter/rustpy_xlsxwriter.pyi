@@ -670,9 +670,12 @@ def write_csv(
             a *pandas* ``DataFrame``, or a *polars* ``DataFrame``.
         file_name: Destination file path or writable binary buffer. A path is
             written as the rows are produced, so memory stays flat however
-            large the file. If the write fails, a partly written file is
-            removed. A buffer receives the whole file in a single ``write()``
-            call, so it is held in memory first.
+            large the file, and replaced by a rename at the end — so a failed
+            write leaves whatever was there untouched, and no reader sees a
+            half-written export. A symlink, FIFO or device is written through
+            directly instead, and a failure there removes the partial file. A
+            buffer receives the whole file in a single ``write()`` call, so it
+            is held in memory first.
         delimiter: Column delimiter (default ``","``). Use ``"\\t"`` for TSV.
         sanitize_formulas: When ``True``, string fields starting with
             ``= + - @`` are prefixed with ``'`` to neutralize CSV formula

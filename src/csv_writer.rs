@@ -30,21 +30,68 @@ enum CsvSink {
     Path {
         path: std::path::PathBuf,
         /// Opened at the first chunk, not up front. A write that fails before
-        /// then leaves a file already at the path untouched, as before
-        /// streaming.
-        file: Option<std::fs::File>,
+        /// then leaves a file already at the path untouched.
+        open: Option<OpenFile>,
     },
     Writer(Py<PyAny>),
+}
+
+/// The file bytes are going into, and where it has to end up.
+struct OpenFile {
+    file: std::fs::File,
+    /// A sibling temporary file to rename onto the target when the write
+    /// finishes, or `None` when writing straight to the target.
+    temp: Option<std::path::PathBuf>,
 }
 
 fn io_err(e: std::io::Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write file: {e}"))
 }
 
+/// What is already at the target, in one `stat`.
+enum Existing {
+    /// Nothing there, or nothing readable: a temporary file has nothing to
+    /// preserve and nothing to follow.
+    Absent,
+    /// A regular file, whose mode the replacement should inherit.
+    RegularFile(std::fs::Permissions),
+    /// A FIFO, a device such as `/dev/stdout`, a socket, a directory, or a
+    /// symlink — which a rename would replace with a regular file instead of
+    /// following. These are written through directly.
+    Special,
+}
+
+fn look_at(path: &std::path::Path) -> Existing {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_file() => Existing::RegularFile(meta.permissions()),
+        Ok(_) => Existing::Special,
+        Err(_) => Existing::Absent,
+    }
+}
+
+/// A sibling path for the temporary file. It must share the directory, since
+/// `rename` is only atomic within one filesystem. The pid and a counter keep
+/// two concurrent writes to one target apart.
+fn temp_path_for(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let name = path.file_name()?.to_str()?;
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => std::path::Path::new("."),
+    };
+    Some(dir.join(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )))
+}
+
 impl CsvSink {
     fn new(py: Python, target: Py<PyAny>) -> PyResult<Self> {
         if let Ok(path) = target.extract::<std::path::PathBuf>(py) {
-            return Ok(CsvSink::Path { path, file: None });
+            return Ok(CsvSink::Path { path, open: None });
         }
         if let Ok(write) = target.getattr(py, "write") {
             return Ok(CsvSink::Writer(write));
@@ -54,13 +101,42 @@ impl CsvSink {
         ))
     }
 
+    /// Open the destination at the first chunk.
+    ///
+    /// The bytes go to a sibling temporary file that is renamed into place at
+    /// the end, so a failure part-way leaves whatever was already at the
+    /// target alone and no reader ever sees half a file. Falls back to
+    /// writing in place when a temporary cannot stand in for the target.
+    fn open_target(path: &std::path::Path) -> PyResult<OpenFile> {
+        let existing = look_at(path);
+        if !matches!(existing, Existing::Special) {
+            if let Some(temp) = temp_path_for(path) {
+                if let Ok(file) = std::fs::File::create(&temp) {
+                    // Keep the target's mode: the rename brings a new inode,
+                    // which would otherwise arrive with the default umask.
+                    if let Existing::RegularFile(mode) = existing {
+                        let _ = std::fs::set_permissions(&temp, mode);
+                    }
+                    return Ok(OpenFile {
+                        file,
+                        temp: Some(temp),
+                    });
+                }
+            }
+        }
+        Ok(OpenFile {
+            file: std::fs::File::create(path).map_err(io_err)?,
+            temp: None,
+        })
+    }
+
     fn write_out(&mut self, output: &[u8]) -> PyResult<()> {
-        if let CsvSink::Path { path, file } = self {
-            let f = match file {
+        if let CsvSink::Path { path, open } = self {
+            let f = match open {
                 Some(f) => f,
-                None => file.insert(std::fs::File::create(&*path).map_err(io_err)?),
+                None => open.insert(Self::open_target(path)?),
             };
-            f.write_all(output).map_err(io_err)?;
+            f.file.write_all(output).map_err(io_err)?;
         }
         Ok(())
     }
@@ -81,18 +157,38 @@ impl CsvSink {
     fn restart(&mut self, output: &mut Vec<u8>) -> PyResult<()> {
         output.clear();
         if let CsvSink::Path {
-            file: Some(file), ..
+            open: Some(open), ..
         } = self
         {
-            file.set_len(0).map_err(io_err)?;
-            file.seek(SeekFrom::Start(0)).map_err(io_err)?;
+            open.file.set_len(0).map_err(io_err)?;
+            open.file.seek(SeekFrom::Start(0)).map_err(io_err)?;
         }
         Ok(())
     }
 
+    /// Write the tail, then put the file in place.
+    ///
+    /// The rename is the moment the new file becomes visible, so a reader
+    /// sees either the old file or the whole new one.
     fn finish(&mut self, py: Python, output: &[u8]) -> PyResult<()> {
         match self {
-            CsvSink::Path { .. } => self.write_out(output),
+            CsvSink::Path { .. } => {
+                self.write_out(output)?;
+                if let CsvSink::Path {
+                    path,
+                    open: Some(open),
+                } = self
+                {
+                    if let Some(temp) = open.temp.take() {
+                        open.file.flush().map_err(io_err)?;
+                        std::fs::rename(&temp, &*path).map_err(|e| {
+                            let _ = std::fs::remove_file(&temp);
+                            io_err(e)
+                        })?;
+                    }
+                }
+                Ok(())
+            }
             CsvSink::Writer(write) => {
                 write.call1(py, (pyo3::types::PyBytes::new(py, output),))?;
                 Ok(())
@@ -100,16 +196,21 @@ impl CsvSink {
         }
     }
 
-    /// After an error: a path holding part of a file is removed, since a
-    /// truncated CSV reads as a complete one with fewer rows.
+    /// After an error, leave nothing half-written behind.
+    ///
+    /// With a temporary file the target is never touched, so only the
+    /// temporary goes. Writing in place has no such luxury: the partial file
+    /// is removed, because a truncated CSV reads as a complete one with fewer
+    /// rows.
     fn abandon(self) {
         if let CsvSink::Path {
             path,
-            file: Some(file),
+            open: Some(open),
         } = self
         {
+            let OpenFile { file, temp } = open;
             drop(file);
-            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(temp.as_deref().unwrap_or(&path));
         }
     }
 }
