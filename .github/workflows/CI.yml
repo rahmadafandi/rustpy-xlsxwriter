@@ -21,7 +21,26 @@ permissions:
   contents: read
 
 jobs:
+  version:
+    # A tag whose name does not match Cargo.toml builds wheels under the old
+    # version, and PyPI rejects them as duplicates after the whole matrix has
+    # run. Every other job waits on this so the mismatch costs seconds.
+    name: Version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the tag matches Cargo.toml
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$crate" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $crate"
+            exit 1
+          fi
+          echo "tag and Cargo.toml agree on $crate"
+
   linux:
+    needs: [version]
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -57,6 +76,7 @@ jobs:
           path: dist
 
   musllinux:
+    needs: [version]
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -88,6 +108,7 @@ jobs:
           path: dist
 
   windows:
+    needs: [version]
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -120,6 +141,7 @@ jobs:
           path: dist
 
   macos:
+    needs: [version]
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -146,6 +168,7 @@ jobs:
           path: dist
 
   freethreaded:
+    needs: [version]
     # The jobs above use --find-interpreter, which only sees the interpreters
     # installed on the runner. A free-threaded build is a separate binary
     # (python3.14t), so it is never picked up and no cp314t wheel is produced —
@@ -191,6 +214,7 @@ jobs:
           path: dist
 
   test:
+    needs: [version]
     # Every other job only proves the extension compiles. This one is the only
     # place the 400+ tests and clippy actually run.
     runs-on: ubuntu-latest
@@ -220,6 +244,7 @@ jobs:
           done
 
   msrv:
+    needs: [version]
     # rust-version in Cargo.toml is a promise; this is what keeps it one.
     runs-on: ubuntu-latest
     steps:
@@ -233,6 +258,7 @@ jobs:
       - run: cargo check --all-targets
 
   coverage:
+    needs: [version]
     # Measures the Rust, which is the library — pytest-cov would only see the
     # ~130 statements of the Python wrapper and report a number that flatters.
     # The extension is built with coverage instrumentation and then exercised
@@ -279,6 +305,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   sdist:
+    needs: [version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
