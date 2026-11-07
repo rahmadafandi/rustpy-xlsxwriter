@@ -8,6 +8,7 @@ use pyo3::Py;
 
 use crate::cell::{classify_and_write, try_cached, CellWriter};
 use crate::helpers::{write_bytes_to_target, write_csv_escaped_guarded, ColType, NumReps};
+use crate::options::value_err;
 
 /// Turn a failed `try_iter` into a clear message. Skipping the loop instead
 /// would write an empty file and report success.
@@ -15,6 +16,26 @@ fn not_iterable(_: PyErr) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyTypeError, _>(
         "records must be an iterable of dicts, a DataFrame, or an Arrow stream",
     )
+}
+
+/// Name the key a record carries that the header has no column for.
+///
+/// Only called once a record is known to have an unmatched key.
+fn unknown_column(row: &Bound<'_, pyo3::types::PyDict>, headers: &[String], index: usize) -> PyErr {
+    for key in row.keys().iter() {
+        let Ok(name) = key.extract::<String>() else {
+            return PyErr::new::<pyo3::exceptions::PyTypeError, _>("Record keys must be strings");
+        };
+        if !headers.contains(&name) {
+            return value_err(format!(
+                "record {index}: no column '{name}'. The header comes from the first record \
+                 ({}), and writing this one would put more fields on the line than the header \
+                 has — give every record the same keys, or name the columns you want.",
+                headers.join(", ")
+            ));
+        }
+    }
+    value_err(format!("record {index}: keys do not match the header"))
 }
 
 // Not a `///` doc comment: pyo3 turns those into `__doc__`, which then
@@ -177,10 +198,12 @@ pub fn write_csv(
         let mut headers: Vec<String> = Vec::new();
         let mut headers_written = false;
         let mut col_types: Vec<ColType> = Vec::new();
+        // The first record's key objects, for the pointer check below.
+        let mut header_keys: Vec<Py<pyo3::types::PyString>> = Vec::new();
 
         let rows: pyo3::Bound<'_, pyo3::types::PyIterator> =
             bound.try_iter().map_err(not_iterable)?;
-        for row_res in rows {
+        for (index, row_res) in rows.enumerate() {
             let row_obj = row_res?;
             let row_dict = row_obj.cast::<pyo3::types::PyDict>().map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyTypeError, _>(
@@ -191,7 +214,13 @@ pub fn write_csv(
             if !headers_written {
                 let mut keys: Vec<String> = Vec::new();
                 for key in row_dict.keys().iter() {
-                    keys.push(key.extract::<String>()?);
+                    let key = key.cast_into::<pyo3::types::PyString>().map_err(|_| {
+                        PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                            "Record keys must be strings",
+                        )
+                    })?;
+                    keys.push(key.to_str()?.to_owned());
+                    header_keys.push(key.unbind());
                 }
                 // Validated against the first row, which is the only row whose
                 // keys are known before the stream is consumed.
@@ -203,42 +232,63 @@ pub fn write_csv(
                 headers_written = true;
             }
 
-            if selection.is_some() {
-                // Selected: look each column up by name, since the dict's own
-                // order is no longer the output order.
-                for (col, name) in headers.iter().enumerate() {
+            // Fast path: a record reusing the first one's key objects in the
+            // same order is written from its own iteration order. One pointer
+            // comparison per key, and the row is rewound if any of them fails.
+            let row_start = output.len();
+            let fast = selection.is_none() && row_dict.len() == headers.len() && {
+                let mut ok = true;
+                for (col, (key, value)) in row_dict.iter().enumerate() {
+                    if !header_keys.get(col).is_some_and(|k| k.is(&key)) {
+                        ok = false;
+                        break;
+                    }
                     if col > 0 {
                         output.push(delim_byte);
                     }
-                    let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
-                    // A later row missing the key writes an empty field rather
-                    // than shifting every column after it.
-                    if let Some(value) = row_dict.get_item(name)? {
-                        let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
-                        if !try_cached(&value, cached, &mut sink)? {
-                            let detected = classify_and_write(&value, &mut sink)?;
-                            if col_types[col] == ColType::Unknown {
-                                col_types[col] = detected;
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Iterate the dict directly (insertion order == header order)
-                // to avoid allocating a fresh `values()` list per row.
-                for (col, (_key, value)) in row_dict.iter().enumerate() {
-                    if col > 0 {
-                        output.push(delim_byte);
-                    }
-                    let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
+                    let cached = col_types[col];
                     let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
                     if !try_cached(&value, cached, &mut sink)? {
                         let detected = classify_and_write(&value, &mut sink)?;
-                        if col < col_types.len() && col_types[col] == ColType::Unknown {
+                        if col_types[col] == ColType::Unknown {
                             col_types[col] = detected;
                         }
                     }
                 }
+                ok
+            };
+            if fast {
+                output.push(b'\n');
+                continue;
+            }
+            output.truncate(row_start);
+
+            // Otherwise walk the header and look each column up by name, so a
+            // reordered record still lands in the right fields and an extra key
+            // cannot lengthen the line.
+            let mut matched = 0usize;
+            for (col, name) in headers.iter().enumerate() {
+                if col > 0 {
+                    output.push(delim_byte);
+                }
+                let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
+                // A missing key writes an empty field, keeping the field count.
+                if let Some(value) = row_dict.get_item(name)? {
+                    matched += 1;
+                    let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
+                    if !try_cached(&value, cached, &mut sink)? {
+                        let detected = classify_and_write(&value, &mut sink)?;
+                        if col_types[col] == ColType::Unknown {
+                            col_types[col] = detected;
+                        }
+                    }
+                }
+            }
+            // Header names are unique, so more keys than matches means one has
+            // no column. With `columns` the header is a chosen subset and the
+            // rest are dropped on purpose.
+            if selection.is_none() && matched != row_dict.len() {
+                return Err(unknown_column(row_dict, &headers, index));
             }
             output.push(b'\n');
         }

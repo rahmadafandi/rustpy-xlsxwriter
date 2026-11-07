@@ -1,8 +1,8 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDate, PyDateTime, PyInt};
+use pyo3::types::{PyDate, PyDateTime, PyInt, PyString};
 use pyo3::{Py, PyAny, Python};
 use rust_xlsxwriter::{Format, Workbook};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::cell::{classify_and_write, try_cached, CellWriter};
 use crate::data_types::{FreezePanesConfig, WorksheetData};
@@ -401,6 +401,12 @@ fn write_worksheet_content(
             )> = None;
             let mut url_cols: Vec<crate::helpers::UrlCol> = Vec::new();
             let mut n_data_cols: usize = 0;
+            // Data columns by name, for a record whose keys arrive in a
+            // different order than the first one's. Formula columns are left
+            // out: they are written from the layout, not from the record.
+            let mut header_index: HashMap<String, usize> = HashMap::new();
+            // The first record's key objects, for the pointer check below.
+            let mut header_keys: Vec<Py<PyString>> = Vec::new();
 
             for (row_idx, row_res) in rows.enumerate() {
                 let row_obj = row_res?;
@@ -412,7 +418,13 @@ fn write_worksheet_content(
 
                 if !headers_written {
                     for key in row_dict.keys().iter() {
-                        headers.push(key.extract::<String>()?);
+                        let key = key.cast_into::<PyString>().map_err(|_| {
+                            PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                                "Record keys must be strings",
+                            )
+                        })?;
+                        headers.push(key.to_str()?.to_owned());
+                        header_keys.push(key.unbind());
                     }
                     for fc in &formula_cols {
                         headers.push(fc.header.clone());
@@ -429,6 +441,11 @@ fn write_worksheet_content(
                     col_types.resize(headers.len(), ColType::Unknown);
                     final_headers = headers.clone();
                     n_data_cols = headers.len() - formula_cols.len();
+                    header_index = headers[..n_data_cols]
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| (name.clone(), i))
+                        .collect();
                     // Resolve per-column formats ONCE and keep them for the whole loop.
                     // Apply set_column_format BEFORE writing data rows (constant memory mode).
                     let col_formats =
@@ -474,7 +491,28 @@ fn write_worksheet_content(
 
                 // Iterate the dict directly (insertion order == header order)
                 // to avoid allocating a fresh `values()` list per row.
-                for (col, (_key, value)) in row_dict.iter().enumerate() {
+                for (pos, (key, value)) in row_dict.iter().enumerate() {
+                    // Same key object at the same position means the column is
+                    // the position. Otherwise look the column up by name.
+                    let col = if header_keys.get(pos).is_some_and(|k| k.is(&key)) {
+                        pos
+                    } else {
+                        let name = key.cast::<PyString>().map_err(|_| {
+                            PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                                "Record keys must be strings",
+                            )
+                        })?;
+                        let name = name.to_str()?;
+                        *header_index.get(name).ok_or_else(|| {
+                            crate::options::value_err(format!(
+                                "record {row_idx}: no column '{name}'. The header comes from \
+                                 the first record ({}), and a column cannot be added once it \
+                                 has been written — give every record the same keys, or pass \
+                                 a DataFrame.",
+                                final_headers[..n_data_cols].join(", ")
+                            ))
+                        })?
+                    };
                     let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
 
                     sink.col = col as u16;
