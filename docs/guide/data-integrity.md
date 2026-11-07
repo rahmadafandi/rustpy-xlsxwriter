@@ -68,6 +68,91 @@ a text column, where they also keep any leading zeros:
 write_worksheet([{"id": str(9007199254740993)}], "out.xlsx")
 ```
 
+## Decimals become floats
+
+Excel has no decimal type: every number is a 64-bit float. A Python `Decimal`,
+and a decimal column in a DataFrame, are written as the nearest float, in
+both writers. Trailing zeros go, and so does every digit past the 15th or
+16th significant one:
+
+```python
+write_worksheet([{"price": Decimal("1.10")}], "out.xlsx")   # cell holds 1.1
+write_csv([{"price": Decimal("1.10")}], "out.csv")          # price\n1.1
+write_csv([{"n": Decimal("12345678901234567890.12")}], "out.csv")
+# n\n1.2345678901234567e19
+```
+
+For money that is usually fine in xlsx, provided the cell is formatted to show
+the cents: `column_formats={"price": Format().set_num_format("0.00")}`. When
+the exact digits matter, as for amounts other systems will read back from a
+CSV, pass the text instead: `str(value)` keeps `"1.10"` exactly. A DataFrame
+column can be cast to a string first in the same way.
+
+## Dates, times and timezones
+
+**Fractions of a second** are kept. Excel stores a datetime as a day count
+with the time as the fraction, which holds about a microsecond; its number
+formats show at most milliseconds, so ask for them with `hh:mm:ss.000`. CSV
+writes `.ffffff`, the way `isoformat()` does, and nanoseconds from an Arrow
+column as `.fffffffff`.
+
+**A `datetime.time`** is written as an Excel time, formatted `hh:mm:ss`,
+so it can be formatted, summed and compared like any time. CSV writes
+`HH:MM:SS`. A `column_formats` entry overrides the time format.
+
+**Timezones** survive in CSV and not in xlsx. Excel has no timezone, so
+something has to give:
+
+| Value | xlsx | CSV |
+|---|---|---|
+| naive `datetime` | as given | as given, no offset |
+| aware Python `datetime` | its wall-clock time; the offset is dropped | wall-clock time and offset, as `isoformat()` writes it |
+| aware DataFrame column | the **UTC** time | the UTC time with `+00:00` |
+
+So in xlsx, `12:00+00:00` and `12:00+07:00` both become `12:00`, two instants
+seven hours apart written as one value. And a polars column converted with
+`dt.convert_time_zone("Asia/Jakarta")`, which shows 19:00, is written as
+12:00, because a DataFrame stores the UTC instant and only names its zone.
+CSV keeps the instant in both cases: `datetime.fromisoformat` reads back the
+value you wrote.
+
+To control what lands in xlsx, convert first:
+
+```python
+# Python: everything in UTC, or everything in one zone
+rows = [{**r, "at": r["at"].astimezone(timezone.utc)} for r in rows]
+
+# polars: keep the wall-clock time the column shows
+df = df.with_columns(pl.col("at").dt.replace_time_zone(None))
+
+# pandas: the same
+df["at"] = df["at"].dt.tz_localize(None)
+```
+
+**Dates before 1900** cannot be stored in xlsx; Excel's calendar starts on
+1900-01-01. A Python `date` or `datetime` from earlier raises `ValueError`.
+In a DataFrame column the cell is currently written **empty**, without an
+error, so check the range first if old dates are possible. CSV has no such
+limit and writes them as they are.
+
+## Column types a DataFrame can hold
+
+A DataFrame column whose type has no cell to go in raises `ValueError`
+naming the column, instead of writing it empty:
+
+| Column type | Written as |
+|---|---|
+| pandas `category`, polars `Categorical` and `Enum` | their values |
+| time of day | an Excel time / `HH:MM:SS` |
+| decimal | the nearest float, as above |
+| an all-null column | empty cells |
+| duration (`timedelta`) | `ValueError`: cast it to a string, or to a number of seconds |
+| binary, list, struct, and anything else | `ValueError` |
+
+Earlier versions wrote all of these, categories and times included, as empty
+cells and reported success. A duration is refused rather than guessed, because
+a guess at the unit would be silently wrong.
+
 ## Missing values, NaN and infinity
 
 Excel has no cell type for `NaN` or `inf`, so both are written as an **empty
