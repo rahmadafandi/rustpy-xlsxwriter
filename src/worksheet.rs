@@ -27,6 +27,39 @@ pub fn xlsx_err(e: XlsxError) -> PyErr {
     }
 }
 
+/// Excel's last row and column, 0-based.
+const LAST_ROW: u32 = 1_048_575;
+const LAST_COL: usize = 16_383;
+
+/// The error for a data row past Excel's last row, naming the sheet and the
+/// record. The crate's own error says only that some row or column is out of
+/// range, which leaves a multi-sheet caller guessing.
+fn row_limit_err(worksheet: &rust_xlsxwriter::Worksheet, row: u32, first_data_row: u32) -> PyErr {
+    let record = row.saturating_sub(first_data_row) + 1;
+    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+        "Excel write error: sheet '{}': record {record} would go on row {}, past Excel's \
+         last row ({}). This sheet has room for {} records below its header; split the \
+         data across sheets.",
+        worksheet.name(),
+        row as u64 + 1,
+        LAST_ROW as u64 + 1,
+        (LAST_ROW + 1).saturating_sub(first_data_row),
+    ))
+}
+
+/// Refuse more columns than Excel has, naming the sheet.
+fn check_column_count(worksheet: &rust_xlsxwriter::Worksheet, headers: &[String]) -> PyResult<()> {
+    if headers.len() > LAST_COL + 1 {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Excel write error: sheet '{}' has {} columns, past Excel's limit of {}.",
+            worksheet.name(),
+            headers.len(),
+            LAST_COL + 1,
+        )));
+    }
+    Ok(())
+}
+
 /// [`CellWriter`] sink that writes one Python scalar to an Excel cell.
 ///
 /// `col_override` is an explicit per-column `Format` (from `column_formats`).
@@ -278,6 +311,9 @@ fn write_worksheet_content(
             if let Ok(reader) = &reader {
                 crate::arrow_writer::check_schema(&reader.schema(), None)?;
             }
+            // Set once the first batch is written. From then on a failure
+            // must propagate, as the comment above says.
+            let mut started = false;
             let arrow_ok = match reader {
                 Err(stream_err) => Err(stream_err),
                 Ok(reader) => (|| -> PyResult<()> {
@@ -288,6 +324,7 @@ fn write_worksheet_content(
                         .map(|f| f.name().to_string())
                         .collect();
                     crate::formula::append_formula_headers(&mut final_headers, &formula_cols)?;
+                    check_column_count(worksheet, &final_headers)?;
                     let n_data_cols = final_headers.len() - formula_cols.len();
                     write_all_headers(
                         worksheet,
@@ -318,6 +355,14 @@ fn write_worksheet_content(
 
                     for batch_result in reader {
                         let batch = batch_result.map_err(crate::arrow_ffi::batch_read_err)?;
+                        let rows = batch.num_rows() as u64;
+                        if rows > 0 && u64::from(current_row) + rows - 1 > u64::from(LAST_ROW) {
+                            return Err(row_limit_err(
+                                worksheet,
+                                LAST_ROW + 1,
+                                layout.first_data_row(),
+                            ));
+                        }
 
                         if !formats_set {
                             // Auto datetime column formats first…
@@ -331,6 +376,7 @@ fn write_worksheet_content(
                             formats_set = true;
                         }
 
+                        started = true;
                         crate::arrow_writer::write_arrow_batch(
                             worksheet,
                             &batch,
@@ -351,6 +397,9 @@ fn write_worksheet_content(
             };
 
             if let Err(stream_err) = arrow_ok {
+                if started {
+                    return Err(stream_err);
+                }
                 let df = stream_obj.bind(py);
                 // Polars exposes `get_column`; pandas indexes with `[]`.
                 let polars = df.hasattr("get_column")?;
@@ -454,6 +503,7 @@ fn write_worksheet_content(
                         header_keys.push(key.unbind());
                     }
                     crate::formula::append_formula_headers(&mut headers, &formula_cols)?;
+                    check_column_count(worksheet, &headers)?;
                     write_all_headers(
                         worksheet,
                         header_row,
@@ -487,7 +537,13 @@ fn write_worksheet_content(
                     headers_written = true;
                 }
 
-                let row_u32 = layout.first_data_row() + row_idx as u32;
+                let row_u32 = match u32::try_from(row_idx)
+                    .ok()
+                    .and_then(|i| first_data_row.checked_add(i))
+                {
+                    Some(r) if r <= LAST_ROW => r,
+                    _ => return Err(row_limit_err(worksheet, LAST_ROW + 1, first_data_row)),
+                };
                 let (plain, banded) = palettes
                     .as_ref()
                     .expect("palettes are built with the header row");
@@ -904,6 +960,7 @@ where
     let n_data_cols = headers.len();
     *final_headers = headers.clone();
     crate::formula::append_formula_headers(final_headers, formula_cols)?;
+    check_column_count(worksheet, final_headers)?;
     let dtypes = df.getattr(py, "dtypes")?;
     let dtypes_list: Vec<Bound<'_, PyAny>> =
         dtypes.bind(py).try_iter()?.collect::<Result<Vec<_>, _>>()?;
@@ -917,6 +974,18 @@ where
         index_columns,
         header_format.map(|h| &h.inner),
     )?;
+
+    // The length is known up front, so a frame too long for the sheet is
+    // refused before any column is converted or any row written.
+    let nrows: usize = df.call_method0(py, "__len__")?.extract(py)?;
+    let room = (LAST_ROW + 1).saturating_sub(layout.first_data_row()) as usize;
+    if nrows > room {
+        return Err(row_limit_err(
+            worksheet,
+            LAST_ROW + 1,
+            layout.first_data_row(),
+        ));
+    }
 
     let mut col_kinds: Vec<ScalarKind> = Vec::with_capacity(headers.len());
     let mut col_lists: Vec<Py<PyAny>> = Vec::with_capacity(headers.len());
@@ -932,7 +1001,6 @@ where
         col_lists.push(col_series.call_method0(py, to_list_method)?);
     }
 
-    let nrows: usize = df.call_method0(py, "__len__")?.extract(py)?;
     *data_rows = nrows as u32;
 
     // Auto datetime column formats first, then explicit column_formats
