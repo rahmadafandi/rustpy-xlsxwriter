@@ -130,10 +130,11 @@ df["at"] = df["at"].dt.tz_localize(None)
 ```
 
 **Dates before 1900** cannot be stored in xlsx; Excel's calendar starts on
-1900-01-01. A Python `date` or `datetime` from earlier raises `ValueError`.
-In a DataFrame column the cell is currently written **empty**, without an
-error, so check the range first if old dates are possible. CSV has no such
-limit and writes them as they are.
+1900-01-01 and ends on 9999-12-31. A date outside it raises `ValueError`, from
+a list of dicts and from a DataFrame alike; the DataFrame error names the
+column and the value. Earlier versions wrote such a DataFrame cell empty
+without an error. To keep old dates in xlsx, write the column as text. CSV
+has no such limit and writes them as they are.
 
 ## Column types a DataFrame can hold
 

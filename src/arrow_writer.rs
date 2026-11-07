@@ -246,10 +246,13 @@ fn time_parts(values: &ArrayRef, unit: TimeUnit, idx: usize) -> (u32, u32, u32, 
     )
 }
 
-/// Write one temporal cell, falling back to a blank when the value is out of
-/// Excel's range. `dt_fmt` is only attached when banding is on — otherwise the
-/// column format set before the first row already carries the number format.
-#[allow(clippy::too_many_arguments)]
+/// Write one temporal cell. `dt_fmt` is only attached when banding is on —
+/// otherwise the column format set before the first row already carries the
+/// number format.
+///
+/// `value` is `None` when Excel's calendar cannot hold the value, and that
+/// raises `out_of_range()`. It used to write an empty cell, while the same
+/// value from a list of dicts raised.
 fn write_temporal(
     worksheet: &mut Worksheet,
     row: u32,
@@ -257,14 +260,34 @@ fn write_temporal(
     value: Option<rust_xlsxwriter::ExcelDateTime>,
     banding: bool,
     dt_fmt: &Format,
-    text_fmt: Option<&Format>,
+    out_of_range: impl FnOnce() -> PyErr,
 ) -> PyResult<()> {
     match value {
         Some(dt) => {
             crate::helpers::write_datetime_opt(worksheet, row, col, &dt, banding.then_some(dt_fmt))
         }
-        None => write_string_opt(worksheet, row, col, "", text_fmt),
+        None => Err(out_of_range()),
     }
+}
+
+/// The error for a date Excel cannot store, naming the column and the value.
+fn out_of_range(name: &str, col: &Col, idx: usize) -> PyErr {
+    let mut text = Vec::new();
+    let reps = crate::helpers::NumReps {
+        na: None,
+        inf: None,
+    };
+    let _ = emit_arrow_cell_csv(&mut text, col, idx, false, reps);
+    let what = match String::from_utf8(text) {
+        Ok(t) if !t.is_empty() => format!("{t} is"),
+        // ISO text cannot show a year outside 0..=9999 either.
+        _ => "a date before the year 0 or after 9999 is".to_string(),
+    };
+    value_err(format!(
+        "column '{name}': {what} outside Excel's calendar (1900-01-01 to 9999-12-31), \
+         so there is no cell value for it. Convert the column to text to keep it. \
+         (Earlier versions wrote it as an empty cell without an error.)"
+    ))
 }
 
 /// Write an Arrow `RecordBatch` starting at `start_row`.
@@ -288,6 +311,7 @@ pub fn write_arrow_batch(
     let num_cols = batch.num_columns();
     let num_rows = batch.num_rows();
 
+    let schema = batch.schema();
     let cols = batch_cols(batch)?;
     // Per-column format override is fixed for the whole column *within a
     // palette* — resolve both variants once instead of per cell in the row×col
@@ -437,7 +461,7 @@ pub fn write_arrow_batch(
                         days_to_excel_date(days as i64),
                         banding,
                         overrides[col_idx].unwrap_or(&pal.datetime),
-                        text_fmt,
+                        || out_of_range(schema.field(col_idx).name(), col, i),
                     )?;
                 }
                 ColKind::Date64 => {
@@ -450,7 +474,7 @@ pub fn write_arrow_batch(
                         epoch_to_excel_datetime(secs, nanos),
                         banding,
                         overrides[col_idx].unwrap_or(&pal.datetime),
-                        text_fmt,
+                        || out_of_range(schema.field(col_idx).name(), col, i),
                     )?;
                 }
                 // An aware column is written as its UTC wall-clock time: Excel
@@ -465,7 +489,7 @@ pub fn write_arrow_batch(
                         epoch_to_excel_datetime(secs, nanos),
                         banding,
                         overrides[col_idx].unwrap_or(&pal.datetime),
-                        text_fmt,
+                        || out_of_range(schema.field(col_idx).name(), col, i),
                     )?;
                 }
                 // No column format is set for times, so the format always
@@ -479,7 +503,7 @@ pub fn write_arrow_batch(
                         crate::helpers::excel_time(h, m, s, ns),
                         true,
                         overrides[col_idx].unwrap_or(&pal.time),
-                        text_fmt,
+                        || out_of_range(schema.field(col_idx).name(), col, i),
                     )?;
                 }
                 ColKind::Null => {

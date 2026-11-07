@@ -241,3 +241,49 @@ def test_banded_rows_keep_the_time_format(tmp_path):
     rows = _cells(tmp_path, [{"t": T1}, {"t": T2}, {"t": T1}], banded_rows="#EEEEEE")
     assert [r[0].number_format for r in rows] == ["hh:mm:ss"] * 3
     assert rows[1][0].fill.fgColor.rgb.endswith("EEEEEE")
+
+
+# --- dates Excel's calendar cannot hold ----------------------------------
+
+
+def _early_frames():
+    pl = pytest.importorskip("polars")
+    pd = pytest.importorskip("pandas")
+    pa = pytest.importorskip("pyarrow")
+    return {
+        "polars-datetime": pl.DataFrame(
+            {"ok": [1, 2], "born": [dt.datetime(2000, 1, 1), dt.datetime(1850, 1, 1, 12)]}
+        ),
+        "polars-date": pl.DataFrame({"ok": [1], "born": [dt.date(1850, 3, 4)]}),
+        "pandas-date32": pd.DataFrame(
+            {"ok": [1], "born": pd.array([dt.date(1850, 3, 4)], dtype=pd.ArrowDtype(pa.date32()))}
+        ),
+        "pandas-datetime": pd.DataFrame({"ok": [1], "born": [pd.Timestamp("1850-01-01 12:00")]}),
+    }
+
+
+@pytest.mark.parametrize(
+    "label", ["polars-datetime", "polars-date", "pandas-date32", "pandas-datetime"]
+)
+def test_dataframe_date_before_1900_raises_naming_column_and_value(tmp_path, label):
+    """A DataFrame used to get an empty cell here while a list of dicts
+    raised. Excel's serial has no room below its epoch, so both raise."""
+    with pytest.raises(ValueError, match=r"column 'born': 1850-0\d-0\d.* outside Excel's calendar"):
+        write_worksheet(_early_frames()[label], str(tmp_path / "out.xlsx"))
+
+
+def test_dataframe_date_past_9999_raises(tmp_path):
+    pl = pytest.importorskip("polars")
+    df = pl.Series("far", [10_500 * 366], dtype=pl.Int32).cast(pl.Date).to_frame()
+    with pytest.raises(ValueError, match="column 'far': a date before the year 0 or after 9999"):
+        write_worksheet(df, str(tmp_path / "out.xlsx"))
+
+
+def test_records_date_before_1900_still_raises(tmp_path):
+    with pytest.raises(ValueError, match="1850"):
+        write_worksheet([{"born": dt.datetime(1850, 1, 1)}], str(tmp_path / "out.xlsx"))
+
+
+def test_csv_still_writes_dates_before_1900():
+    pl = pytest.importorskip("polars")
+    assert _csv(pl.DataFrame({"born": [dt.date(1850, 3, 4)]})) == ["born", "1850-03-04"]
