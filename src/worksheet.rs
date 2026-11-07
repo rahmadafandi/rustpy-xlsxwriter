@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateTime, PyInt, PyString};
 use pyo3::{Py, PyAny, Python};
-use rust_xlsxwriter::{Format, Workbook};
+use rust_xlsxwriter::{Format, Workbook, XlsxError};
 use std::collections::{HashMap, HashSet};
 
 use crate::cell::{classify_and_write, try_cached, CellWriter};
@@ -12,8 +12,18 @@ use crate::helpers::{
 };
 use crate::utils::ensure_valid_sheet_name;
 
-pub fn xlsx_err(e: impl std::fmt::Display) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Excel write error: {}", e))
+/// Map a crate error to the Python exception that matches its cause.
+///
+/// `IoError` and `TempFileError` are filesystem problems, so `OSError`.
+/// Anything Excel itself refuses is a `RuntimeError`.
+pub fn xlsx_err(e: XlsxError) -> PyErr {
+    let message = format!("Excel write error: {e}");
+    match e {
+        XlsxError::IoError(_) | XlsxError::TempFileError(..) => {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(message)
+        }
+        _ => PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(message),
+    }
 }
 
 /// [`CellWriter`] sink that writes one Python scalar to an Excel cell.

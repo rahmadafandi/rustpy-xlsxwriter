@@ -405,26 +405,17 @@ pub fn save_workbook(
     // first and the rest runs detached.
     if let Ok(path) = file_or_buffer.extract::<PathBuf>(py) {
         return py.detach(|| {
-            workbook.save(&path).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                    "Failed to save workbook: {}",
-                    e
-                ))
-            })?;
+            // The exception class comes from the error variant, not from the
+            // fact that this is the save step.
+            workbook.save(&path).map_err(crate::worksheet::xlsx_err)?;
             Ok(())
         });
     }
 
     let buffer = py.detach(|| {
-        workbook.save_to_buffer().map_err(|e| {
-            // Match the file-save path (PyIOError) so a save failure surfaces
-            // as OSError regardless of whether the target is a path or a
-            // buffer.
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                "Failed to save workbook to buffer: {}",
-                e
-            ))
-        })
+        workbook
+            .save_to_buffer()
+            .map_err(crate::worksheet::xlsx_err)
     })?;
     write_bytes_to_target(py, &buffer, file_or_buffer)
 }
