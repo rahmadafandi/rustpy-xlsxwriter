@@ -686,8 +686,10 @@ def write_csv(
             this one decides the shape of the file, so a silent drop would hand
             back something that looks complete. Works on every input type,
             and stays zero-copy on the Arrow path.
-        header: Write the header row. Set ``False`` to append to an existing
-            file or to feed a reader that supplies its own names.
+        header: Write the header row. Set ``False`` to feed a reader that
+            supplies its own names, or to append — but a path target is
+            always overwritten, so appending means passing a file object
+            opened in append mode (``open(path, "ab")``).
         na_rep: Text written for a missing value — ``None``, an Arrow null, or
             a float ``NaN``, which are deliberately one knob: pandas turns NaN
             in a float column into an Arrow null, so a setting that caught only

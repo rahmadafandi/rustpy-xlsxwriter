@@ -60,6 +60,14 @@ write_csv(records, "out.csv", columns=["sku", "name"])  # subset and order
 write_csv(records, "out.csv", header=False)             # no header row
 ```
 
+`header=False` does not make the write append. A path is always overwritten,
+so appending means opening the file yourself:
+
+```python
+with open("out.csv", "ab") as fh:
+    write_csv(more_records, fh, header=False)
+```
+
 `columns` works on every input type and stays zero-copy on the Arrow path, so
 you no longer have to slice a DataFrame in Python first — which is what threw
 away the speed this library is for. A name that is not in the data raises
