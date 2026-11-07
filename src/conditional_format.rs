@@ -19,8 +19,27 @@ use rust_xlsxwriter::{
 };
 
 use crate::format::parse_color;
-use crate::options::{column_index, value_err};
+use crate::options::{column_index, reject_unknown_keys, value_err};
 use crate::worksheet::xlsx_err;
+
+/// Every key a rule may carry, across all nine types.
+///
+/// Checked as one set rather than per type, the same way `data_validations`
+/// does: a stray `color` on a `cell` rule is harmless, a misspelled key is
+/// a mistake either way.
+const KEYS: [&str; 11] = [
+    "type",
+    "criteria",
+    "value",
+    "min",
+    "max",
+    "format",
+    "color",
+    "bar_only",
+    "min_color",
+    "mid_color",
+    "max_color",
+];
 
 const TYPES: [&str; 9] = [
     "cell",
@@ -177,6 +196,7 @@ fn average_rule(map: &Bound<'_, PyDict>) -> PyResult<ConditionalFormatAverageRul
 }
 
 fn parse_rule(map: &Bound<'_, PyDict>) -> PyResult<Rule> {
+    reject_unknown_keys(map, "conditional_formats", &KEYS)?;
     let kind: String = need(map, "type", "conditional format")?.extract()?;
     let fmt = format_of(map)?;
 

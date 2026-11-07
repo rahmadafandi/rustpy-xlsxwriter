@@ -330,3 +330,18 @@ def test_every_average_criteria(tmp_path, criteria, above, equal):
     (_, rule), = _rules(ws)
     assert rule.type == "aboveAverage"
     assert (rule.aboveAverage, rule.equalAverage) == (above, equal)
+
+
+# --- validation -------------------------------------------------------------
+
+
+def test_unknown_key_raises(tmp_path):
+    """Every other option rejects these; this one used to drop them silently."""
+    with pytest.raises(ValueError, match="conditional_formats: unknown key 'fromat'"):
+        _sheet(tmp_path, {"score": {"type": "cell", "criteria": ">", "value": 1,
+                                    "fromat": Format().set_bold()}})
+
+
+def test_unknown_key_names_the_accepted_ones(tmp_path):
+    with pytest.raises(ValueError, match="bar_only"):
+        _sheet(tmp_path, {"score": {"type": "duplicate", "nope": 1}})

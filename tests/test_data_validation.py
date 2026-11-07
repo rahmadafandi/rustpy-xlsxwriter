@@ -260,3 +260,17 @@ def test_ignore_blank_and_show_dropdown(tmp_path):
     assert dv.allowBlank is False
     # Excel stores the dropdown inverted: showDropDown="1" hides it.
     assert dv.showDropDown is True
+
+
+# --- validation -------------------------------------------------------------
+
+
+def test_unknown_key_raises(tmp_path):
+    """Every other option rejects these; this one used to drop them silently."""
+    with pytest.raises(ValueError, match="data_validations: unknown key 'valeus'"):
+        _validations(tmp_path, {"status": {"type": "list", "valeus": ["open"]}})
+
+
+def test_unknown_key_names_the_accepted_ones(tmp_path):
+    with pytest.raises(ValueError, match="show_dropdown"):
+        _validations(tmp_path, {"status": {"type": "any", "nope": 1}})

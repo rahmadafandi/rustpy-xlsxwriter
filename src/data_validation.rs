@@ -11,7 +11,7 @@ use rust_xlsxwriter::{
     DataValidation, DataValidationErrorStyle, DataValidationRule, Formula, Worksheet,
 };
 
-use crate::options::{column_index, value_err};
+use crate::options::{column_index, reject_unknown_keys, value_err};
 use crate::worksheet::xlsx_err;
 
 const TYPES: [&str; 6] = [
@@ -24,6 +24,27 @@ const TYPES: [&str; 6] = [
 ];
 
 const CRITERIA: &str = "==, !=, >, >=, <, <=, between, not_between";
+
+/// Every key a rule may carry, across all six types.
+///
+/// Checked as one set rather than per type: a `value` on a `list` rule is
+/// a harmless leftover, while a misspelled key is a mistake either way.
+const KEYS: [&str; 14] = [
+    "type",
+    "criteria",
+    "value",
+    "min",
+    "max",
+    "values",
+    "formula",
+    "input_title",
+    "input_message",
+    "error_title",
+    "error_message",
+    "error_style",
+    "show_dropdown",
+    "ignore_blank",
+];
 
 #[derive(Default)]
 pub struct DataValidations(Vec<(String, DataValidation)>);
@@ -160,6 +181,7 @@ fn decorate(mut dv: DataValidation, map: &Bound<'_, PyDict>) -> PyResult<DataVal
 }
 
 fn parse_rule(map: &Bound<'_, PyDict>) -> PyResult<DataValidation> {
+    reject_unknown_keys(map, "data_validations", &KEYS)?;
     let kind: String = need(map, "type", "data validation")?.extract()?;
     let dv = DataValidation::new();
 
