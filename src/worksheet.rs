@@ -268,6 +268,7 @@ fn write_worksheet_content(
     layout: &crate::layout::SheetLayout,
     url_columns: Option<&Bound<'_, PyAny>>,
     formula_columns: Option<&Bound<'_, PyAny>>,
+    columns: Option<&Vec<String>>,
     py: Python,
 ) -> PyResult<()> {
     let float_fmt = float_format.map(|s| Format::new().set_num_format(s));
@@ -308,9 +309,19 @@ fn write_worksheet_content(
             // A column the writer cannot represent is the data's problem, not
             // this path's, so it raises here rather than falling back: the
             // fallback would write it as whatever `str()` makes of it.
-            if let Ok(reader) = &reader {
-                crate::arrow_writer::check_schema(&reader.schema(), None)?;
-            }
+            // An unknown name in `columns` is the caller's mistake too, and the
+            // fallback would only raise it again later.
+            let selected: Option<Vec<usize>> = match &reader {
+                Ok(reader) => {
+                    let schema = reader.schema();
+                    let names: Vec<String> =
+                        schema.fields().iter().map(|f| f.name().clone()).collect();
+                    let selected = crate::helpers::select_indices(&names, columns)?;
+                    crate::arrow_writer::check_schema(&schema, selected.as_deref())?;
+                    selected
+                }
+                Err(_) => None,
+            };
             // Set once the first batch is written. From then on a failure
             // must propagate, as the comment above says.
             let mut started = false;
@@ -318,11 +329,14 @@ fn write_worksheet_content(
                 Err(stream_err) => Err(stream_err),
                 Ok(reader) => (|| -> PyResult<()> {
                     let schema = reader.schema();
-                    final_headers = schema
-                        .fields()
-                        .iter()
-                        .map(|f| f.name().to_string())
-                        .collect();
+                    final_headers = crate::helpers::apply_selection(
+                        schema
+                            .fields()
+                            .iter()
+                            .map(|f| f.name().to_string())
+                            .collect(),
+                        selected.as_ref(),
+                    );
                     crate::formula::append_formula_headers(&mut final_headers, &formula_cols)?;
                     check_column_count(worksheet, &final_headers)?;
                     let n_data_cols = final_headers.len() - formula_cols.len();
@@ -355,6 +369,14 @@ fn write_worksheet_content(
 
                     for batch_result in reader {
                         let batch = batch_result.map_err(crate::arrow_ffi::batch_read_err)?;
+                        // Projection is an Arc clone per column, so the
+                        // zero-copy path stays zero-copy.
+                        let batch = match &selected {
+                            Some(ix) => batch
+                                .project(ix)
+                                .map_err(crate::arrow_ffi::batch_read_err)?,
+                            None => batch,
+                        };
                         let rows = batch.num_rows() as u64;
                         if rows > 0 && u64::from(current_row) + rows - 1 > u64::from(LAST_ROW) {
                             return Err(row_limit_err(
@@ -424,6 +446,7 @@ fn write_worksheet_content(
                         layout,
                         url_columns,
                         &formula_cols,
+                        columns,
                         "get_column",
                         "to_list",
                         |dtype| Ok(polars_kind(&dtype.to_string())),
@@ -446,6 +469,7 @@ fn write_worksheet_content(
                         layout,
                         url_columns,
                         &formula_cols,
+                        columns,
                         "__getitem__",
                         "tolist",
                         |dtype| {
@@ -465,7 +489,6 @@ fn write_worksheet_content(
                     "records must be an iterable of dicts, a DataFrame, or an Arrow stream",
                 )
             })?;
-            let mut headers: Vec<String> = Vec::new();
             let mut headers_written = false;
             let mut col_types: Vec<ColType> = Vec::new();
             // Resolved once when headers are first seen; kept alive for the
@@ -483,6 +506,10 @@ fn write_worksheet_content(
             let mut header_index: HashMap<String, usize> = HashMap::new();
             // The first record's key objects, for the pointer check below.
             let mut header_keys: Vec<Py<PyString>> = Vec::new();
+            // The output column for each of the first record's key positions,
+            // or `None` for a key `columns` leaves out. Without `columns` it
+            // is the position itself.
+            let mut pos_to_col: Vec<Option<usize>> = Vec::new();
 
             for (row_idx, row_res) in rows.enumerate() {
                 let row_obj = row_res?;
@@ -493,15 +520,26 @@ fn write_worksheet_content(
                 })?;
 
                 if !headers_written {
+                    let mut keys: Vec<String> = Vec::new();
                     for key in row_dict.keys().iter() {
                         let key = key.cast_into::<PyString>().map_err(|_| {
                             PyErr::new::<pyo3::exceptions::PyTypeError, _>(
                                 "Record keys must be strings",
                             )
                         })?;
-                        headers.push(key.to_str()?.to_owned());
+                        keys.push(key.to_str()?.to_owned());
                         header_keys.push(key.unbind());
                     }
+                    // Validated against the first record, the only one whose
+                    // keys are known before the stream is consumed.
+                    let selected = crate::helpers::select_indices(&keys, columns)?;
+                    pos_to_col = (0..keys.len())
+                        .map(|p| match &selected {
+                            Some(ix) => ix.iter().position(|&i| i == p),
+                            None => Some(p),
+                        })
+                        .collect();
+                    let mut headers = crate::helpers::apply_selection(keys, selected.as_ref());
                     crate::formula::append_formula_headers(&mut headers, &formula_cols)?;
                     check_column_count(worksheet, &headers)?;
                     write_all_headers(
@@ -575,9 +613,9 @@ fn write_worksheet_content(
                 // to avoid allocating a fresh `values()` list per row.
                 for (pos, (key, value)) in row_dict.iter().enumerate() {
                     // Same key object at the same position means the column is
-                    // the position. Otherwise look the column up by name.
+                    // known from the position. Otherwise look it up by name.
                     let col = if header_keys.get(pos).is_some_and(|k| k.is(&key)) {
-                        pos
+                        pos_to_col[pos]
                     } else {
                         let name = key.cast::<PyString>().map_err(|_| {
                             PyErr::new::<pyo3::exceptions::PyTypeError, _>(
@@ -585,16 +623,23 @@ fn write_worksheet_content(
                             )
                         })?;
                         let name = name.to_str()?;
-                        *header_index.get(name).ok_or_else(|| {
-                            crate::options::value_err(format!(
-                                "record {row_idx}: no column '{name}'. The header comes from \
-                                 the first record ({}), and a column cannot be added once it \
-                                 has been written — give every record the same keys, or pass \
-                                 a DataFrame.",
-                                final_headers[..n_data_cols].join(", ")
-                            ))
-                        })?
+                        match header_index.get(name) {
+                            Some(&col) => Some(col),
+                            // With `columns` the header is a chosen subset,
+                            // so a key outside it is dropped on purpose.
+                            None if columns.is_some() => None,
+                            None => {
+                                return Err(crate::options::value_err(format!(
+                                    "record {row_idx}: no column '{name}'. The header comes \
+                                     from the first record ({}), and a column cannot be added \
+                                     once it has been written — give every record the same \
+                                     keys, or pass a DataFrame.",
+                                    final_headers[..n_data_cols].join(", ")
+                                )))
+                            }
+                        }
                     };
+                    let Some(col) = col else { continue };
                     let cached = col_types.get(col).copied().unwrap_or(ColType::Unknown);
 
                     sink.col = col as u16;
@@ -652,6 +697,7 @@ fn write_worksheet_content(
                 layout,
                 url_columns,
                 &formula_cols,
+                columns,
                 "__getitem__",
                 "tolist",
                 |dtype| {
@@ -679,6 +725,7 @@ fn write_worksheet_content(
                 layout,
                 url_columns,
                 &formula_cols,
+                columns,
                 "get_column",
                 "to_list",
                 |dtype| Ok(polars_kind(&dtype.to_string())),
@@ -949,6 +996,7 @@ fn write_dataframe<C>(
     layout: &crate::layout::SheetLayout,
     url_columns: Option<&Bound<'_, PyAny>>,
     formula_cols: &[crate::formula::FormulaColumn],
+    columns: Option<&Vec<String>>,
     get_column_method: &str,
     to_list_method: &str,
     classify_dtype: C,
@@ -956,7 +1004,15 @@ fn write_dataframe<C>(
 where
     C: Fn(&Bound<'_, PyAny>) -> PyResult<ScalarKind>,
 {
-    let headers: Vec<String> = df.getattr(py, "columns")?.extract(py)?;
+    let all_headers: Vec<String> = df.getattr(py, "columns")?.extract(py)?;
+    let selected = crate::helpers::select_indices(&all_headers, columns)?;
+    // Each output column with its position in the frame, which is where its
+    // dtype sits.
+    let picked: Vec<(usize, String)> = match &selected {
+        Some(ix) => ix.iter().map(|&i| (i, all_headers[i].clone())).collect(),
+        None => all_headers.into_iter().enumerate().collect(),
+    };
+    let headers: Vec<String> = picked.iter().map(|(_, h)| h.clone()).collect();
     let n_data_cols = headers.len();
     *final_headers = headers.clone();
     crate::formula::append_formula_headers(final_headers, formula_cols)?;
@@ -995,8 +1051,8 @@ where
     // memory. It is only reached when the Arrow zero-copy path is unavailable
     // (old pandas without `__arrow_c_stream__`, or exotic dtypes). Modern
     // pandas ≥2 and Polars hit the Arrow path in `data_types.rs` instead.
-    for (col_idx, header) in headers.iter().enumerate() {
-        col_kinds.push(classify_dtype(&dtypes_list[col_idx])?);
+    for (frame_idx, header) in &picked {
+        col_kinds.push(classify_dtype(&dtypes_list[*frame_idx])?);
         let col_series = df.call_method1(py, get_column_method, (header.as_str(),))?;
         col_lists.push(col_series.call_method0(py, to_list_method)?);
     }
@@ -1083,7 +1139,7 @@ fn keyed_get<'py>(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = false, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None, sparklines = None, charts = None))]
+#[pyo3(signature = (records_with_sheet_name, file_name, password = None, freeze_panes = None, float_format = None, datetime_format = None, index_columns = None, autofit = false, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = None, header_row = None, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = None, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None, sparklines = None, charts = None, columns = None))]
 pub fn write_worksheets(
     py: Python,
     records_with_sheet_name: Vec<(String, WorksheetData)>,
@@ -1123,6 +1179,7 @@ pub fn write_worksheets(
     images: Option<Bound<'_, pyo3::types::PyDict>>,
     sparklines: Option<Bound<'_, pyo3::types::PyDict>>,
     charts: Option<Bound<'_, pyo3::types::PyDict>>,
+    columns: Option<Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<()> {
     let mut workbook = Workbook::new();
     for (sheet_name, records) in records_with_sheet_name {
@@ -1200,6 +1257,7 @@ pub fn write_worksheets(
             &layout,
             sheet_urls.as_ref(),
             keyed_get(formula_columns.as_ref(), &sheet_name)?.as_ref(),
+            keyed_extract::<Vec<String>>(columns.as_ref(), &sheet_name)?.as_ref(),
             py,
         )?;
     }
@@ -1210,7 +1268,7 @@ pub fn write_worksheets(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = false, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None, sparklines = None, charts = None))]
+#[pyo3(signature = (records, file_name, sheet_name = None, password = None, freeze_row = None, freeze_col = None, float_format = None, datetime_format = None, index_columns = None, autofit = false, bold_headers = false, column_width = None, column_widths = None, column_formats = None, header_format = None, dedupe_strings = false, header_row = 0, merge_ranges = None, row_heights = None, row_formats = None, banded_rows = None, autofilter = false, url_columns = None, totals_row = None, totals_label = None, totals_format = None, formula_columns = None, na_rep = None, inf_value = None, page_setup = None, conditional_formats = None, sheet_view = None, ignore_errors = None, data_validations = None, outline = None, notes = None, images = None, sparklines = None, charts = None, columns = None))]
 pub fn write_worksheet(
     py: Python,
     records: WorksheetData,
@@ -1252,6 +1310,7 @@ pub fn write_worksheet(
     images: Option<Bound<'_, PyAny>>,
     sparklines: Option<Bound<'_, PyAny>>,
     charts: Option<Bound<'_, PyAny>>,
+    columns: Option<Vec<String>>,
 ) -> PyResult<()> {
     let layout = crate::layout::resolve_layout(
         header_row,
@@ -1312,6 +1371,7 @@ pub fn write_worksheet(
         &layout,
         url_columns.as_ref(),
         formula_columns.as_ref(),
+        columns.as_ref(),
         py,
     )?;
 

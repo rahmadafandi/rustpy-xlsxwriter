@@ -64,4 +64,6 @@ write_csv(records, "out.csv", header=False)             # no header row
 you no longer have to slice a DataFrame in Python first — which is what threw
 away the speed this library is for. A name that is not in the data raises
 `ValueError`: unlike the styling options this one decides the shape of the
-file, so a silent drop would hand back something that looks complete.
+file, so a silent drop would hand back something that looks complete. The
+Excel writers take the same option; see
+[Data sources](dataframes.md#selecting-columns).

@@ -206,6 +206,7 @@ def write_worksheet(
     images: Optional[Images] = None,
     sparklines: Optional[Sparklines] = None,
     charts: Optional[Charts] = None,
+    columns: Optional[List[str]] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -396,6 +397,15 @@ def write_worksheet(
             a series draws a misleading picture. A scatter chart is refused
             without ``categories`` — they are its x values rather than labels,
             so there is nothing to default them to.
+        columns: Select and order the data columns by name, as ``write_csv``
+            does. A name that is not in the data, or one listed twice, raises
+            ``ValueError``: this decides the shape of the sheet, so a silent
+            drop would hand back something that looks complete. A key a record
+            carries outside the list is dropped on purpose, not an error.
+            Options keyed by column name refer to the selected columns, and
+            ``formula_columns`` follow them, so a ``{row}`` formula's column
+            letters count from the selection. Stays zero-copy on the Arrow
+            path.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -444,6 +454,7 @@ def write_worksheets(
     images: Optional[Dict[str, Images]] = None,
     sparklines: Optional[Dict[str, Sparklines]] = None,
     charts: Optional[Dict[str, Charts]] = None,
+    columns: Optional[Dict[str, List[str]]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -621,6 +632,9 @@ def write_worksheets(
             a series draws a misleading picture. A scatter chart is refused
             without ``categories`` — they are its x values rather than labels,
             so there is nothing to default them to.
+        columns: Per-sheet column selection — dict keyed by sheet name (or
+            ``"general"`` for every sheet) of column-name lists. Each works as
+            ``columns`` does in :func:`write_worksheet`.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.

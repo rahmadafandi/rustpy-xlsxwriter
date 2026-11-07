@@ -239,8 +239,10 @@ class FastExcel:
                 makes Excel on Windows read the file as UTF-8 rather than the
                 system code page. Off by default so output stays
                 byte-identical.
-            columns: CSV/TSV only. Select and order the output columns by name.
-                An unknown name raises ``ValueError``.
+            columns: Select and order the output columns by name, for every
+                sheet; ``sheet(..., columns=...)`` overrides it for one. An
+                unknown name raises ``ValueError``. Applies to ``.xlsx`` and
+                CSV/TSV output alike.
             header: CSV/TSV only. Write the header row (default ``True``).
         """
         if output_format is not None and output_format not in _FORMATS:
@@ -373,6 +375,7 @@ class FastExcel:
         images: Optional[Images] = None,
         sparklines: Optional[Sparklines] = None,
         charts: Optional[Charts] = None,
+        columns: Optional[List[str]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -596,6 +599,11 @@ class FastExcel:
                 a chart missing a series draws a misleading picture. A scatter
                 chart is refused without ``categories`` — they are its x values
                 rather than labels, so there is nothing to default them to.
+            columns: Select and order this sheet's data columns by name. A name
+                that is not in the data, or one listed twice, raises
+                ``ValueError``; a key a record carries outside the list is
+                dropped. Overrides the ``columns`` given to the constructor,
+                for this sheet. Applies to CSV/TSV output too.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -632,6 +640,7 @@ class FastExcel:
             "images": images,
             "sparklines": sparklines,
             "charts": charts,
+            "columns": columns,
         }.items():
             if value:
                 self._per_sheet.setdefault(option, {})[name] = value
@@ -654,7 +663,10 @@ class FastExcel:
             "freeze": self._freeze_panes,
         }
         names = [name for name, value in workbook_wide.items() if value]
-        names += [option for option, values in self._per_sheet.items() if values]
+        # ``columns`` applies to CSV too, so it is never reported as dropped.
+        names += [
+            option for option, values in self._per_sheet.items() if values and option != "columns"
+        ]
         return names
 
     def save(self) -> None:
@@ -678,7 +690,7 @@ class FastExcel:
                 raise ValueError(
                     f"CSV/TSV output supports a single sheet; got {len(self._sheets)}."
                 )
-            _, data = self._sheets[0]
+            sheet_name, data = self._sheets[0]
             ignored = self._excel_only_options()
             if ignored:
                 _warnings.warn(
@@ -694,7 +706,7 @@ class FastExcel:
                 delimiter=delimiter,
                 sanitize_formulas=self._sanitize_formulas,
                 bom=self._bom,
-                columns=self._columns,
+                columns=self._per_sheet.get("columns", {}).get(sheet_name, self._columns),
                 header=self._header,
                 na_rep=self._na_rep,
                 inf_value=self._inf_value,
@@ -704,6 +716,11 @@ class FastExcel:
         # One path for one sheet and for many: ``write_worksheets`` takes the
         # same options keyed by sheet name, which is how ``_per_sheet`` already
         # stores them, and resolves the ``general`` freeze fallback itself.
+        per_sheet = {option: values for option, values in self._per_sheet.items() if values}
+        if self._columns is not None:
+            # The constructor's selection is the default for every sheet; a
+            # ``sheet(columns=...)`` entry, keyed by name, wins over it.
+            per_sheet["columns"] = {"general": self._columns, **per_sheet.get("columns", {})}
         write_worksheets(
             self._sheets,
             self._target,
@@ -716,7 +733,7 @@ class FastExcel:
             bold_headers=self._bold_headers,
             na_rep=self._na_rep,
             inf_value=self._inf_value,
-            **{option: values for option, values in self._per_sheet.items() if values},
+            **per_sheet,
         )
 
 

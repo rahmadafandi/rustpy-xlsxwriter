@@ -10,7 +10,9 @@ use pyo3::types::{
 use pyo3::Py;
 
 use crate::cell::{classify_and_write, try_cached, CellWriter};
-use crate::helpers::{write_csv_escaped_guarded, ColType, NumReps};
+use crate::helpers::{
+    apply_selection, select_indices, write_csv_escaped_guarded, ColType, NumReps,
+};
 use crate::options::value_err;
 
 /// Output grows to about this much before a path target is written to.
@@ -488,42 +490,6 @@ fn write_csv_via_arrow(
         )?;
     }
     Ok(())
-}
-
-/// Positions of `columns` within `headers`, in the order asked for.
-///
-/// `None` means every column, as they come. An unknown name is an error rather
-/// than a warning: `columns` decides the shape of the output, so dropping one
-/// quietly would hand back a file that looks complete but is not.
-fn select_indices(
-    headers: &[String],
-    columns: Option<&Vec<String>>,
-) -> PyResult<Option<Vec<usize>>> {
-    let Some(names) = columns else {
-        return Ok(None);
-    };
-    let mut indices = Vec::with_capacity(names.len());
-    for name in names {
-        match headers.iter().position(|h| h == name) {
-            Some(idx) => indices.push(idx),
-            None => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "columns: '{}' is not in the data (available: {})",
-                    name,
-                    headers.join(", ")
-                )))
-            }
-        }
-    }
-    Ok(Some(indices))
-}
-
-/// Apply a selection to a header list, or hand it back untouched.
-fn apply_selection(headers: Vec<String>, indices: Option<&Vec<usize>>) -> Vec<String> {
-    match indices {
-        Some(ix) => ix.iter().map(|&i| headers[i].clone()).collect(),
-        None => headers,
-    }
 }
 
 fn write_csv_row_strings(output: &mut Vec<u8>, values: &[String], delim: u8, sanitize: bool) {
