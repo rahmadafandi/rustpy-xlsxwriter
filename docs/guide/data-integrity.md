@@ -68,25 +68,35 @@ a text column, where they also keep any leading zeros:
 write_worksheet([{"id": str(9007199254740993)}], "out.xlsx")
 ```
 
-## Decimals become floats
+## Decimals: exact in CSV, floats in xlsx
 
 Excel has no decimal type: every number is a 64-bit float. A Python `Decimal`,
-and a decimal column in a DataFrame, are written as the nearest float, in
-both writers. Trailing zeros go, and so does every digit past the 15th or
-16th significant one:
+and a decimal column in a DataFrame, are written to xlsx as the nearest float.
+Trailing zeros go, and so does every digit past the 15th or 16th significant
+one:
 
 ```python
 write_worksheet([{"price": Decimal("1.10")}], "out.xlsx")   # cell holds 1.1
-write_csv([{"price": Decimal("1.10")}], "out.csv")          # price\n1.1
-write_csv([{"n": Decimal("12345678901234567890.12")}], "out.csv")
-# n\n1.2345678901234567e19
 ```
 
-For money that is usually fine in xlsx, provided the cell is formatted to show
-the cents: `column_formats={"price": Format().set_num_format("0.00")}`. When
-the exact digits matter, as for amounts other systems will read back from a
-CSV, pass the text instead: `str(value)` keeps `"1.10"` exactly. A DataFrame
-column can be cast to a string first in the same way.
+For money that is usually fine, provided the cell is formatted to show the
+cents: `column_formats={"price": Format().set_num_format("0.00")}`. When the
+exact digits matter in xlsx, pass the text instead: `str(value)`.
+
+CSV is text, so nothing has to be lost there. A `Decimal` is written as its
+own text, which `Decimal(text)` reads back exactly, trailing zeros and
+exponent included. A DataFrame decimal column is written with as many
+fractional digits as its scale:
+
+```python
+write_csv([{"price": Decimal("1.10")}], "out.csv")            # price\n1.10
+write_csv([{"n": Decimal("12345678901234567890.12")}], "out.csv")
+# n\n12345678901234567890.12
+```
+
+A `Decimal` NaN or infinity takes `na_rep` and `inf_value`, as a float does.
+Before 0.9 CSV got the nearest float too, so `1.10` came out as `1.1`; a
+pipeline that compared the text will see the trailing zeros now.
 
 ## Dates, times and timezones
 
@@ -145,7 +155,7 @@ naming the column, instead of writing it empty:
 |---|---|
 | pandas `category`, polars `Categorical` and `Enum` | their values |
 | time of day | an Excel time / `HH:MM:SS` |
-| decimal | the nearest float, as above |
+| decimal | the nearest float in xlsx, the exact digits in CSV |
 | an all-null column | empty cells |
 | duration (`timedelta`) | `ValueError`: cast it to a string, or to a number of seconds |
 | binary, list, struct, and anything else | `ValueError` |

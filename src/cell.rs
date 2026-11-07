@@ -6,7 +6,8 @@
 //! four hand-kept-in-sync copies the cascade used to live in.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDate, PyDateTime, PyFloat, PyInt, PyString, PyTime};
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyBool, PyDate, PyDateTime, PyFloat, PyInt, PyString, PyTime, PyType};
 
 use crate::helpers::ColType;
 
@@ -22,6 +23,16 @@ pub trait CellWriter {
     fn write_datetime(&mut self, dt: &Bound<'_, PyDateTime>) -> PyResult<()>;
     fn write_date(&mut self, d: &Bound<'_, PyDate>) -> PyResult<()>;
     fn write_time(&mut self, t: &Bound<'_, PyTime>) -> PyResult<()>;
+    /// A `decimal.Decimal`. Excel can only hold its nearest float; CSV can
+    /// carry the exact digits.
+    fn write_decimal(&mut self, d: &Bound<'_, PyAny>) -> PyResult<()>;
+}
+
+/// `true` for a `decimal.Decimal`. The type is looked up once per process.
+fn is_decimal(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    static DECIMAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+    let decimal = DECIMAL.import(value.py(), "decimal", "Decimal")?;
+    value.is_instance(decimal)
 }
 
 /// Full type cascade. Returns the detected [`ColType`] so callers can cache it
@@ -65,6 +76,12 @@ pub fn classify_and_write<W: CellWriter>(value: &Bound<'_, PyAny>, w: &mut W) ->
     if let Ok(t) = value.cast::<PyTime>() {
         w.write_time(t)?;
         return Ok(ColType::Time);
+    }
+    // Before the numpy fallbacks: a Decimal converts to f64 through
+    // `__float__`, which used to catch it and drop its exact digits.
+    if is_decimal(value)? {
+        w.write_decimal(value)?;
+        return Ok(ColType::Decimal);
     }
     // numpy scalar fallback: bool before f64 (numpy.bool_ extracts as f64 too).
     if let Ok(val) = value.extract::<bool>() {
@@ -136,6 +153,12 @@ pub fn try_cached<W: CellWriter>(
         ColType::Time => {
             if let Ok(t) = value.cast::<PyTime>() {
                 w.write_time(t)?;
+                return Ok(true);
+            }
+        }
+        ColType::Decimal => {
+            if is_decimal(value)? {
+                w.write_decimal(value)?;
                 return Ok(true);
             }
         }

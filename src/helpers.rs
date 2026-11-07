@@ -23,6 +23,7 @@ pub enum ColType {
     DateTime = 5,
     Date = 6,
     Time = 7,
+    Decimal = 8,
 }
 
 /// Convert a Python `datetime` to `ExcelDateTime`, microseconds included.

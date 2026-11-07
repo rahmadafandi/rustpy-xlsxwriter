@@ -202,13 +202,18 @@ fn batch_cols(batch: &RecordBatch) -> PyResult<Vec<Col>> {
         .collect()
 }
 
+/// A decimal value's exact text, with as many fractional digits as its scale.
+fn decimal_text<T: DecimalType>(values: &ArrayRef, idx: usize, scale: i8) -> String {
+    T::format_decimal(values.as_primitive::<T>().value(idx), 0, scale)
+}
+
 /// The nearest `f64` to a decimal value.
 ///
 /// Goes through the decimal's text so the result is correctly rounded: dividing
 /// the unscaled integer by a power of ten rounds twice once that integer is
 /// past 2^53.
 fn decimal_f64<T: DecimalType>(values: &ArrayRef, idx: usize, scale: i8) -> PyResult<f64> {
-    let text = T::format_decimal(values.as_primitive::<T>().value(idx), 0, scale);
+    let text = decimal_text::<T>(values, idx, scale);
     text.parse()
         .map_err(|_| value_err(format!("cannot read decimal value '{text}' as a number")))
 }
@@ -613,12 +618,20 @@ fn emit_arrow_cell_csv(
         }
         ColKind::Float32 => emit_float!(column.as_primitive::<Float32Type>().value(i) as f64),
         ColKind::Float64 => emit_float!(column.as_primitive::<Float64Type>().value(i)),
-        // The same `f64` the Excel path and the Records path write, so the
-        // three agree; see the data-integrity guide for what that loses.
-        ColKind::Decimal32(_)
-        | ColKind::Decimal64(_)
-        | ColKind::Decimal128(_)
-        | ColKind::Decimal256(_) => emit_float!(decimal_at(col, i)?.expect("decimal kind")),
+        // The exact digits: the scale is in the dtype, so no float comes
+        // in between, and `1.10` stays `1.10`.
+        ColKind::Decimal32(s) => {
+            output.extend_from_slice(decimal_text::<Decimal32Type>(column, i, s).as_bytes())
+        }
+        ColKind::Decimal64(s) => {
+            output.extend_from_slice(decimal_text::<Decimal64Type>(column, i, s).as_bytes())
+        }
+        ColKind::Decimal128(s) => {
+            output.extend_from_slice(decimal_text::<Decimal128Type>(column, i, s).as_bytes())
+        }
+        ColKind::Decimal256(s) => {
+            output.extend_from_slice(decimal_text::<Decimal256Type>(column, i, s).as_bytes())
+        }
         ColKind::Bool => {
             let arr = column
                 .as_any()

@@ -82,12 +82,12 @@ SUPPORTED = {
     "polars-decimal": (
         lambda: pl.DataFrame({"v": [D1, D2]}),
         [1.1, -2.25],
-        ["1.1", "-2.25"],
+        ["1.10", "-2.25"],
     ),
     "pandas-decimal": (
         lambda: pd.DataFrame({"v": [D1, D2]}),
         [1.1, -2.25],
-        ["1.1", "-2.25"],
+        ["1.10", "-2.25"],
     ),
 }
 
@@ -146,7 +146,7 @@ def test_every_decimal_width(tmp_path, width):
     make = getattr(pa, f"decimal{width}")
     df = _pa_frame(make(9, 2), [D1, D2])
     assert _values(tmp_path, df) == [[1.1], [-2.25]]
-    assert _csv(df) == ["v", "1.1", "-2.25"]
+    assert _csv(df) == ["v", "1.10", "-2.25"]
 
 
 def test_decimal_is_correctly_rounded_past_two_to_the_53(tmp_path):
@@ -155,7 +155,8 @@ def test_decimal_is_correctly_rounded_past_two_to_the_53(tmp_path):
     value = decimal.Decimal("14495820535222.7900")
     df = pl.DataFrame({"v": [value]})
     assert _values(tmp_path, df) == [[float(value)]]
-    assert _csv(df) == ["v", repr(float(value))]
+    # CSV carries the exact digits, with no float in between.
+    assert _csv(df) == ["v", "14495820535222.7900"]
 
 
 def test_time_cells_carry_a_time_format(tmp_path):

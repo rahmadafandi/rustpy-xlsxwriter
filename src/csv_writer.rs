@@ -635,4 +635,27 @@ impl CellWriter for CsvCell<'_> {
     fn write_time(&mut self, t: &Bound<'_, PyTime>) -> PyResult<()> {
         emit_time(self.output, t)
     }
+
+    /// `str()` of a Decimal is its exact text, so `Decimal(text)` reads back
+    /// the same value, trailing zeros and exponent included: `1.10` stays
+    /// `1.10`. NaN and the infinities take `na_rep` and `inf_value`, as a
+    /// float's do.
+    fn write_decimal(&mut self, d: &Bound<'_, PyAny>) -> PyResult<()> {
+        let text = d.str()?;
+        let text = text.to_str()?;
+        // Covers `NaN`, `-NaN`, `sNaN` and `-sNaN`.
+        if text.ends_with("NaN") {
+            return self.write_float(f64::NAN);
+        }
+        if text.ends_with("Infinity") {
+            let inf = if text.starts_with('-') {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            };
+            return self.write_float(inf);
+        }
+        self.output.extend_from_slice(text.as_bytes());
+        Ok(())
+    }
 }

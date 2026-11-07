@@ -207,6 +207,13 @@ impl CellWriter for ExcelCell<'_> {
         self.put_datetime(&excel_dt)
     }
 
+    fn write_decimal(&mut self, d: &Bound<'_, PyAny>) -> PyResult<()> {
+        // Excel has no decimal type; the nearest float is all a cell holds.
+        // Only a signalling NaN refuses `float()`, and it is a NaN all the
+        // same.
+        self.write_float(d.extract().unwrap_or(f64::NAN))
+    }
+
     fn write_time(&mut self, t: &Bound<'_, PyTime>) -> PyResult<()> {
         let excel_time = py_time_to_excel(t)?;
         let fmt = self.col_override.unwrap_or(self.time_fmt);
