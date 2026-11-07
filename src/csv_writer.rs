@@ -205,6 +205,18 @@ pub fn write_csv(
     }
     let delim_byte = delim_bytes[0];
 
+    // Refuse a repeated column name with the same sentence the Excel writer
+    // uses. Checked here because the Arrow attempt below reaches pyarrow
+    // first, which raises its own differently worded error for the same
+    // mistake. Non-string column labels (pandas allows them) are left to the
+    // paths that know what to do with them.
+    let bound = records.bind(py);
+    if let Ok(labels) = bound.getattr("columns") {
+        if let Ok(names) = labels.extract::<Vec<String>>() {
+            crate::helpers::reject_duplicate_headers(&names)?;
+        }
+    }
+
     let mut target = CsvSink::new(py, file_name)?;
     let mut output: Vec<u8> = Vec::with_capacity(CHUNK + 4096);
     let reps = NumReps {

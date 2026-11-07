@@ -669,10 +669,33 @@ pub fn save_workbook(
 /// `None` means every column, as they come. An unknown name is an error rather
 /// than a warning: `columns` decides the shape of the output, so dropping one
 /// quietly would hand back a file that looks complete but is not.
+/// Refuse data whose columns repeat a name.
+///
+/// Two columns under one header make every option keyed by column name
+/// ambiguous, the same reason `append_formula_headers` refuses a formula
+/// column that repeats a data column. A pandas frame is worse than ambiguous:
+/// `df["a"]` returns a DataFrame rather than a Series when `a` appears twice,
+/// so the Excel writer used to fail with `AttributeError: 'DataFrame' object
+/// has no attribute 'tolist'` from inside the column loop.
+pub fn reject_duplicate_headers(headers: &[String]) -> PyResult<()> {
+    let mut seen: std::collections::HashSet<&str> =
+        std::collections::HashSet::with_capacity(headers.len());
+    for header in headers {
+        if !seen.insert(header.as_str()) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "the data has two columns named '{header}'. Two columns with one header make \
+                 every option keyed by column name ambiguous; rename one before writing."
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub fn select_indices(
     headers: &[String],
     columns: Option<&Vec<String>>,
 ) -> PyResult<Option<Vec<usize>>> {
+    reject_duplicate_headers(headers)?;
     let Some(names) = columns else {
         return Ok(None);
     };
