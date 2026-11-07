@@ -60,6 +60,40 @@ fn check_column_count(worksheet: &rust_xlsxwriter::Worksheet, headers: &[String]
     Ok(())
 }
 
+/// Run `rustpy_xlsxwriter._timezones.local_wall_clock` on a frame; see that
+/// module for why the conversion is done in Python. `None` means the object
+/// is not a DataFrame the helper can convert.
+fn local_wall_clock(
+    py: Python,
+    frame: &Py<PyAny>,
+    names: Option<Vec<String>>,
+) -> PyResult<Option<Py<PyAny>>> {
+    static HELPER: pyo3::sync::PyOnceLock<Py<PyAny>> = pyo3::sync::PyOnceLock::new();
+    let helper = HELPER.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
+        Ok(py
+            .import("rustpy_xlsxwriter._timezones")?
+            .getattr("local_wall_clock")?
+            .unbind())
+    })?;
+    let out = helper.call1(py, (frame, names))?;
+    Ok((!out.is_none(py)).then_some(out))
+}
+
+/// The error for an aware timestamp column that could not be converted to
+/// its local wall clock: an Arrow stream that is not a polars or pandas
+/// DataFrame. Writing its UTC time would show a different hour than the
+/// data does.
+fn aware_column_err(aware: &[(String, String)]) -> PyErr {
+    let (name, zone) = &aware[0];
+    crate::options::value_err(format!(
+        "column '{name}' is timezone-aware ({zone}). Excel has no timezone, so an aware \
+         datetime is written as its local wall clock; a polars or pandas DataFrame is \
+         converted automatically, but this Arrow stream cannot be. Drop the zone first, \
+         keeping the local time (for a pyarrow table, pyarrow.compute.local_timestamp), \
+         or pass a DataFrame."
+    ))
+}
+
 /// [`CellWriter`] sink that writes one Python scalar to an Excel cell.
 ///
 /// `col_override` is an explicit per-column `Format` (from `column_formats`).
@@ -305,6 +339,11 @@ fn write_worksheet_content(
 
     match records {
         WorksheetData::ArrowDataFrame(stream_obj) => {
+            // Aware datetime columns become their local wall clock, the rule
+            // the object path follows already. This pass reads the frame's
+            // schema or dtypes only, and returns a naive frame untouched.
+            let mut frame =
+                local_wall_clock(py, stream_obj, None)?.unwrap_or_else(|| stream_obj.clone_ref(py));
             // Producing the stream can fail even though the object advertises
             // `__arrow_c_stream__` — pandas raises ImportError when pyarrow is
             // not installed, and an all-Null empty frame has no Arrow type. The
@@ -312,7 +351,7 @@ fn write_worksheet_content(
             // written yet, falling back to the column-by-column writer is safe.
             // Once batches start landing a failure has to propagate, because
             // re-writing from the top would duplicate rows.
-            let reader = crate::arrow_ffi::stream_to_reader(stream_obj, py);
+            let mut reader = crate::arrow_ffi::stream_to_reader(&frame, py);
             // A column the writer cannot represent is the data's problem, not
             // this path's, so it raises here rather than falling back: the
             // fallback would write it as whatever `str()` makes of it.
@@ -329,6 +368,31 @@ fn write_worksheet_content(
                 }
                 Err(_) => None,
             };
+            // An aware column the dtype pass could not see: a pandas object
+            // column of aware datetimes, or an Arrow stream that is not a
+            // DataFrame at all. Only this case exports the frame twice.
+            let aware = match &reader {
+                Ok(r) => {
+                    crate::arrow_writer::aware_timestamp_columns(&r.schema(), selected.as_deref())
+                }
+                Err(_) => Vec::new(),
+            };
+            if !aware.is_empty() {
+                let names = aware.iter().map(|(n, _)| n.clone()).collect();
+                frame = local_wall_clock(py, &frame, Some(names))?
+                    .ok_or_else(|| aware_column_err(&aware))?;
+                reader = crate::arrow_ffi::stream_to_reader(&frame, py);
+                if let Ok(r) = &reader {
+                    let left = crate::arrow_writer::aware_timestamp_columns(
+                        &r.schema(),
+                        selected.as_deref(),
+                    );
+                    if !left.is_empty() {
+                        return Err(aware_column_err(&left));
+                    }
+                }
+            }
+            let stream_obj = &frame;
             // Set once the first batch is written. From then on a failure
             // must propagate, as the comment above says.
             let mut started = false;

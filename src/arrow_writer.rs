@@ -130,6 +130,23 @@ pub fn check_schema(schema: &Schema, indices: Option<&[usize]>) -> PyResult<()> 
     }
 }
 
+/// The selected columns that hold timezone-aware timestamps, as
+/// `(name, zone)`.
+pub fn aware_timestamp_columns(
+    schema: &Schema,
+    indices: Option<&[usize]>,
+) -> Vec<(String, String)> {
+    let fields = schema.fields();
+    let aware = |i: usize| match fields[i].data_type() {
+        DataType::Timestamp(_, Some(tz)) => Some((fields[i].name().clone(), tz.to_string())),
+        _ => None,
+    };
+    match indices {
+        Some(ix) => ix.iter().filter_map(|&i| aware(i)).collect(),
+        None => (0..fields.len()).filter_map(aware).collect(),
+    }
+}
+
 /// One column of a batch, ready to read cell by cell.
 ///
 /// For a dictionary column, `values` is the dictionary, `keys` maps each row to
@@ -482,9 +499,9 @@ pub fn write_arrow_batch(
                         || out_of_range(schema.field(col_idx).name(), col, i),
                     )?;
                 }
-                // An aware column is written as its UTC wall-clock time: Excel
-                // has no timezone, and turning the instant into the column's
-                // own local time would take a timezone database.
+                // An aware column never gets here: the xlsx writer turns it
+                // into its local wall clock first (`_timezones.py`), or
+                // refuses it.
                 ColKind::Timestamp(unit, _) => {
                     let (secs, nanos) = timestamp_parts(column, unit, i);
                     write_temporal(

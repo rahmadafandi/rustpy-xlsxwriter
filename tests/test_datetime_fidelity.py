@@ -92,8 +92,8 @@ def test_csv_aware_time_carries_its_offset():
 
 
 def test_excel_keeps_the_wall_clock_of_an_aware_datetime(tmp_path):
-    """Excel has no timezone. The offset is dropped and the wall-clock time
-    kept, as before; the data-integrity guide documents it."""
+    """Excel has no timezone, so an aware datetime is written as its own
+    local wall clock and the offset is dropped."""
     rows = _cells(tmp_path, [{"t": UTC_NOON}, {"t": JKT_NOON}])
     assert [r[0].value for r in rows] == [dt.datetime(2026, 1, 1, 12)] * 2
 
@@ -122,9 +122,11 @@ def test_csv_writes_an_aware_arrow_column_as_a_utc_instant(lib):
 
 
 @pytest.mark.parametrize("lib", ["polars", "pandas"])
-def test_excel_writes_an_aware_arrow_column_in_utc(tmp_path, lib):
+def test_excel_writes_an_aware_arrow_column_as_local_wall_clock(tmp_path, lib):
+    """12:00 UTC shown in Asia/Jakarta is 19:00, as the frame prints it; see
+    test_timezones_xlsx.py for the rest."""
     rows = _cells(tmp_path, _aware_frames()[lib])
-    assert rows[0][0].value == dt.datetime(2026, 1, 1, 12)
+    assert rows[0][0].value == dt.datetime(2026, 1, 1, 19)
 
 
 # --- B2: fractions of a second -------------------------------------------

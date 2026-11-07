@@ -110,34 +110,42 @@ column as `.fffffffff`.
 so it can be formatted, summed and compared like any time. CSV writes
 `HH:MM:SS`. A `column_formats` entry overrides the time format.
 
-**Timezones** survive in CSV and not in xlsx. Excel has no timezone, so
-something has to give:
+**Timezones** survive in CSV and not in xlsx, which has no timezone. The xlsx
+rule is one sentence: an aware datetime is written as its **own local wall
+clock**, and the offset is dropped.
 
 | Value | xlsx | CSV |
 |---|---|---|
 | naive `datetime` | as given | as given, no offset |
-| aware Python `datetime` | its wall-clock time; the offset is dropped | wall-clock time and offset, as `isoformat()` writes it |
-| aware DataFrame column | the **UTC** time | the UTC time with `+00:00` |
+| aware Python `datetime` | its wall-clock time | wall-clock time and offset, as `isoformat()` writes it |
+| aware DataFrame column | its wall-clock time in the column's zone | the UTC time with `+00:00` |
 
-So in xlsx, `12:00+00:00` and `12:00+07:00` both become `12:00`, two instants
-seven hours apart written as one value. And a polars column converted with
-`dt.convert_time_zone("Asia/Jakarta")`, which shows 19:00, is written as
-12:00, because a DataFrame stores the UTC instant and only names its zone.
-CSV keeps the instant in both cases: `datetime.fromisoformat` reads back the
-value you wrote.
+So a polars column converted with `dt.convert_time_zone("Asia/Jakarta")`,
+which shows 19:00, is written to xlsx as 19:00, the same value polars'
+`dt.replace_time_zone(None)` and pandas' `dt.tz_localize(None)` give. A
+DataFrame is converted that way automatically, column by column, using the
+library's own timezone database; the frame you passed is not modified. In a
+pandas object column of aware `datetime` values, each value keeps its own
+wall clock, as it would in a list of dicts.
 
-To control what lands in xlsx, convert first:
+The wall clock drops the instant: `12:00+00:00` and `12:00+07:00` both become
+12:00 in xlsx. To line values up across zones, convert them to one zone
+first:
 
 ```python
-# Python: everything in UTC, or everything in one zone
 rows = [{**r, "at": r["at"].astimezone(timezone.utc)} for r in rows]
-
-# polars: keep the wall-clock time the column shows
-df = df.with_columns(pl.col("at").dt.replace_time_zone(None))
-
-# pandas: the same
-df["at"] = df["at"].dt.tz_localize(None)
+df = df.with_columns(pl.col("at").dt.convert_time_zone("UTC"))      # polars
+df["at"] = df["at"].dt.tz_convert("UTC")                             # pandas
 ```
+
+An Arrow stream that is not a polars or pandas DataFrame, such as a pyarrow
+`Table`, cannot be converted for you; an aware column there raises
+`ValueError` naming the column and its zone. Drop the zone first with
+`pyarrow.compute.local_timestamp`, or pass a DataFrame.
+
+Before 0.9 a DataFrame's aware column was written as its UTC time, out of
+step with both libraries and with a list of dicts. CSV keeps the instant in
+every case, and `datetime.fromisoformat` reads back the value you wrote.
 
 **Dates before 1900** cannot be stored in xlsx; Excel's calendar starts on
 1900-01-01 and ends on 9999-12-31. A date outside it raises `ValueError`, from
