@@ -506,14 +506,19 @@ pub fn write_arrow_batch(
 
 /// Emit an Arrow `RecordBatch` as CSV rows (no header — caller writes it).
 /// Zero-copy over the Arrow buffers; only the output bytes are newly
-/// allocated.
-pub fn write_arrow_batch_csv(
+/// allocated. `row_done` runs after each row, which is where the caller may
+/// pass `output` on to the file.
+pub fn write_arrow_batch_csv<F>(
     output: &mut Vec<u8>,
     batch: &RecordBatch,
     delim: u8,
     sanitize: bool,
     reps: crate::helpers::NumReps<'_>,
-) -> PyResult<()> {
+    row_done: &mut F,
+) -> PyResult<()>
+where
+    F: FnMut(&mut Vec<u8>) -> PyResult<()>,
+{
     let num_rows = batch.num_rows();
     let cols = batch_cols(batch)?;
 
@@ -531,6 +536,7 @@ pub fn write_arrow_batch_csv(
             emit_arrow_cell_csv(output, col, i, sanitize, reps)?;
         }
         output.push(b'\n');
+        row_done(output)?;
     }
     Ok(())
 }

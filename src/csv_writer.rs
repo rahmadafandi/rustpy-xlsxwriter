@@ -1,5 +1,7 @@
 //! Fast CSV writer — writes Records, Pandas, or Polars data to CSV.
 
+use std::io::{Seek, SeekFrom, Write};
+
 use pyo3::prelude::*;
 use pyo3::types::{
     PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyInt, PyTime, PyTimeAccess,
@@ -8,8 +10,107 @@ use pyo3::types::{
 use pyo3::Py;
 
 use crate::cell::{classify_and_write, try_cached, CellWriter};
-use crate::helpers::{write_bytes_to_target, write_csv_escaped_guarded, ColType, NumReps};
+use crate::helpers::{write_csv_escaped_guarded, ColType, NumReps};
 use crate::options::value_err;
+
+/// Output grows to about this much before a path target is written to.
+const CHUNK: usize = 64 * 1024;
+
+/// Where `write_csv` sends its bytes.
+///
+/// The rows are encoded into one `Vec<u8>`. For a path, that buffer is
+/// emptied into the file whenever it passes [`CHUNK`], so memory stays at
+/// about one chunk however large the file gets. The buffer already batches
+/// the writes, so a `BufWriter` around the file would only copy them twice.
+/// A file-like object still receives the whole file as one `bytes`, which
+/// its `.write()` needs.
+enum CsvSink {
+    Path {
+        path: std::path::PathBuf,
+        /// Opened at the first chunk, not up front. A write that fails before
+        /// then leaves a file already at the path untouched, as before
+        /// streaming.
+        file: Option<std::fs::File>,
+    },
+    Writer(Py<PyAny>),
+}
+
+fn io_err(e: std::io::Error) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write file: {e}"))
+}
+
+impl CsvSink {
+    fn new(py: Python, target: Py<PyAny>) -> PyResult<Self> {
+        if let Ok(path) = target.extract::<std::path::PathBuf>(py) {
+            return Ok(CsvSink::Path { path, file: None });
+        }
+        if let Ok(write) = target.getattr(py, "write") {
+            return Ok(CsvSink::Writer(write));
+        }
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Argument must be a path (str or os.PathLike) or a file-like object with a 'write' method",
+        ))
+    }
+
+    fn write_out(&mut self, output: &[u8]) -> PyResult<()> {
+        if let CsvSink::Path { path, file } = self {
+            let f = match file {
+                Some(f) => f,
+                None => file.insert(std::fs::File::create(&*path).map_err(io_err)?),
+            };
+            f.write_all(output).map_err(io_err)?;
+        }
+        Ok(())
+    }
+
+    /// Write `output` out once it passes a chunk. Callers call this only
+    /// between rows, so a row is never split and the per-row rewind still has
+    /// the whole row to rewind.
+    #[inline]
+    fn row_done(&mut self, output: &mut Vec<u8>) -> PyResult<()> {
+        if output.len() >= CHUNK && matches!(self, CsvSink::Path { .. }) {
+            self.write_out(output)?;
+            output.clear();
+        }
+        Ok(())
+    }
+
+    /// Discard everything written so far, for the Arrow path's retry.
+    fn restart(&mut self, output: &mut Vec<u8>) -> PyResult<()> {
+        output.clear();
+        if let CsvSink::Path {
+            file: Some(file), ..
+        } = self
+        {
+            file.set_len(0).map_err(io_err)?;
+            file.seek(SeekFrom::Start(0)).map_err(io_err)?;
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self, py: Python, output: &[u8]) -> PyResult<()> {
+        match self {
+            CsvSink::Path { .. } => self.write_out(output),
+            CsvSink::Writer(write) => {
+                write.call1(py, (pyo3::types::PyBytes::new(py, output),))?;
+                Ok(())
+            }
+        }
+    }
+
+    /// After an error: a path holding part of a file is removed, since a
+    /// truncated CSV reads as a complete one with fewer rows.
+    fn abandon(self) {
+        if let CsvSink::Path {
+            path,
+            file: Some(file),
+        } = self
+        {
+            drop(file);
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
 
 /// Turn a failed `try_iter` into a clear message. Skipping the loop instead
 /// would write an empty file and report success.
@@ -88,40 +189,80 @@ pub fn write_csv(
     }
     let delim_byte = delim_bytes[0];
 
-    let bound = records.bind(py);
-    // Heuristic: 16 bytes per cell is a decent starting point.
-    let mut output: Vec<u8> = Vec::with_capacity(4096);
-    if bom {
-        output.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
-    }
-    let selection = columns.as_ref();
+    let mut target = CsvSink::new(py, file_name)?;
+    let mut output: Vec<u8> = Vec::with_capacity(CHUNK + 4096);
     let reps = NumReps {
         na: na_rep.as_deref(),
         inf: inf_value.as_deref(),
     };
+    let written = write_csv_rows(
+        py,
+        &records,
+        &mut target,
+        &mut output,
+        delim_byte,
+        sanitize_formulas,
+        bom,
+        columns.as_ref(),
+        header,
+        reps,
+    )
+    .and_then(|()| target.finish(py, &output));
+    if written.is_err() {
+        target.abandon();
+    }
+    written
+}
+
+/// The body of [`write_csv`]: everything between choosing the target and
+/// finishing it. `output` holds the rows not yet passed to `target`.
+#[allow(clippy::too_many_arguments)]
+fn write_csv_rows(
+    py: Python,
+    records: &Py<PyAny>,
+    target: &mut CsvSink,
+    output: &mut Vec<u8>,
+    delim_byte: u8,
+    sanitize_formulas: bool,
+    bom: bool,
+    selection: Option<&Vec<String>>,
+    header: bool,
+    reps: NumReps<'_>,
+) -> PyResult<()> {
+    const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+    let bound = records.bind(py);
+    if bom {
+        output.extend_from_slice(BOM);
+    }
 
     // Fast path: Arrow zero-copy if the object exposes `__arrow_c_stream__`
     // (Pandas ≥2.0, Polars). Falls back to the per-object paths below on
     // failure (e.g. empty Null-typed columns).
     if bound.hasattr("__arrow_c_stream__")? {
         match write_csv_via_arrow(
-            &records,
+            records,
             py,
-            &mut output,
+            target,
+            output,
             delim_byte,
             sanitize_formulas,
             selection,
             header,
             reps,
         ) {
-            Ok(()) => return write_bytes_to_target(py, &output, file_name),
+            Ok(()) => return Ok(()),
             // A bad `columns` is the caller's mistake, not a quirk of this
             // path, so it must not fall through to a slower one that would
             // raise the same error later.
             Err(e) if e.is_instance_of::<pyo3::exceptions::PyValueError>(py) => return Err(e),
             Err(_) => {}
         }
-        output.truncate(if bom { 3 } else { 0 });
+        // Part of the file may already be on disk, so the restart has to
+        // reach the file as well as the buffer.
+        target.restart(output)?;
+        if bom {
+            output.extend_from_slice(BOM);
+        }
     }
 
     if bound.hasattr("columns")? {
@@ -129,7 +270,7 @@ pub fn write_csv(
         let indices = select_indices(&all_columns, selection)?;
         let columns = apply_selection(all_columns, indices.as_ref());
         if header {
-            write_csv_row_strings(&mut output, &columns, delim_byte, sanitize_formulas);
+            write_csv_row_strings(output, &columns, delim_byte, sanitize_formulas);
         }
 
         if bound.hasattr("get_column")? {
@@ -151,10 +292,11 @@ pub fn write_csv(
                         output.push(delim_byte);
                     }
                     let item = col_list.get_item(row)?;
-                    let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
+                    let mut sink = CsvCell::new(output, sanitize_formulas, reps);
                     classify_and_write(&item, &mut sink)?;
                 }
                 output.push(b'\n');
+                target.row_done(output)?;
             }
         } else {
             // Pandas — iterate rows via `.values`
@@ -172,7 +314,7 @@ pub fn write_csv(
                                 output.push(delim_byte);
                             }
                             let item = row.get_item(i)?;
-                            let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
+                            let mut sink = CsvCell::new(output, sanitize_formulas, reps);
                             classify_and_write(&item, &mut sink)?;
                         }
                     }
@@ -184,12 +326,13 @@ pub fn write_csv(
                                 output.push(delim_byte);
                             }
                             first = false;
-                            let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
+                            let mut sink = CsvCell::new(output, sanitize_formulas, reps);
                             classify_and_write(&item, &mut sink)?;
                         }
                     }
                 }
                 output.push(b'\n');
+                target.row_done(output)?;
             }
         }
     } else {
@@ -227,7 +370,7 @@ pub fn write_csv(
                 // keys are known before the stream is consumed.
                 headers = apply_selection(keys.clone(), select_indices(&keys, selection)?.as_ref());
                 if header {
-                    write_csv_row_strings(&mut output, &headers, delim_byte, sanitize_formulas);
+                    write_csv_row_strings(output, &headers, delim_byte, sanitize_formulas);
                 }
                 col_types.resize(headers.len(), ColType::Unknown);
                 headers_written = true;
@@ -248,7 +391,7 @@ pub fn write_csv(
                         output.push(delim_byte);
                     }
                     let cached = col_types[col];
-                    let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
+                    let mut sink = CsvCell::new(output, sanitize_formulas, reps);
                     if !try_cached(&value, cached, &mut sink)? {
                         let detected = classify_and_write(&value, &mut sink)?;
                         if col_types[col] == ColType::Unknown {
@@ -260,6 +403,7 @@ pub fn write_csv(
             };
             if fast {
                 output.push(b'\n');
+                target.row_done(output)?;
                 continue;
             }
             output.truncate(row_start);
@@ -272,7 +416,7 @@ pub fn write_csv(
                 if col > 0 {
                     output.push(delim_byte);
                 }
-                let mut sink = CsvCell::new(&mut output, sanitize_formulas, reps);
+                let mut sink = CsvCell::new(output, sanitize_formulas, reps);
                 // A missing key writes an empty field, keeping the field count.
                 if let Some(value) = row_dict.get_item(name)? {
                     matched += 1;
@@ -292,16 +436,17 @@ pub fn write_csv(
                 return Err(unknown_column(row_dict, &headers, index));
             }
             output.push(b'\n');
+            target.row_done(output)?;
         }
     }
-
-    write_bytes_to_target(py, &output, file_name)
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
 fn write_csv_via_arrow(
     records: &Py<PyAny>,
     py: Python,
+    target: &mut CsvSink,
     output: &mut Vec<u8>,
     delim: u8,
     sanitize: bool,
@@ -320,23 +465,27 @@ fn write_csv_via_arrow(
         write_csv_row_strings(output, &out, delim, sanitize);
     }
 
+    // A frame built in one go is often a single batch, so the chunking has
+    // to happen per row inside it, not per batch.
+    let mut row_done = |out: &mut Vec<u8>| target.row_done(out);
     for batch_result in reader {
         let batch = batch_result.map_err(crate::arrow_ffi::batch_read_err)?;
-        match &indices {
-            // Projection is an Arc clone per column, so the zero-copy path
-            // stays zero-copy.
-            Some(ix) => {
-                let projected = batch
-                    .project(ix)
-                    .map_err(crate::arrow_ffi::batch_read_err)?;
-                crate::arrow_writer::write_arrow_batch_csv(
-                    output, &projected, delim, sanitize, reps,
-                )?;
-            }
-            None => {
-                crate::arrow_writer::write_arrow_batch_csv(output, &batch, delim, sanitize, reps)?
-            }
-        }
+        // Projection is an Arc clone per column, so the zero-copy path stays
+        // zero-copy.
+        let batch = match &indices {
+            Some(ix) => batch
+                .project(ix)
+                .map_err(crate::arrow_ffi::batch_read_err)?,
+            None => batch,
+        };
+        crate::arrow_writer::write_arrow_batch_csv(
+            output,
+            &batch,
+            delim,
+            sanitize,
+            reps,
+            &mut row_done,
+        )?;
     }
     Ok(())
 }

@@ -23,6 +23,25 @@ write_csv(records, "output.csv", delimiter=";")  # custom delimiter
 extension, so a `.txt` target can hold CSV. For any other delimiter, call
 `write_csv` directly.
 
+## Large files
+
+Writing to a path streams: the rows go to disk in 64 KiB pieces as they are
+produced, so a multi-gigabyte export needs no more memory than a small one.
+A list of dicts is of course already in memory; pass a generator to keep
+the input flat as well.
+
+```python
+write_csv((row_to_dict(r) for r in cursor), "export.csv")
+```
+
+If the write fails part-way, for example on a record with a key the header
+does not have, the partial file is removed rather than left looking like a
+complete export with fewer rows. A failure in the first 64 KiB never opens
+the file, so whatever was at the path before is still there.
+
+A buffer such as `io.BytesIO` gets the whole file in one `write()` call, so
+the output is held in memory before it is handed over.
+
 ## Excel on Windows and the byte order mark
 
 A UTF-8 CSV without a BOM opens in Excel as the system code page, which turns
