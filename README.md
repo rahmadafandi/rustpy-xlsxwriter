@@ -212,7 +212,7 @@ the **[documentation](https://rahmadafandi.github.io/rustpy-xlsxwriter/)**:
 | [Formulas and links](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/formulas/) | computed columns, totals rows, hyperlinks |
 | [Charts and visuals](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/visuals/) | charts, sparklines, notes, images |
 | [Sheet layout](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/layout/) | printing, outline groups, sheet view |
-| [Data integrity](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/data-integrity/) | validation, missing values |
+| [Data integrity](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/data-integrity/) | validation, missing values, decimals, dates and timezones |
 | [CSV and TSV](https://rahmadafandi.github.io/rustpy-xlsxwriter/guide/csv/) | delimiters, BOM, column selection |
 | [API reference](https://rahmadafandi.github.io/rustpy-xlsxwriter/api/) | every function and option |
 

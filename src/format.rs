@@ -324,8 +324,15 @@ pub struct RowPalette {
     pub text: Option<XlsxFormat>,
     pub float: Option<XlsxFormat>,
     pub datetime: XlsxFormat,
+    /// For times of day. A time is a fraction of a day, so the datetime format
+    /// would show it as a date in January 1900.
+    pub time: XlsxFormat,
     pub cols: Vec<Option<Format>>,
 }
+
+/// Number format for time-of-day cells. `column_formats` overrides it, for
+/// example with `hh:mm:ss.000` to show milliseconds.
+pub const TIME_FORMAT: &str = "hh:mm:ss";
 
 impl RowPalette {
     /// Borrow the column override for `idx`, mirroring [`col_override`].
@@ -345,6 +352,7 @@ pub fn build_palettes(
         text: None,
         float: float_fmt.cloned(),
         datetime: datetime_fmt.clone(),
+        time: XlsxFormat::new().set_num_format(TIME_FORMAT),
         cols: col_formats.to_vec(),
     };
 
@@ -364,6 +372,9 @@ pub fn build_palettes(
                 .set_background_color(fill),
         ),
         datetime: datetime_fmt.clone().set_background_color(fill),
+        time: XlsxFormat::new()
+            .set_num_format(TIME_FORMAT)
+            .set_background_color(fill),
         cols: col_formats
             .iter()
             .map(|c| {

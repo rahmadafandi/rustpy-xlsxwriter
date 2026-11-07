@@ -16,6 +16,24 @@ df_pl = pl.DataFrame({"Name": ["Alice", "Bob"], "Score": [88.5, 92.3]})
 FastExcel("polars.xlsx").sheet("Data", df_pl).save()
 ```
 
+## Selecting columns
+
+`columns` picks and orders the columns to write, for xlsx as for CSV, without
+slicing the data in Python first:
+
+```python
+write_worksheet(df, "out.xlsx", columns=["sku", "name"])
+FastExcel("out.xlsx").sheet("Stock", rows, columns=["sku", "qty"]).save()
+write_worksheets([("A", a), ("B", b)], "out.xlsx", columns={"general": ["sku"]})
+```
+
+It works on every input type and stays zero-copy on the Arrow path. A name
+that is not in the data, or one listed twice, raises `ValueError`. A key a
+record carries outside the list is dropped on purpose. Options keyed by
+column name refer to the selected columns, and `formula_columns` follow them,
+so a `{row}` formula's column letters count from the selection. A column
+whose type cannot be written is only refused if it is selected.
+
 ## Generator Streaming
 
 ```python

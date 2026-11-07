@@ -71,6 +71,27 @@ from importlib.metadata import version as _version
 # Re-exported unchanged: the extension resolves str and os.PathLike targets
 # itself, so wrapping these in Python would only hide their signatures from
 # type checkers, which read them from ``rustpy_xlsxwriter.pyi``.
+from ._types import (
+    Chart,
+    ChartSeries,
+    Charts,
+    ConditionalFormats,
+    ConditionalRule,
+    DataValidation,
+    DataValidations,
+    Image,
+    Images,
+    Margins,
+    Note,
+    Notes,
+    Outline,
+    OutlineColumnGroup,
+    OutlineRowGroup,
+    PageSetup,
+    SheetView,
+    Sparkline,
+    Sparklines,
+)
 from .rustpy_xlsxwriter import (
     Format,
     validate_sheet_name,
@@ -218,8 +239,10 @@ class FastExcel:
                 makes Excel on Windows read the file as UTF-8 rather than the
                 system code page. Off by default so output stays
                 byte-identical.
-            columns: CSV/TSV only. Select and order the output columns by name.
-                An unknown name raises ``ValueError``.
+            columns: Select and order the output columns by name, for every
+                sheet; ``sheet(..., columns=...)`` overrides it for one. An
+                unknown name raises ``ValueError``. Applies to ``.xlsx`` and
+                CSV/TSV output alike.
             header: CSV/TSV only. Write the header row (default ``True``).
         """
         if output_format is not None and output_format not in _FORMATS:
@@ -342,16 +365,17 @@ class FastExcel:
         totals_label: Optional[str] = None,
         totals_format: Optional["Format"] = None,
         formula_columns: Optional[Dict[str, str]] = None,
-        page_setup: Optional[Dict[str, Any]] = None,
-        conditional_formats: Optional[Dict[str, Any]] = None,
-        sheet_view: Optional[Dict[str, Any]] = None,
+        page_setup: Optional[PageSetup] = None,
+        conditional_formats: Optional[ConditionalFormats] = None,
+        sheet_view: Optional[SheetView] = None,
         ignore_errors: Optional[Union[List[str], Dict[str, str]]] = None,
-        data_validations: Optional[Dict[str, Dict[str, Any]]] = None,
-        outline: Optional[Dict[str, Any]] = None,
-        notes: Optional[Dict[str, Any]] = None,
-        images: Optional[List[Dict[str, Any]]] = None,
-        sparklines: Optional[Dict[str, Dict[str, Any]]] = None,
-        charts: Optional[List[Dict[str, Any]]] = None,
+        data_validations: Optional[DataValidations] = None,
+        outline: Optional[Outline] = None,
+        notes: Optional[Notes] = None,
+        images: Optional[Images] = None,
+        sparklines: Optional[Sparklines] = None,
+        charts: Optional[Charts] = None,
+        columns: Optional[List[str]] = None,
     ) -> "FastExcel":
         """Add a worksheet with data.
 
@@ -575,6 +599,11 @@ class FastExcel:
                 a chart missing a series draws a misleading picture. A scatter
                 chart is refused without ``categories`` — they are its x values
                 rather than labels, so there is nothing to default them to.
+            columns: Select and order this sheet's data columns by name. A name
+                that is not in the data, or one listed twice, raises
+                ``ValueError``; a key a record carries outside the list is
+                dropped. Overrides the ``columns`` given to the constructor,
+                for this sheet. Applies to CSV/TSV output too.
 
         Raises:
             ValueError: If the sheet name is invalid (validated on save), or a
@@ -611,6 +640,7 @@ class FastExcel:
             "images": images,
             "sparklines": sparklines,
             "charts": charts,
+            "columns": columns,
         }.items():
             if value:
                 self._per_sheet.setdefault(option, {})[name] = value
@@ -633,7 +663,10 @@ class FastExcel:
             "freeze": self._freeze_panes,
         }
         names = [name for name, value in workbook_wide.items() if value]
-        names += [option for option, values in self._per_sheet.items() if values]
+        # ``columns`` applies to CSV too, so it is never reported as dropped.
+        names += [
+            option for option, values in self._per_sheet.items() if values and option != "columns"
+        ]
         return names
 
     def save(self) -> None:
@@ -657,7 +690,7 @@ class FastExcel:
                 raise ValueError(
                     f"CSV/TSV output supports a single sheet; got {len(self._sheets)}."
                 )
-            _, data = self._sheets[0]
+            sheet_name, data = self._sheets[0]
             ignored = self._excel_only_options()
             if ignored:
                 _warnings.warn(
@@ -673,66 +706,35 @@ class FastExcel:
                 delimiter=delimiter,
                 sanitize_formulas=self._sanitize_formulas,
                 bom=self._bom,
-                columns=self._columns,
+                columns=self._per_sheet.get("columns", {}).get(sheet_name, self._columns),
                 header=self._header,
                 na_rep=self._na_rep,
                 inf_value=self._inf_value,
             )
             return
 
-        if len(self._sheets) == 1:
-            sheet_name, data = self._sheets[0]
-            # Single-sheet path: use write_worksheet for simpler freeze pane
-            freeze_row = None
-            freeze_col = None
-            # Check general or sheet-specific freeze config
-            cfg = self._freeze_panes.get(sheet_name) or self._freeze_panes.get(
-                "general"
-            )
-            if cfg:
-                freeze_row = cfg.get("row")
-                freeze_col = cfg.get("col")
-
-            write_worksheet(
-                data,
-                self._target,
-                sheet_name=sheet_name,
-                password=self._password,
-                freeze_row=freeze_row,
-                freeze_col=freeze_col,
-                float_format=self._float_format,
-                datetime_format=self._datetime_format,
-                index_columns=self._index_columns,
-                autofit=self._autofit,
-                bold_headers=self._bold_headers,
-                na_rep=self._na_rep,
-                inf_value=self._inf_value,
-                **{
-                    option: values[sheet_name]
-                    for option, values in self._per_sheet.items()
-                    if sheet_name in values
-                },
-            )
-        else:
-            # Multi-sheet path
-            write_worksheets(
-                self._sheets,
-                self._target,
-                password=self._password,
-                freeze_panes=self._freeze_panes or None,
-                float_format=self._float_format,
-                datetime_format=self._datetime_format,
-                index_columns=self._index_columns,
-                autofit=self._autofit,
-                bold_headers=self._bold_headers,
-                na_rep=self._na_rep,
-                inf_value=self._inf_value,
-                **{
-                    option: values
-                    for option, values in self._per_sheet.items()
-                    if values
-                },
-            )
+        # One path for one sheet and for many: ``write_worksheets`` takes the
+        # same options keyed by sheet name, which is how ``_per_sheet`` already
+        # stores them, and resolves the ``general`` freeze fallback itself.
+        per_sheet = {option: values for option, values in self._per_sheet.items() if values}
+        if self._columns is not None:
+            # The constructor's selection is the default for every sheet; a
+            # ``sheet(columns=...)`` entry, keyed by name, wins over it.
+            per_sheet["columns"] = {"general": self._columns, **per_sheet.get("columns", {})}
+        write_worksheets(
+            self._sheets,
+            self._target,
+            password=self._password,
+            freeze_panes=self._freeze_panes or None,
+            float_format=self._float_format,
+            datetime_format=self._datetime_format,
+            index_columns=self._index_columns,
+            autofit=self._autofit,
+            bold_headers=self._bold_headers,
+            na_rep=self._na_rep,
+            inf_value=self._inf_value,
+            **per_sheet,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -750,6 +752,26 @@ __all__ = [
     "write_worksheets",
     # Utilities
     "validate_sheet_name",
+    # Option shapes, for annotating the dicts you pass in
+    "Chart",
+    "ChartSeries",
+    "Charts",
+    "ConditionalFormats",
+    "ConditionalRule",
+    "DataValidation",
+    "DataValidations",
+    "Image",
+    "Images",
+    "Margins",
+    "Note",
+    "Notes",
+    "Outline",
+    "OutlineColumnGroup",
+    "OutlineRowGroup",
+    "PageSetup",
+    "SheetView",
+    "Sparkline",
+    "Sparklines",
     # Metadata
     "get_version",
     "get_name",

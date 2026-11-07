@@ -59,38 +59,32 @@ MergeRange = Union[
 """One merged cell range: ``(first_row, first_col, last_row, last_col, value)``,
 optionally followed by a :class:`Format`."""
 
-ConditionalRule = Dict[str, Any]
-"""One conditional-formatting rule; see :func:`write_worksheet` for the keys."""
-
-ConditionalFormats = Dict[str, Union[ConditionalRule, List[ConditionalRule]]]
-"""Conditional formats keyed by column name."""
-
-Charts = List[Dict[str, Any]]
-"""Charts anchored to a cell."""
-
-Sparklines = Dict[str, Dict[str, Any]]
-"""Per-row trend charts, by the column they are drawn in."""
-
-Notes = Dict[str, Union[str, Dict[str, Any]]]
-"""Header-cell notes, by column name."""
-
-Images = List[Dict[str, Any]]
-"""Images anchored to cells."""
-
-Outline = Dict[str, Any]
-"""Row and column grouping; see :func:`write_worksheet` for the keys."""
-
-DataValidations = Dict[str, Dict[str, Any]]
-"""Data validation rules keyed by column name."""
-
-SheetView = Dict[str, Any]
-"""Screen presentation; see :func:`write_worksheet` for the keys."""
+# The dict-shaped options have their keys spelled out in ``_types``, so a
+# checker catches a misspelled one instead of leaving it to ``save()``.
+from ._types import (
+    Chart as Chart,
+    ChartSeries as ChartSeries,
+    Charts as Charts,
+    ConditionalFormats as ConditionalFormats,
+    ConditionalRule as ConditionalRule,
+    DataValidation as DataValidation,
+    DataValidations as DataValidations,
+    Image as Image,
+    Images as Images,
+    Margins as Margins,
+    Note as Note,
+    Notes as Notes,
+    Outline as Outline,
+    OutlineColumnGroup as OutlineColumnGroup,
+    OutlineRowGroup as OutlineRowGroup,
+    PageSetup as PageSetup,
+    SheetView as SheetView,
+    Sparkline as Sparkline,
+    Sparklines as Sparklines,
+)
 
 IgnoreErrors = Union[List[str], Dict[str, str]]
 """Error indicators to suppress, by column."""
-
-PageSetup = Dict[str, Any]
-"""Page and print settings; see :func:`write_worksheet` for the keys."""
 
 UrlColumns = Union[List[str], Dict[str, str]]
 """Link columns — a list of column names, or ``{url column: display-text column}``."""
@@ -212,6 +206,7 @@ def write_worksheet(
     images: Optional[Images] = None,
     sparklines: Optional[Sparklines] = None,
     charts: Optional[Charts] = None,
+    columns: Optional[List[str]] = None,
 ) -> None:
     """Write data to a **single** worksheet in an Excel file.
 
@@ -402,6 +397,15 @@ def write_worksheet(
             a series draws a misleading picture. A scatter chart is refused
             without ``categories`` — they are its x values rather than labels,
             so there is nothing to default them to.
+        columns: Select and order the data columns by name, as ``write_csv``
+            does. A name that is not in the data, or one listed twice, raises
+            ``ValueError``: this decides the shape of the sheet, so a silent
+            drop would hand back something that looks complete. A key a record
+            carries outside the list is dropped on purpose, not an error.
+            Options keyed by column name refer to the selected columns, and
+            ``formula_columns`` follow them, so a ``{row}`` formula's column
+            letters count from the selection. Stays zero-copy on the Arrow
+            path.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -450,6 +454,7 @@ def write_worksheets(
     images: Optional[Dict[str, Images]] = None,
     sparklines: Optional[Dict[str, Sparklines]] = None,
     charts: Optional[Dict[str, Charts]] = None,
+    columns: Optional[Dict[str, List[str]]] = None,
 ) -> None:
     """Write data to **multiple** worksheets in an Excel file.
 
@@ -627,6 +632,9 @@ def write_worksheets(
             a series draws a misleading picture. A scatter chart is refused
             without ``categories`` — they are its x values rather than labels,
             so there is nothing to default them to.
+        columns: Per-sheet column selection — dict keyed by sheet name (or
+            ``"general"`` for every sheet) of column-name lists. Each works as
+            ``columns`` does in :func:`write_worksheet`.
 
     Raises:
         ValueError: Invalid sheet name or unsupported data type.
@@ -660,7 +668,14 @@ def write_csv(
     Args:
         records: Data to write – a list of dicts, a generator of dicts,
             a *pandas* ``DataFrame``, or a *polars* ``DataFrame``.
-        file_name: Destination file path or writable binary buffer.
+        file_name: Destination file path or writable binary buffer. A path is
+            written as the rows are produced, so memory stays flat however
+            large the file, and replaced by a rename at the end — so a failed
+            write leaves whatever was there untouched, and no reader sees a
+            half-written export. A symlink, FIFO or device is written through
+            directly instead, and a failure there removes the partial file. A
+            buffer receives the whole file in a single ``write()`` call, so it
+            is held in memory first.
         delimiter: Column delimiter (default ``","``). Use ``"\\t"`` for TSV.
         sanitize_formulas: When ``True``, string fields starting with
             ``= + - @`` are prefixed with ``'`` to neutralize CSV formula
@@ -674,8 +689,10 @@ def write_csv(
             this one decides the shape of the file, so a silent drop would hand
             back something that looks complete. Works on every input type,
             and stays zero-copy on the Arrow path.
-        header: Write the header row. Set ``False`` to append to an existing
-            file or to feed a reader that supplies its own names.
+        header: Write the header row. Set ``False`` to feed a reader that
+            supplies its own names, or to append — but a path target is
+            always overwritten, so appending means passing a file object
+            opened in append mode (``open(path, "ab")``).
         na_rep: Text written for a missing value — ``None``, an Arrow null, or
             a float ``NaN``, which are deliberately one knob: pandas turns NaN
             in a float column into an Arrow null, so a setting that caught only

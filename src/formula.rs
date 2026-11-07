@@ -149,6 +149,30 @@ or {{row}} for a per-row one."
     Ok(out)
 }
 
+/// Append the formula columns' headers after the data columns', refusing one
+/// that repeats a data column's name.
+///
+/// Every option keyed by column name (`column_formats`, `column_widths`,
+/// `url_columns`, conditional formats, …) would match both columns, so a
+/// duplicate header makes them all ambiguous.
+pub fn append_formula_headers(
+    headers: &mut Vec<String>,
+    formula_cols: &[FormulaColumn],
+) -> PyResult<()> {
+    for fc in formula_cols {
+        if headers.contains(&fc.header) {
+            return Err(value_err(format!(
+                "formula_columns: '{}' is already a data column. Two columns with one header \
+                 make every option keyed by column name ambiguous; give the formula column \
+                 another name.",
+                fc.header
+            )));
+        }
+    }
+    headers.extend(formula_cols.iter().map(|fc| fc.header.clone()));
+    Ok(())
+}
+
 /// Write the formula cells for one data row, starting at `first_col`.
 pub fn write_formula_row(
     worksheet: &mut Worksheet,

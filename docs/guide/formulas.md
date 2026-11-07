@@ -35,7 +35,7 @@ with a file Excel refuses to open.
 totals_row={"qty": "sum", "price": "=ROUND(AVERAGE({col}{first}:{col}{last}),2)"}
 ```
 
-Two things to know:
+Three things to know:
 
 **Structure is validated, names are not.** Unbalanced parentheses or quotes and
 an empty formula raise at write time, naming the column and echoing the
@@ -52,6 +52,10 @@ is why it stops at the checks that cannot produce a false positive.
 **There is no `{last}` in `formula_columns`.** Those cells are written while
 rows are still streaming, so the final row is unknown; the placeholder raises
 with that explanation. Use `totals_row` for whole-column formulas.
+
+**A formula column needs a header of its own.** Naming it after a data column
+raises `ValueError`: with two columns under one header, `column_formats`,
+`column_widths` and every other option keyed by name would match both.
 
 ## Totals Row
 
