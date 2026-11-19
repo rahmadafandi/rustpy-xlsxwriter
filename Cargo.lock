@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "rustpy-xlsxwriter"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "arrow-array",
  "arrow-schema",
