@@ -93,6 +93,18 @@ own data before turning it on for a large export.
 For `write_worksheets`, pass `dedupe_strings` as a dict keyed by sheet name
 (with a `"general"` fallback key).
 
+## Very large workbooks
+
+A plain zip entry stops at 4 GB uncompressed, which is around 150 million
+cells — a million rows across 185 columns reaches it. Every workbook is
+therefore written as ZIP64, so that limit does not apply. There is nothing to
+switch on: it cannot be decided once the limit is hit, because a sheet's final
+size is unknown until it has been written and the zip is streamed, so it is
+always on. The cost is a flat 432 bytes per file.
+
+Excel's own limits still apply, and those are reported: 1,048,576 rows and
+16,384 columns per sheet, and 32,767 characters per cell.
+
 ## Compression level
 
 An `.xlsx` is a zip, and compressing the sheet XML is most of what saving

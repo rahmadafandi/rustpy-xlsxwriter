@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateTime, PyInt, PyString, PyTime};
 use pyo3::{Py, PyAny, Python};
-use rust_xlsxwriter::{Format, Workbook, XlsxError};
+use rust_xlsxwriter::{Format, XlsxError};
 use std::collections::{HashMap, HashSet};
 
 use crate::cell::{classify_and_write, try_cached, CellWriter};
@@ -1283,7 +1283,7 @@ pub fn write_worksheets(
     columns: Option<Bound<'_, pyo3::types::PyDict>>,
     compression_level: Option<i64>,
 ) -> PyResult<()> {
-    let mut workbook = Workbook::new();
+    let mut workbook = crate::helpers::new_workbook();
     crate::helpers::apply_compression_level(&mut workbook, compression_level)?;
     for (sheet_name, records) in records_with_sheet_name {
         ensure_valid_sheet_name(&sheet_name)?;
@@ -1439,7 +1439,7 @@ pub fn write_worksheet(
         sparklines.as_ref(),
         charts.as_ref(),
     )?;
-    let mut workbook = Workbook::new();
+    let mut workbook = crate::helpers::new_workbook();
     crate::helpers::apply_compression_level(&mut workbook, compression_level)?;
     // Row groups need the buffered writer; see `needs_buffered_rows`.
     let worksheet = if dedupe_strings || layout.outline.needs_buffered_rows() {

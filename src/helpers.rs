@@ -669,6 +669,26 @@ pub fn save_workbook(
 /// `None` means every column, as they come. An unknown name is an error rather
 /// than a warning: `columns` decides the shape of the output, so dropping one
 /// quietly would hand back a file that looks complete but is not.
+/// A workbook carrying this library's defaults.
+///
+/// ZIP64 is on. A plain zip entry stops at 4GB uncompressed — roughly 150
+/// million cells — and past that the write fails after several minutes with
+/// `Large file option has not been set`, followed by a second error about
+/// seeking, because the packager streams the zip and cannot rewind to abort
+/// the oversized entry.
+///
+/// It cannot be decided when the limit is reached: in constant-memory mode
+/// the final size is unknown until the sheet has been written, and by then
+/// the zip is half out of the door. Nor is it worth a parameter, since the
+/// caller who needs it only finds out by failing. Measured cost is a flat 432
+/// bytes per file whatever its size, and the output reads identically in
+/// Excel, `zipfile`, openpyxl and pandas.
+pub fn new_workbook() -> Workbook {
+    let mut workbook = Workbook::new();
+    workbook.use_zip_large_file(true);
+    workbook
+}
+
 /// Set the zip compression level, refusing a value out of range.
 ///
 /// `set_zip_compression_level` prints to stderr and carries on with the
